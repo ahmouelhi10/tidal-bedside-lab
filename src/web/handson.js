@@ -119,6 +119,10 @@ export class HandsOn {
       case 'push': res = { ...evalPlace(a.start, tgt, rad), ...evalPush(a.depth, { minCm: h.minCm, maxCm: h.maxCm }) }; res.ok = res.ok && res.depthCm >= h.minCm && res.depthCm <= h.maxCm; break;
       case 'rotate': res = { ...evalPlace(p, tgt, rad), ...evalRotate(a.angle) }; break;
     }
+    if (h.gesture === 'stroke' && a.start && a.end) {
+      const mid = [(a.start[0] + a.end[0]) / 2, (a.start[1] + a.end[1]) / 2, (a.start[2] + a.end[2]) / 2], v = [a.end[0] - a.start[0], a.end[1] - a.start[1], a.end[2] - a.start[2]], L = Math.hypot(...v) || 0.01;
+      this.scene.gest.marks.push({ kind: 'cut', p: mid, n: this.scene.normalAt(mid), tan: v.map(x => x / L), len: L, t0: this.scene.t, grow: 0.2 }); this.scene.cut = null;
+    }
     const done = a.onDone, keepGhost = { ...this.scene.ghost };
     this.end();
     this.scene.afterGhost = { ...keepGhost, until: this.scene.t + 1.2 };            // leave the instrument visible a moment

@@ -112,6 +112,16 @@ export class Scene {
     }
     const p = this.world[key] || (key.length > 2 && this.chestSites?.[key[0]]?.[key.slice(2)]); return p ? { p, n: [0, 1, 0] } : null;
   }
+  /** Outward skin normal at a world point (nearest vertex of the realistic body; straight up otherwise). */
+  normalAt(p) {
+    const B = this.body; if (!B?.b?.glb) return [0, 1, 0];
+    const m = B.b.meshes.body, s = B.b.scale, q = [(p[0] - CROWN_X) / s, (p[1] - BED_TOP) / s, p[2] / s];
+    let best = 0, bd = Infinity;
+    for (let v = 0, n = m.pos.length / 3; v < n; v++) { const dx = m.pos[v * 3] - q[0], dy = m.pos[v * 3 + 1] - q[1], dz = m.pos[v * 3 + 2] - q[2], d = dx * dx + dy * dy + dz * dz; if (d < bd) { bd = d; best = v; } }
+    return [m.nrm[best * 3], m.nrm[best * 3 + 1], m.nrm[best * 3 + 2]];
+  }
+  /** Direction of the right forearm on its board, from the antecubital fossa toward the hand. */
+  armAxis() { const a = this.world.rightArmIV, b = this.world.padRight, d = [a[0] - b[0], 0, a[2] - b[2]], l = Math.hypot(d[0], d[2]) || 1; return [d[0] / l, 0, d[2] / l]; }
   /** Frame the site of an upcoming procedure step: a little above the skin normal, tilted toward the foot of the bed. */
   frameStepSite(key, dist = 0.62) {
     const f = this.siteFrame(key); if (!f) return false;
@@ -154,7 +164,7 @@ export class Scene {
     try {
       const buf = await fetch(base + 'instruments.glb').then(r => { if (!r.ok) throw new Error('instruments.glb ' + r.status); return r.arrayBuffer(); });
       const glb = parseGlb(buf), out = {};
-      for (const [name, m] of Object.entries(glb.meshes)) out[name] = m.prims.map(pr => { const f = pr.material?.pbrMetallicRoughness?.baseColorFactor || [0.8, 0.8, 0.8, 1]; return { g: this.r.upload({ pos: pr.pos, nrm: pr.nrm, w: new Float32Array(pr.pos.length / 3 * 2), idx: pr.idx }), color: f.slice(0, 3), alpha: f[3], metal: pr.material?.pbrMetallicRoughness?.metallicFactor ?? 0 }; });
+      for (const [name, m] of Object.entries(glb.meshes)) out[name] = m.prims.map(pr => { const f = pr.material?.pbrMetallicRoughness?.baseColorFactor || [0.8, 0.8, 0.8, 1]; return { g: this.r.upload({ pos: pr.pos, nrm: pr.nrm, w: new Float32Array(pr.pos.length / 3 * 2), idx: pr.idx }), color: f.slice(0, 3), alpha: f[3], metal: pr.material?.pbrMetallicRoughness?.metallicFactor ?? 0, mat: pr.material?.name || '' }; });
       this.instruments = out;
     } catch (e) { console.warn('instruments unavailable:', e && e.message); }
   }
@@ -168,13 +178,13 @@ export class Scene {
     return { p: [T[0] + h.p[0] * s, T[1] + h.p[1] * s, T[2] + h.p[2] * s], n: h.n, region: B.b.meshes.body.region[h.vert] };
   }
   /** Draw one instrument with its working point at p, long axis along n, turned by angle about n. */
-  _instrument(name, p, n, angle = 0) {
+  _instrument(name, p, n, angle = 0, opts = {}) {
     const parts = this.instruments?.[name]; if (!parts) return;
     const ey = vec3.norm(n), ref = Math.abs(ey[0]) > 0.9 ? [0, 0, 1] : [1, 0, 0];
     let ex = vec3.norm(vec3.cross(ref, ey)); const ez0 = vec3.cross(ex, ey);
     ex = vec3.norm(vec3.add(vec3.scale(ex, Math.cos(angle)), vec3.scale(ez0, Math.sin(angle)))); const ez = vec3.cross(ex, ey);
     const M = mat4.fromBasis(ex, ey, ez, p);
-    for (const pt of parts) this.r.draw(pt.g, M, { color: pt.color, alpha: pt.alpha, spec: pt.metal > 0.5 ? 0.9 : 0.35, noShadow: pt.alpha < 0.9 });
+    for (const pt of parts) { if (opts.only && !opts.only.includes(pt.mat)) continue; if (opts.skip && opts.skip.includes(pt.mat)) continue; this.r.draw(pt.g, M, { color: pt.color, alpha: pt.alpha, spec: pt.metal > 0.5 ? 0.95 : 0.4, noShadow: pt.alpha < 0.9 }); }
   }
 
   setPatient(spec, tone = this.tone) {
@@ -311,8 +321,11 @@ export class Scene {
     const running = p.vol.infusions && p.vol.infusions.length > 0;
     P.b(px + 0.07, 1.3, pz + 0.052, 0.09, 0.05, 0.008, { color: [0.05, 0.08, 0.08], emissive: running ? [0.1, 0.8, 0.4] : [0.05, 0.2, 0.2] });
     const bagFill = fl.ivAccess ? 1 : 0.6;
-    r.draw(g.bag, mat4.multiply(mat4.translation(px, 1.85, pz), mat4.scaling(0.07, 0.11 * bagFill, 0.035)), { color: [0.75, 0.9, 0.95], alpha: 0.85, spec: 0.5 });
-    r.draw(g.bag, mat4.multiply(mat4.translation(px + 0.17, 1.85, pz), mat4.scaling(0.06, 0.1, 0.03)), { color: [0.75, 0.15, 0.2], alpha: 0.85, spec: 0.5 });
+    for (const [dx, col, fill] of [[0, [0.86, 0.94, 0.98], bagFill], [0.15, [0.62, 0.06, 0.1], 0.9]]) {     // crystalloid bag and a unit of blood: flat PVC bags with a port
+      P.b(px + dx, 1.86, pz, 0.11, 0.2, 0.012, { color: [0.92, 0.95, 0.97], alpha: 0.35, spec: 0.9 });
+      P.b(px + dx, 1.86 - 0.1 * (1 - fill), pz, 0.1, 0.19 * fill, 0.016, { color: col, alpha: 0.72, spec: 0.8 });
+      P.c(px + dx, 1.74, pz, 0.006, 0.035, { color: [0.9, 0.9, 0.9], spec: 0.5 }); P.b(px + dx, 1.97, pz, 0.03, 0.01, 0.012, { color: [0.85, 0.85, 0.85] });
+    }
     // patient monitor stand
     P.c(STAND[0], 0.015, STAND[1], 0.27, 0.03, { color: [0.3, 0.3, 0.33], spec: 0.3 });
     // anaesthesia machine / ventilator at the head of the bed
@@ -430,58 +443,93 @@ export class Scene {
     };
     const blob = (c, sx, sy, sz, col, extra = {}) => r.draw(fr.sph, mat4.multiply(mat4.translation(c[0], c[1], c[2]), mat4.scaling(sx, sy, sz)), { color: col, ...extra });
     const up = (v, dy) => [v[0], v[1] + dy, v[2]];
-    if (fl.padsOn) {
-      for (const k of ['padRight', 'padLeft']) { const c = up(W[k], 0.012); r.draw(fr.pad, mat4.multiply(mat4.translation(c[0], c[1], c[2]), mat4.scaling(0.075, 1, 0.095)), { color: [0.95, 0.95, 0.4], spec: 0.1 }); }
-      seg(up(W.padRight, 0.02), [W.padRight[0] + 0.25, 0.9, W.padRight[2] + 0.35], 0.006, [0.8, 0.1, 0.1]);
-      seg([W.padRight[0] + 0.25, 0.9, W.padRight[2] + 0.35], [CART[0] + 0.19, 1.0, CART[2] + 0.17], 0.005, [0.8, 0.1, 0.1]);   // cable to the defibrillator
+    // helpers: an instrument from the asset, a disc lying on the skin, a flexible tube along a quadratic curve
+    const inst = (name, tip, axis, roll = 0, opts = {}) => this._instrument(name, tip, axis, roll, opts);
+    const disc = (c, n, tan, rx, rz, col, extra = {}) => { const ey = vec3.norm(n); let ex = vec3.sub(tan, vec3.scale(ey, vec3.dot(tan, ey))); ex = vec3.norm(ex); const ez = vec3.cross(ex, ey); r.draw(fr.sph, mat4.multiply(mat4.fromBasis(ex, ey, ez, c), mat4.scaling(rx, 0.0015, rz)), { color: col, ...extra }); };
+    const hose = (a, ctrl, b, rad, col, extra = {}) => { let prev = a; for (let i = 1; i <= 12; i++) { const k = i / 12, q = [0, 1, 2].map(j => (1 - k) * (1 - k) * a[j] + 2 * (1 - k) * k * ctrl[j] + k * k * b[j]); seg(prev, q, rad, col, extra); prev = q; } };
+    const SF = (k) => this.siteFrame?.(k);
+    const onSkin = (f, h = 0.002) => [f.p[0] + f.n[0] * h, f.p[1] + f.n[1] * h, f.p[2] + f.n[2] * h];
+    if (fl.padsOn) {                                            // multifunction pads stuck on the skin, red leads to the defibrillator
+      for (const [k, nm] of [['padRight', 'defibPadRight'], ['padLeft', 'defibPadLeft']]) { const f = SF(k) || { p: W[k], n: [0, 1, 0] }; inst(nm, onSkin(f, 0.003), f.n, 0); }
+      const pr = W.padRight; hose(up(pr, 0.02), [pr[0] + 0.3, 1.05, pr[2] - 0.35], [CART[0] + 0.19, 1.0, CART[2] + 0.17], 0.004, [0.72, 0.07, 0.06], { spec: 0.5 });
     }
-    if (fl.ecgLeads) for (const [dx, dz] of [[-0.12, 0.05], [0.1, 0.0], [0.05, -0.12]]) blob(up([W.sternum[0] + dx - 0.12, W.sternum[1], W.sternum[2] + dz * 0.4], 0.012), 0.012, 0.006, 0.012, [0.9, 0.9, 0.95]);
-    if (fl.spo2Probe) blob(up(W.leftArm, 0.05), 0.03, 0.012, 0.016, [0.2, 0.3, 0.9]);
-    if (fl.nibp) seg(up([W.leftArm[0] - 0.05, W.leftArm[1] + 0.02, W.leftArm[2]], 0.06), up([W.leftArm[0] + 0.05, W.leftArm[1] + 0.02, W.leftArm[2]], 0.06), 0.055, [0.25, 0.25, 0.3]);
-    if (fl.ivAccess && this.gest.ok('iv', this.t)) { seg(up(W.rightArmIV, 0.045), [POLE[0], 1.82, POLE[2]], 0.005, [0.8, 0.9, 0.95], { alpha: 0.8 }); blob(up(W.rightArmIV, 0.05), 0.014, 0.01, 0.014, [0.2, 0.7, 0.9]); }
+    if (fl.ecgLeads) {                                          // three foam electrodes with snaps, leads gathered toward the monitor
+      const st = SF('sternum') || { p: W.sternum, n: [0, 1, 0] }, lead = [[0.12, -0.09, [0.95, 0.95, 0.95]], [0.12, 0.09, [0.9, 0.2, 0.2]], [-0.1, 0.1, [0.2, 0.8, 0.3]]];
+      for (const [dx, dz, col] of lead) {
+        const q = [st.p[0] + dx, st.p[1], st.p[2] + dz], n = this.normalAt(q), base = [q[0] + n[0] * 0.012, q[1] + n[1] * 0.012 - 0.008, q[2] + n[2] * 0.012];
+        disc(base, n, [1, 0, 0], 0.02, 0.02, [0.96, 0.96, 0.94], { spec: 0.2 }); blob([base[0] + n[0] * 0.004, base[1] + n[1] * 0.004, base[2] + n[2] * 0.004], 0.005, 0.004, 0.005, [0.75, 0.77, 0.8], { spec: 0.9 });
+        hose([base[0] + n[0] * 0.006, base[1] + n[1] * 0.006, base[2] + n[2] * 0.006], [base[0] + 0.12, base[1] + 0.02, -0.45], [STAND[0] - 0.25, 0.95, STAND[1] + 0.35], 0.0018, col, { spec: 0.4 });
+      }
+    }
+    if (fl.spo2Probe) { const f = SF('leftArm') || { p: W.leftArm, n: [0, 1, 0] }; blob(up([f.p[0] - 0.24, f.p[1], f.p[2] + 0.03], 0.015), 0.022, 0.012, 0.014, [0.18, 0.22, 0.28], { spec: 0.5 }); }
+    if (fl.nibp) { const a = W.leftArm; seg(up([a[0] + 0.03, a[1] - 0.02, a[2]], 0.0), up([a[0] + 0.15, a[1] - 0.02, a[2]], 0.0), 0.05, [0.2, 0.22, 0.28], { spec: 0.15 }); }
+    if (fl.ivAccess && this.gest.ok('iv', this.t)) {            // 18 G cannula taped under a clear dressing, giving set to the IV pole
+      const f = SF('rightArmIV') || { p: W.rightArmIV, n: [0, 1, 0] }, ax = this.armAxis(), dir = vec3.norm(vec3.add(vec3.scale(f.n, -1), vec3.scale(ax, 2.7)));
+      const tip = vec3.add(f.p, vec3.scale(dir, 0.02)); inst('ivCannula', tip, vec3.scale(dir, -1), 0, { skip: ['steel'] });
+      disc(onSkin(f, 0.003), f.n, ax, 0.022, 0.018, [0.92, 0.96, 1.0], { alpha: 0.18, spec: 1, noShadow: true });
+      const hub = vec3.add(f.p, vec3.add(vec3.scale(dir, -0.05), vec3.scale(f.n, 0.012)));
+      hose(hub, [hub[0] + 0.05, hub[1] + 0.25, hub[2] - 0.2], [POLE[0] + 0.07, 1.25, POLE[2]], 0.0025, [0.86, 0.93, 0.97], { alpha: 0.75, spec: 0.9 });
+    }
     // airway devices
     const dev = p.airway.device;
     if (p.o2 && dev !== 'ett') blob([face[0] + 0.02, face[1] + 0.035, face[2]], 0.075, 0.05, 0.065, [0.7, 0.85, 0.9], { alpha: 0.55, spec: 0.5 });
-    if ((dev === 'ett' || p.airway.intubated) && this.gest.ok('ett', this.t)) { seg(up(W.airway, 0.04), up([W.airway[0] + 0.2, W.airway[1], W.airway[2]], 0.07), 0.01, [0.95, 0.9, 0.5]); }
+    if ((dev === 'ett' || p.airway.intubated) && dev !== 'fona' && this.gest.ok('ett', this.t)) {   // clear PVC tube with its blue line, taped at the corner of the mouth, 15 mm connector
+      const m0 = up(W.airway, 0.006), m1 = up([W.airway[0] + 0.07, W.airway[1], W.airway[2] + 0.01], 0.05), m2 = up([W.airway[0] + 0.17, W.airway[1], W.airway[2] + 0.01], 0.075);
+      hose(m0, m1, m2, 0.0058, [0.88, 0.94, 0.96], { alpha: 0.8, spec: 1 }); seg(m2, [m2[0] + 0.025, m2[1] + 0.004, m2[2]], 0.0085, [0.95, 0.95, 0.93], { spec: 0.5 });
+      seg(up([W.airway[0] - 0.005, W.airway[1], W.airway[2] - 0.035], 0.004), up([W.airway[0] + 0.01, W.airway[1], W.airway[2] + 0.04], 0.004), 0.004, [0.93, 0.92, 0.86], { spec: 0.1 });   // tape
+    }
     if (p.tube?.scopeIn) {                                     // bronchoscope: insertion cord into the tube connector, control body held above the head, light cable
       const port = up([W.airway[0] + 0.2, W.airway[1], W.airway[2]], 0.075), body = [port[0] + 0.02, port[1] + 0.34, port[2] + 0.16], top = [body[0] + 0.03, body[1] + 0.13, body[2]];
       seg(port, [port[0] + 0.03, port[1] + 0.06, port[2]], 0.012, [0.85, 0.87, 0.9], { spec: 0.6 });   // swivel adaptor
       seg([port[0] + 0.03, port[1] + 0.06, port[2]], body, 0.0035, [0.08, 0.08, 0.09], { spec: 0.5 });
       seg(body, top, 0.018, [0.12, 0.13, 0.15], { spec: 0.5 }); blob(top, 0.022, 0.016, 0.022, [0.15, 0.16, 0.18], { spec: 0.6 });
-      blob([body[0] - 0.01, body[1] + 0.06, body[2] + 0.03], 0.03, 0.04, 0.025, [0.2, 0.32, 0.75], { spec: 0.4 });   // gloved hand on the control body
       seg([body[0], body[1] + 0.05, body[2] - 0.02], [body[0] + 0.25, body[1] - 0.05, body[2] - 0.35], 0.006, [0.1, 0.1, 0.11]);   // light cable, routed behind the head
     }
     if (p.vent.mode === 'ctrl' && (dev === 'ett' || dev === 'bvm' || p.o2)) {
-      blob([face[0] + 0.28, face[1] + 0.15, face[2] + 0.06], 0.07, 0.09, 0.05, [0.95, 0.95, 0.9], { alpha: 0.9 });
-      seg(up([face[0] + 0.2, face[1] + 0.06, face[2]], 0.03), [VENT[0] - 0.12, 1.05, VENT[2] - 0.15], 0.012, [0.3, 0.4, 0.45], { alpha: 0.9 });      // breathing circuit to the anaesthesia machine
+      const y0 = up([face[0] + 0.21, face[1] + 0.07, face[2]], 0.03), y1 = [y0[0] + 0.06, y0[1] + 0.02, y0[2]];
+      seg(y0, y1, 0.009, [0.9, 0.92, 0.93], { spec: 0.6 });                                                  // catheter mount + Y-piece
+      for (const k of [-1, 1]) {                                                                            // inspiratory and expiratory limbs, corrugated
+        const a = [y1[0], y1[1], y1[2] + k * 0.012], ctrl = [y1[0] + 0.25, y1[1] + 0.25, y1[2] + k * 0.08 + 0.1], b = [VENT[0] - 0.2, 1.08, VENT[2] - 0.12 + k * 0.05];
+        let prev = a; for (let i = 1; i <= 16; i++) { const t = i / 16, q = [0, 1, 2].map(j => (1 - t) * (1 - t) * a[j] + 2 * (1 - t) * t * ctrl[j] + t * t * b[j]); seg(prev, q, i % 2 ? 0.0105 : 0.0115, k < 0 ? [0.55, 0.68, 0.8] : [0.82, 0.86, 0.9], { alpha: 0.85, spec: 0.7 }); prev = q; }
+      }
     }
-    // chest compressions: rescuer hands + forearms
-    if (arrested && p.cpr.stats && p.cpr.stats.lastAge < 1.5 && p.cpr.stats.rate > 0) {
-      const s = up(W.sternum, 0.03 - this.compAmt), s2 = [s[0] - 0.02, s[1] + 0.02, s[2]];
-      blob(s, 0.055, 0.025, 0.04, [0.88, 0.7, 0.58]);
-      seg(s2, [s2[0] - 0.55, s2[1] + 0.55 - this.compAmt * 0.5, s2[2] + 0.30], 0.035, [0.25, 0.45, 0.8]);
-    }
+    // chest compressions are shown by the chest itself (compression weights) and the monitor's CPR artefact
     // surgical gestures: catheter, chest drain, surgical airway, ultrasound mark
     const ch = p.chest, nk = p.neck;
-    if (ch && this.chestSites) {
-      if (ch.needle && ch.side && this.gest.ok('needle', this.t)) { const a = this.chestSites[ch.side][ch.needle.site] || this.chestSites[ch.side].mal5, o = this.sideSign * (ch.side === 'R' ? 1 : -1);
-        seg(a, [a[0], a[1] + 0.07, a[2] + o * 0.05], 0.004, [0.2, 0.6, 0.95]); blob([a[0], a[1] + 0.075, a[2] + o * 0.055], 0.012, 0.012, 0.012, ch.needle.patent ? [0.25, 0.85, 0.35] : [0.9, 0.2, 0.2], { emissive: [0.05, 0.15, 0.05] }); }
-      if (ch.tube && ch.tube.side && this.gest.ok('tube', this.t)) { const a = this.chestSites[ch.tube.side].mal5, o = this.sideSign * (ch.tube.side === 'R' ? 1 : -1), bot = [a[0] - 0.1, 0.45, a[2] + o * 0.55];
-        seg(a, [a[0] - 0.02, a[1] + 0.04, a[2] + o * 0.08], 0.011, [0.85, 0.9, 0.95], { alpha: 0.85 }); seg([a[0] - 0.02, a[1] + 0.04, a[2] + o * 0.08], [bot[0], bot[1] + 0.16, bot[2]], 0.01, [0.85, 0.9, 0.95], { alpha: 0.85 });
-        r.draw(fr.cyl, mat4.multiply(mat4.translation(bot[0], bot[1], bot[2]), mat4.scaling(0.07, 0.16, 0.07)), { color: [0.75, 0.88, 0.95], alpha: 0.55 });
-        r.draw(fr.cyl, mat4.multiply(mat4.translation(bot[0], bot[1] - 0.04, bot[2]), mat4.scaling(0.062, 0.08 + 0.08 * Math.min(1, (ch.tube.drained || 0)), 0.062)), { color: [0.55, 0.1, 0.1], alpha: 0.7 }); }
+    if (ch) {
+      if (ch.needle && ch.side && this.gest.ok('needle', this.t)) {           // 14 G catheter left in the chest wall, perpendicular to the skin
+        const f = SF(`${ch.side}_${ch.needle.site || 'mcl2'}`) || { p: this.chestSites[ch.side].mal5, n: [0, 1, 0] };
+        inst('needle14G', vec3.add(f.p, vec3.scale(f.n, -0.045)), f.n, 0, { skip: ['steel', 'flash_orange'] });
+        if (!ch.needle.patent) disc(onSkin(f, 0.003), f.n, [1, 0, 0], 0.006, 0.006, [0.6, 0.05, 0.05], { spec: 0.8 });
+      }
+      if (ch.tube && ch.tube.side && this.gest.ok('tube', this.t)) {         // drain aimed at the apex, sutured, tubing to an underwater-seal bottle on the floor
+        const f = SF(`${ch.tube.side}_mal5`) || { p: this.chestSites[ch.tube.side].mal5, n: [0, 1, 0] };
+        const dir = vec3.norm(vec3.add(vec3.scale(f.n, -1), vec3.scale([1, 0, 0], 0.9)));
+        inst('chestDrain', vec3.add(f.p, vec3.scale(dir, 0.11)), vec3.scale(dir, -1), 0);
+        const out = vec3.add(f.p, vec3.scale(dir, -0.35)), lat = ch.tube.side === 'R' ? -1 : 1, bottle = [f.p[0] - 0.35, 0.16, lat * 0.62];
+        hose(out, [out[0] - 0.05, 0.75, lat * 0.6], [bottle[0], 0.33, bottle[2]], 0.006, [0.85, 0.92, 0.95], { alpha: 0.65, spec: 1 });
+        r.draw(fr.cyl, mat4.multiply(mat4.translation(...bottle), mat4.scaling(0.075, 0.32, 0.075)), { color: [0.82, 0.92, 0.96], alpha: 0.35, spec: 1, noShadow: true });
+        const lvl = 0.1 + 0.05 * Math.min(1, ch.tube.drained || 0), swing = 0.006 * Math.sin(this.breathPh);
+        r.draw(fr.cyl, mat4.multiply(mat4.translation(bottle[0], bottle[1] - 0.16 + lvl / 2 + swing, bottle[2]), mat4.scaling(0.07, lvl, 0.07)), { color: [0.62, 0.12, 0.12], alpha: 0.75, spec: 0.8, noShadow: true });
+        r.draw(fr.cyl, mat4.multiply(mat4.translation(bottle[0], bottle[1] + 0.17, bottle[2]), mat4.scaling(0.078, 0.02, 0.078)), { color: [0.2, 0.45, 0.8], spec: 0.4 });
+        if (ch.air > 0.02) for (let i = 0; i < 4; i++) { const ph = ((this.t * 0.9 + i * 0.25) % 1); blob([bottle[0] + 0.02 * Math.sin(i * 2), bottle[1] - 0.12 + ph * 0.1, bottle[2] + 0.02 * Math.cos(i * 3)], 0.006, 0.006, 0.006, [0.95, 0.97, 1], { alpha: 0.6 * (1 - ph), noShadow: true }); }
+        disc(onSkin(f, 0.003), f.n, [1, 0, 0], 0.03, 0.025, [0.95, 0.95, 0.93], { spec: 0.2 });   // dressing around the drain
+      }
     }
     if (nk && this.gest.ok('neck', this.t)) {
-      const n = W.neck;
-      if (nk.marked && !nk.fona) blob(up(n, 0.012), 0.012, 0.004, 0.012, [0.2, 0.9, 0.3], { emissive: [0.1, 0.4, 0.1] });
-      if (nk.fona?.kind === 'tube') { seg(up(n, 0.0), up([n[0] + 0.02, n[1], n[2]], 0.09), 0.009, [0.95, 0.9, 0.5]); blob(up(n, 0.095), 0.016, 0.012, 0.016, [0.3, 0.5, 0.95]); }
-      else if (nk.fona?.kind === 'cannula') { seg(up(n, 0.0), up(n, 0.06), 0.004, [0.9, 0.9, 0.95]); blob(up(n, 0.065), 0.01, 0.01, 0.01, nk.fona.displaced ? [0.9, 0.2, 0.2] : [0.95, 0.75, 0.1]); }
+      const f = SF('neck') || { p: W.neck, n: [0, 1, 0] };
+      if (nk.marked && !nk.fona) { disc(onSkin(f, 0.0015), f.n, [0, 0, 1], 0.012, 0.0012, [0.15, 0.2, 0.75], { spec: 0.3 }); }   // skin marker line over the membrane
+      if (nk.fona?.kind === 'tube') {                                           // 6.0 cuffed tube through the membrane, connector up, ties around the neck
+        const dir = vec3.norm(vec3.add(vec3.scale(f.n, -1), [-0.7, 0, 0]));
+        hose(vec3.add(f.p, vec3.scale(dir, 0.05)), f.p, vec3.add(f.p, vec3.scale(f.n, 0.07)), 0.0052, [0.88, 0.94, 0.96], { alpha: 0.85, spec: 1 });
+        const top = vec3.add(f.p, vec3.scale(f.n, 0.07)); seg(top, vec3.add(top, vec3.scale(f.n, 0.025)), 0.0085, [0.95, 0.95, 0.93], { spec: 0.5 });
+      } else if (nk.fona?.kind === 'cannula') { inst('needle14G', vec3.add(f.p, vec3.scale(f.n, -0.03)), f.n, 0, { skip: ['steel', 'flash_orange'] }); }
     }
-    this.gest.draw({ r, fr, seg, blob, scene: this }, this.t);
+    this.gest.draw({ r, fr, seg, blob, scene: this, inst, disc }, this.t);
     // hands-on: the instrument in the hand, the incision being drawn
     const gh = this.ghost || (this.afterGhost && this.t < this.afterGhost.until ? this.afterGhost : null);
     if (gh) { const n = gh.n, q = [gh.p[0] + n[0] * ((gh.lift || 0) - (gh.depth || 0)), gh.p[1] + n[1] * ((gh.lift || 0) - (gh.depth || 0)), gh.p[2] + n[2] * ((gh.lift || 0) - (gh.depth || 0))]; this._instrument(gh.tool, q, n, gh.angle || 0); }
-    if (this.cut) { const c = this.cut; seg(up(c.a, 0.002), up(c.b, 0.002), 0.0016, [0.5, 0.03, 0.04], { spec: 0.6 }); }
+    if (this.cut) { const c = this.cut, mid = c.a.map((v, i) => (v + c.b[i]) / 2), d = vec3.sub(c.b, c.a), L = Math.hypot(...d); if (L > 0.002) { const n = this.normalAt(mid); disc(vec3.add(mid, vec3.scale(n, 0.0014)), n, vec3.scale(d, 1 / L), L / 2, 0.0012, [0.32, 0.02, 0.03], { spec: 0.9 }); } }   // the incision opening as it is drawn
     // hotspot highlight
     if (this.hover && this.hover.equip) { const h = this.hover; r.draw(fr.sph, mat4.multiply(mat4.translation(h.c[0], h.c[1], h.c[2]), mat4.scaling(h.rad, h.rad, h.rad)), { color: [0.2, 0.8, 1.0], alpha: 0.1, emissive: [0.0, 0.12, 0.16], noShadow: true }); }
     // defibrillation flash
