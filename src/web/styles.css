@@ -199,7 +199,7 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; text-ali
 .menuL h1::before { content: ""; width: 34px; height: 34px; border-radius: 10px; flex: none; background: radial-gradient(circle at 30% 30%, #8fe0ff, var(--accent-2) 60%, #0b4f86); box-shadow: 0 6px 18px rgba(29, 155, 240, .45); }
 .menuL p.muted { margin-bottom: var(--s4); font-size: 14px; }
 .cards { display: flex; flex-direction: column; gap: var(--s2); overflow-y: auto; min-height: 0; padding-right: 4px; }
-.scard { position: relative; display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 14px 16px 14px 18px; border-radius: var(--r-lg); background: var(--surface); backdrop-filter: var(--blur); border: 1px solid var(--line); box-shadow: var(--shadow); overflow: hidden; }
+.scard { flex: none; position: relative; display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 14px 16px 14px 18px; border-radius: var(--r-lg); background: var(--surface); backdrop-filter: var(--blur); border: 1px solid var(--line); box-shadow: var(--shadow); overflow: hidden; }
 .scard::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--kind, var(--accent)); opacity: .9; }
 .scard[data-kind=ACLS] { --kind: #ff5d6c; } .scard[data-kind=Anaesthesia] { --kind: #a98bff; } .scard[data-kind=Trauma] { --kind: #ffb23d; } .scard[data-kind=free] { --kind: var(--good); }
 .scard b { font-size: 15px; font-weight: 700; }
@@ -338,3 +338,22 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; text-ali
 @media (max-width: 760px) { .br-head { flex-wrap: wrap; } .br-vit { order: 3; width: 100%; } .br-body { grid-template-columns: 1fr; } .br-pad { order: 2; } .br-side { order: 3; } }
 .db-actions { display: flex; justify-content: flex-end; margin-top: var(--s4); }
 .db-actions button { min-width: 140px; }
+
+/* ---------------------------------------------------------------- hands-on instrument tray */
+.tray { position: fixed; z-index: 25; left: 50%; bottom: 116px; transform: translateX(-50%); display: flex; gap: 6px; padding: 8px; border-radius: var(--r-xl); background: var(--surface); backdrop-filter: var(--blur); border: 1px solid var(--line-2); box-shadow: var(--shadow-lg); animation: rise .2s var(--ease); touch-action: none; }
+.tool { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 96px; min-height: 0; padding: 10px 6px 8px; border-radius: var(--r-lg); background: rgba(255, 255, 255, .04); cursor: grab; font-size: 12px; font-weight: 650; user-select: none; touch-action: none; }
+.tool:active { cursor: grabbing; }
+.tool .tool-ic { width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(135deg, rgba(255, 255, 255, .16), rgba(255, 255, 255, .04)); border: 1px solid var(--line-2); }
+.tool[data-tool=scalpel] .tool-ic, .tool[data-tool=needle14G] .tool-ic { background: linear-gradient(135deg, #d9dee4, #7d8791); }
+.tool[data-tool=syringe] .tool-ic { background: linear-gradient(135deg, #e9f5ff, #9ec3dc); }
+.tool[data-tool=ivCannula] .tool-ic { background: linear-gradient(135deg, #59d18a, #1e7f45); }
+.tool[data-tool=chestDrain] .tool-ic { background: linear-gradient(135deg, #e7f3f8, #2f63b8); }
+.tool[data-tool=forcepsGauze] .tool-ic { background: linear-gradient(135deg, #ffffff, #c9c6b8); }
+.tool[data-tool=tourniquet] .tool-ic { background: linear-gradient(135deg, #5a6470, #1d2228); }
+.tool[data-tool=bougie] .tool-ic { background: linear-gradient(135deg, #e6cf97, #9c7f3d); }
+.tool[data-tool=defibPadRight] .tool-ic { background: linear-gradient(135deg, #f3f2ea, #5b98d6); }
+.tool.hint { border-color: rgba(76, 195, 255, .55); box-shadow: 0 0 0 3px var(--accent-soft); }
+.ho-chip { position: fixed; z-index: 26; left: 50%; top: 64px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 12px; padding: 6px 6px 6px 16px; border-radius: 999px; background: var(--solid); border: 1px solid rgba(76, 195, 255, .5); box-shadow: var(--shadow-lg); font-weight: 650; font-variant-numeric: tabular-nums; animation: rise .2s var(--ease); }
+.ho-chip::before { content: "✋"; }
+.ho-chip button { min-height: 28px; border-radius: 999px; }
+@media (max-width: 860px) { .tray { bottom: 170px; max-width: 96vw; overflow-x: auto; } .tool { width: 76px; } }

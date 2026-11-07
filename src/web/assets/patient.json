@@ -1,0 +1,517 @@
+{
+ "generator": "assets-src/build_patient.py (Blender 4.2.16 LTS, MPFB 2.0.18)",
+ "units": "metres",
+ "up": "+Y",
+ "orientation": "supine; +X toward the head (crown at x=0, soles at x=-referenceHeight), +Y anterior (up), +Z patient's left, -Z patient's right; back rests on y=0; midsagittal plane z=0",
+ "referenceHeight": 1.7298,
+ "heightRule": "scale the whole patient uniformly by height/referenceHeight about the crown (origin); BMI scales with that factor too: BMI(h) = BMI_ref * h / referenceHeight",
+ "shapeKeys": [
+  "female",
+  "heavy",
+  "thin",
+  "old",
+  "female_heavy",
+  "female_thin",
+  "female_old"
+ ],
+ "shapeKeyRules": {
+  "female": "0 = male, 1 = female",
+  "old": "clamp((age - 25) / 65, 0, 1)",
+  "heavy": "BMI above the basis; pick from calibration (1 = BMI 50 male)",
+  "thin": "BMI below the basis; pick from calibration (1 = BMI 16 male)",
+  "female_heavy": "female * heavy",
+  "female_thin": "female * thin",
+  "female_old": "female * old",
+  "exclusive": "use heavy or thin, never both"
+ },
+ "basis": {
+  "sex": "male",
+  "ageYears": 25,
+  "bmiRef": 21.24
+ },
+ "bmiCalibration": {
+  "weights": [
+   0.0,
+   0.1,
+   0.2,
+   0.3,
+   0.4,
+   0.5,
+   0.6,
+   0.7,
+   0.8,
+   0.9,
+   1.0
+  ],
+  "density_kg_per_L": 1.01,
+  "atReferenceHeight": true,
+  "table": {
+   "male_25y": {
+    "heavy": [
+     21.24,
+     23.41,
+     25.73,
+     28.2,
+     30.83,
+     33.61,
+     36.56,
+     39.66,
+     42.94,
+     46.38,
+     50.0
+    ],
+    "thin": [
+     21.24,
+     20.68,
+     20.13,
+     19.58,
+     19.04,
+     18.51,
+     17.99,
+     17.48,
+     16.98,
+     16.48,
+     16.0
+    ]
+   },
+   "male_90y": {
+    "heavy": [
+     21.52,
+     23.69,
+     26.01,
+     28.47,
+     31.09,
+     33.87,
+     36.8,
+     39.89,
+     43.15,
+     46.58,
+     50.17
+    ],
+    "thin": [
+     21.52,
+     20.96,
+     20.42,
+     19.88,
+     19.35,
+     18.82,
+     18.31,
+     17.81,
+     17.31,
+     16.83,
+     16.35
+    ]
+   },
+   "female_25y": {
+    "heavy": [
+     20.75,
+     23.07,
+     25.53,
+     28.13,
+     30.88,
+     33.75,
+     36.76,
+     39.89,
+     43.14,
+     46.52,
+     50.0
+    ],
+    "thin": [
+     20.75,
+     20.24,
+     19.73,
+     19.23,
+     18.74,
+     18.26,
+     17.79,
+     17.33,
+     16.88,
+     16.43,
+     16.0
+    ]
+   },
+   "female_90y": {
+    "heavy": [
+     20.85,
+     23.19,
+     25.67,
+     28.31,
+     31.08,
+     33.99,
+     37.04,
+     40.21,
+     43.51,
+     46.93,
+     50.47
+    ],
+    "thin": [
+     20.85,
+     20.33,
+     19.81,
+     19.31,
+     18.82,
+     18.33,
+     17.86,
+     17.39,
+     16.94,
+     16.49,
+     16.05
+    ]
+   }
+  }
+ },
+ "morphScale": {
+  "heavy": 1.4798,
+  "thin": 0.7239,
+  "femaleHeavy": 1.8004,
+  "femaleThin": 0.6125
+ },
+ "color0": {
+  "R": "breathing weight 0..1 (chest and abdomen, anterior)",
+  "G": "chest-compression weight 0..1 (sternum)",
+  "B": "region id / 10, decode id = round(B * 10)",
+  "A": "1",
+  "regions": {
+   "none": 0,
+   "head": 1,
+   "neck": 2,
+   "chestL": 3,
+   "chestR": 4,
+   "arms": 5,
+   "abdomen": 6,
+   "groin": 7,
+   "legs": 8
+  }
+ },
+ "landmarks": {
+  "sternum": {
+   "anchorVertex": 2005,
+   "position": [
+    -0.4732,
+    0.23,
+    0.0
+   ],
+   "region": 3,
+   "blenderVertex": 1893
+  },
+  "airway": {
+   "anchorVertex": 467,
+   "position": [
+    -0.1759,
+    0.2583,
+    -0.0
+   ],
+   "region": 1,
+   "blenderVertex": 467
+  },
+  "face": {
+   "anchorVertex": 5806,
+   "position": [
+    -0.1662,
+    0.2554,
+    -0.0045
+   ],
+   "region": 1,
+   "blenderVertex": 5344
+  },
+  "neck": {
+   "anchorVertex": 841,
+   "position": [
+    -0.258,
+    0.1846,
+    0.0
+   ],
+   "region": 2,
+   "blenderVertex": 797
+  },
+  "rightArmIV": {
+   "anchorVertex": 3624,
+   "position": [
+    -0.5295,
+    0.1514,
+    -0.3381
+   ],
+   "region": 5,
+   "blenderVertex": 3329
+  },
+  "leftArm": {
+   "anchorVertex": 10857,
+   "position": [
+    -0.5799,
+    0.1513,
+    0.2365
+   ],
+   "region": 5,
+   "blenderVertex": 9997
+  },
+  "abdomen": {
+   "anchorVertex": 4506,
+   "position": [
+    -0.6916,
+    0.231,
+    0.0
+   ],
+   "region": 6,
+   "blenderVertex": 4115
+  },
+  "femoral": {
+   "anchorVertex": 4749,
+   "position": [
+    -0.8473,
+    0.2131,
+    -0.0905
+   ],
+   "region": 7,
+   "blenderVertex": 4346
+  },
+  "R_mcl2": {
+   "anchorVertex": 1482,
+   "position": [
+    -0.3838,
+    0.2107,
+    -0.1079
+   ],
+   "region": 4,
+   "blenderVertex": 1381
+  },
+  "R_mal5": {
+   "anchorVertex": 4306,
+   "position": [
+    -0.4885,
+    0.1445,
+    -0.1564
+   ],
+   "region": 4,
+   "blenderVertex": 3925
+  },
+  "R_aal5": {
+   "anchorVertex": 1948,
+   "position": [
+    -0.484,
+    0.2264,
+    -0.1151
+   ],
+   "region": 4,
+   "blenderVertex": 1836
+  },
+  "padRight": {
+   "anchorVertex": 1494,
+   "position": [
+    -0.4074,
+    0.2249,
+    -0.0779
+   ],
+   "region": 4,
+   "blenderVertex": 1393
+  },
+  "L_mcl2": {
+   "anchorVertex": 8751,
+   "position": [
+    -0.3898,
+    0.2184,
+    0.1036
+   ],
+   "region": 3,
+   "blenderVertex": 8074
+  },
+  "L_mal5": {
+   "anchorVertex": 11532,
+   "position": [
+    -0.4876,
+    0.1445,
+    0.1546
+   ],
+   "region": 3,
+   "blenderVertex": 10590
+  },
+  "L_aal5": {
+   "anchorVertex": 9185,
+   "position": [
+    -0.484,
+    0.2264,
+    0.1151
+   ],
+   "region": 3,
+   "blenderVertex": 8508
+  },
+  "padLeft": {
+   "anchorVertex": 9218,
+   "position": [
+    -0.4887,
+    0.2015,
+    0.1327
+   ],
+   "region": 3,
+   "blenderVertex": 8541
+  }
+ },
+ "meshes": {
+  "patient_body": {
+   "vertices": 13380,
+   "triangles": 26756
+  },
+  "patient_gown": {
+   "vertices": 1243,
+   "triangles": 2366
+  },
+  "patient_sheet": {
+   "vertices": 448,
+   "triangles": 810
+  },
+  "patient_hair": {
+   "vertices": 1755,
+   "triangles": 3344
+  },
+  "patient_eyebrows": {
+   "vertices": 124,
+   "triangles": 192
+  },
+  "patient_eyes": {
+   "vertices": 96,
+   "triangles": 172
+  }
+ },
+ "macros": {
+  "B": {
+   "gender": 1.0,
+   "age": 0.5,
+   "muscle": 0.5,
+   "weight": 0.5,
+   "proportions": 0.5,
+   "height": 0.5,
+   "cupsize": 0.5,
+   "firmness": 0.5,
+   "race": {
+    "asian": 0.3333333333333333,
+    "caucasian": 0.3333333333333333,
+    "african": 0.3333333333333333
+   }
+  },
+  "F": {
+   "gender": 0.0,
+   "age": 0.5,
+   "muscle": 0.5,
+   "weight": 0.5,
+   "proportions": 0.5,
+   "height": 0.5,
+   "cupsize": 0.5,
+   "firmness": 0.5,
+   "race": {
+    "asian": 0.3333333333333333,
+    "caucasian": 0.3333333333333333,
+    "african": 0.3333333333333333
+   }
+  },
+  "O": {
+   "gender": 1.0,
+   "age": 1.0,
+   "muscle": 0.5,
+   "weight": 0.5,
+   "proportions": 0.5,
+   "height": 0.5,
+   "cupsize": 0.5,
+   "firmness": 0.5,
+   "race": {
+    "asian": 0.3333333333333333,
+    "caucasian": 0.3333333333333333,
+    "african": 0.3333333333333333
+   }
+  },
+  "H": {
+   "gender": 1.0,
+   "age": 0.5,
+   "muscle": 0.0,
+   "weight": 1.0,
+   "proportions": 0.5,
+   "height": 0.5,
+   "cupsize": 0.5,
+   "firmness": 0.5,
+   "race": {
+    "asian": 0.3333333333333333,
+    "caucasian": 0.3333333333333333,
+    "african": 0.3333333333333333
+   }
+  },
+  "T": {
+   "gender": 1.0,
+   "age": 0.5,
+   "muscle": 0.0,
+   "weight": 0.0,
+   "proportions": 0.5,
+   "height": 0.5,
+   "cupsize": 0.5,
+   "firmness": 0.5,
+   "race": {
+    "asian": 0.3333333333333333,
+    "caucasian": 0.3333333333333333,
+    "african": 0.3333333333333333
+   }
+  },
+  "FH": {
+   "gender": 0.0,
+   "age": 0.5,
+   "muscle": 0.0,
+   "weight": 1.0,
+   "proportions": 0.5,
+   "height": 0.5,
+   "cupsize": 0.5,
+   "firmness": 0.5,
+   "race": {
+    "asian": 0.3333333333333333,
+    "caucasian": 0.3333333333333333,
+    "african": 0.3333333333333333
+   }
+  },
+  "FT": {
+   "gender": 0.0,
+   "age": 0.5,
+   "muscle": 0.0,
+   "weight": 0.0,
+   "proportions": 0.5,
+   "height": 0.5,
+   "cupsize": 0.5,
+   "firmness": 0.5,
+   "race": {
+    "asian": 0.3333333333333333,
+    "caucasian": 0.3333333333333333,
+    "african": 0.3333333333333333
+   }
+  },
+  "FO": {
+   "gender": 0.0,
+   "age": 1.0,
+   "muscle": 0.5,
+   "weight": 0.5,
+   "proportions": 0.5,
+   "height": 0.5,
+   "cupsize": 0.5,
+   "firmness": 0.5,
+   "race": {
+    "asian": 0.3333333333333333,
+    "caucasian": 0.3333333333333333,
+    "african": 0.3333333333333333
+   }
+  }
+ },
+ "pose": {
+  "left_abduction": 12.0,
+  "right_abduction": 40.0,
+  "arm_extension": 0.0,
+  "foot_plantarflexion": 22.0,
+  "leg_external_rotation": 8.0,
+  "leg_adduction": 4.0
+ },
+ "palmNormalsStanding": {
+  "L": [
+   0.0,
+   1.0,
+   -0.0
+  ],
+  "R": [
+   -0.0,
+   1.0,
+   -0.0
+  ]
+ },
+ "triangles": 33640
+}

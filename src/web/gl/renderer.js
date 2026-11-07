@@ -9,28 +9,29 @@ float vnoise(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * 
              mix(mix(hash13(i + vec3(0,0,1)), hash13(i + vec3(1,0,1)), f.x), mix(hash13(i + vec3(0,1,1)), hash13(i + vec3(1,1,1)), f.x), f.y), f.z); }`;
 
 const VS = `#version 300 es
-in vec3 aPos; in vec3 aNorm; in vec2 aW; in vec3 aTint;
-uniform mat4 uModel; uniform mat4 uVP; uniform float uBreath; uniform float uCompress;
-out vec3 vN; out vec3 vWP; out vec3 vTint;
+in vec3 aPos; in vec3 aNorm; in vec2 aW; in vec3 aTint; in vec2 aUV;
+uniform mat4 uModel; uniform mat4 uVP; uniform float uBreath; uniform float uCompress; uniform float uInflate; uniform vec3 uCompDir;
+out vec3 vN; out vec3 vWP; out vec3 vTint; out vec2 vUV;
 void main(){
-  vec3 p = aPos + aNorm * (uBreath * aW.x);
-  p.z -= uCompress * aW.y;
+  vec3 p = aPos + aNorm * (uBreath * aW.x + uInflate);
+  p -= uCompDir * (uCompress * aW.y);
   vec4 wp = uModel * vec4(p, 1.0);
-  vWP = wp.xyz; vTint = aTint;
+  vWP = wp.xyz; vTint = aTint; vUV = aUV;
   vN = transpose(inverse(mat3(uModel))) * aNorm;
   gl_Position = uVP * wp;
 }`;
 
 const VS_SHADOW = `#version 300 es
 in vec3 aPos; in vec3 aNorm; in vec2 aW;
-uniform mat4 uModel; uniform mat4 uVP; uniform float uBreath; uniform float uCompress;
-void main(){ vec3 p = aPos + aNorm * (uBreath * aW.x); p.z -= uCompress * aW.y; gl_Position = uVP * uModel * vec4(p, 1.0); }`;
+uniform mat4 uModel; uniform mat4 uVP; uniform float uBreath; uniform float uCompress; uniform float uInflate; uniform vec3 uCompDir;
+void main(){ vec3 p = aPos + aNorm * (uBreath * aW.x + uInflate); p -= uCompDir * (uCompress * aW.y); gl_Position = uVP * uModel * vec4(p, 1.0); }`;
 const FS_SHADOW = `#version 300 es
 precision mediump float; out vec4 o; void main(){ o = vec4(1.0); }`;
 
 const FS = `#version 300 es
 precision highp float; precision highp sampler2DShadow;
-in vec3 vN; in vec3 vWP; in vec3 vTint;
+in vec3 vN; in vec3 vWP; in vec3 vTint; in vec2 vUV;
+uniform sampler2D uAlbedo; uniform sampler2D uNormalMap; uniform int uTexMode; uniform float uAlphaCut;
 uniform vec3 uColor; uniform vec3 uEmissive; uniform float uSpec; uniform float uAlpha;
 uniform int uPattern; uniform vec3 uEye; uniform vec3 uLightPos; uniform vec3 uLightDir; uniform float uLightK;
 uniform mat4 uLightVP; uniform sampler2DShadow uShadow; uniform int uDirect;
@@ -52,11 +53,26 @@ float shadowAt(vec3 wp, vec3 n){
   return s / 12.0;
 }
 vec3 aces(vec3 x){ return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+// tangent-space normal map without stored tangents: cotangent frame from screen-space derivatives
+vec3 perturb(vec3 N, vec3 p, vec2 uv, vec3 m){
+  vec3 dp1 = dFdx(p), dp2 = dFdy(p); vec2 du1 = dFdx(uv), du2 = dFdy(uv);
+  vec3 a = cross(dp2, N), b = cross(N, dp1);
+  vec3 T = a * du1.x + b * du2.x, B = a * du1.y + b * du2.y;
+  float k = inversesqrt(max(max(dot(T, T), dot(B, B)), 1e-12));
+  return normalize(mat3(T * k, B * k, N) * m);
+}
 void main(){
   vec3 n = normalize(vN);
   if (!gl_FrontFacing) n = -n;
   vec3 V = uEye - vWP; float dist = length(V); V /= dist;
   vec3 base = pow(clamp(uColor * vTint, 0.0, 1.0), vec3(2.2));
+  float texA = 1.0;
+  if (uTexMode > 0) {                                       // albedo texture (sRGB) tinted by uColor (skin tone / pallor / cyanosis ratio)
+    vec4 tx = texture(uAlbedo, vUV); texA = tx.a;
+    if (tx.a < uAlphaCut) discard;
+    base = pow(tx.rgb, vec3(2.2)) * clamp(uColor, 0.0, 2.0);
+    if (uTexMode > 1) n = perturb(n, vWP, vUV, texture(uNormalMap, vUV).xyz * 2.0 - 1.0);
+  }
   float rough = clamp(1.0 - uSpec * 1.7, 0.2, 0.95), f0 = 0.04, wrap = 0.0, sss = 0.0, spMul = 1.0;
   vec3 em = pow(uEmissive, vec3(2.2)) * 3.2;
   float gloss = 0.0;
@@ -68,6 +84,10 @@ void main(){
   } else if (uPattern == 2) { // painted wall: soft lower wainscot band, chair rail, slight orange-peel
     float band = step(vWP.y, 1.05), rail = smoothstep(0.03, 0.0, abs(vWP.y - 1.07));
     base = mix(base, base * vec3(0.86, 0.93, 0.92), band) * (0.97 + 0.04 * vnoise(vWP * 26.0)) * (1.0 - 0.18 * rail); rough = mix(0.82, 0.55, band);
+  } else if (uPattern == 7) { // photographic skin (patient.glb): texture carries the detail; keep the scattering
+    float mott = vnoise(vWP * 22.0) - 0.5;
+    base *= vec3(1.0 + 0.04 * mott, 1.0 - 0.02 * mott, 1.0 - 0.04 * mott);
+    rough = 0.5; f0 = 0.028; wrap = 0.42; sss = 1.0; spMul = 0.65;
   } else if (uPattern == 3) { // skin
     float fadeP = 1.0 - smoothstep(1.2, 3.8, dist);
     vec3 pn = vec3(vnoise(vWP * 900.0), vnoise(vWP * 900.0 + 17.3), vnoise(vWP * 900.0 + 41.7)) - 0.5;
@@ -117,12 +137,12 @@ void main(){
   col += keyCol * spec * att * sh;
   float fr = pow(1.0 - nv, 5.0);
   col += (vec3(0.5, 0.6, 0.7) * (0.04 + uSpec * 0.5) * fr + (gloss > 0.5 ? vec3(0.35, 0.40, 0.42) * fr * (1.0 - rough) : vec3(0.0))) * ao;   // environment sheen at grazing angles
-  if (uPattern == 3) col += vec3(0.9, 0.55, 0.45) * pow(1.0 - nv, 3.0) * 0.07 * base;   // soft rim: blood-warm scatter at silhouettes
+  if (uPattern == 3 || uPattern == 7) col += vec3(0.9, 0.55, 0.45) * pow(1.0 - nv, 3.0) * 0.07 * base;   // soft rim: blood-warm scatter at silhouettes
   col += em;
   // gentle depth haze toward the room colour
   col = mix(col, vec3(0.07, 0.09, 0.11), clamp((dist - 5.0) * 0.04, 0.0, 0.35));
   if (uDirect == 1) col = pow(aces(col * 0.8), vec3(1.0 / 2.2));
-  o = vec4(col, uAlpha);
+  o = vec4(col, uAlpha * (uAlphaCut < 0.0 ? texA : 1.0));
 }`;
 
 const VS_TEX = `#version 300 es
@@ -175,7 +195,7 @@ function compile(gl, type, src) {
 function program(gl, vs, fs) {
   const p = gl.createProgram();
   gl.attachShader(p, compile(gl, gl.VERTEX_SHADER, vs)); gl.attachShader(p, compile(gl, gl.FRAGMENT_SHADER, fs));
-  gl.bindAttribLocation(p, 0, 'aPos'); gl.bindAttribLocation(p, 1, 'aNorm'); gl.bindAttribLocation(p, 2, 'aW'); gl.bindAttribLocation(p, 3, 'aTint');
+  gl.bindAttribLocation(p, 0, 'aPos'); gl.bindAttribLocation(p, 1, 'aNorm'); gl.bindAttribLocation(p, 2, 'aW'); gl.bindAttribLocation(p, 3, 'aTint'); gl.bindAttribLocation(p, 4, 'aUV');
   gl.linkProgram(p);
   if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error('link: ' + gl.getProgramInfoLog(p));
   return p;
@@ -188,8 +208,8 @@ export class Renderer {
     if (!gl) throw new Error('WebGL2 is not available in this browser.');
     this.gl = gl; this.canvas = canvas;
     this.prog = program(gl, VS, FS); this.progShadow = program(gl, VS_SHADOW, FS_SHADOW); this.progTex = program(gl, VS_TEX, FS_TEX);
-    this.u = uniforms(gl, this.prog, ['uModel', 'uVP', 'uBreath', 'uCompress', 'uColor', 'uEmissive', 'uSpec', 'uAlpha', 'uPattern', 'uEye', 'uLightPos', 'uLightDir', 'uLightK', 'uLightVP', 'uShadow', 'uDirect']);
-    this.us = uniforms(gl, this.progShadow, ['uModel', 'uVP', 'uBreath', 'uCompress']);
+    this.u = uniforms(gl, this.prog, ['uModel', 'uVP', 'uBreath', 'uCompress', 'uColor', 'uEmissive', 'uSpec', 'uAlpha', 'uPattern', 'uEye', 'uLightPos', 'uLightDir', 'uLightK', 'uLightVP', 'uShadow', 'uDirect', 'uAlbedo', 'uNormalMap', 'uTexMode', 'uAlphaCut', 'uInflate', 'uCompDir']);
+    this.us = uniforms(gl, this.progShadow, ['uModel', 'uVP', 'uBreath', 'uCompress', 'uInflate', 'uCompDir']);
     this.ut = uniforms(gl, this.progTex, ['uModel', 'uVP', 'uTex', 'uGlow', 'uDirect']);
     gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -261,9 +281,10 @@ export class Renderer {
     };
     mk(mesh.pos, 0, 3); mk(mesh.nrm, 1, 3); mk(mesh.w, 2, 2);
     if (mesh.tint) mk(mesh.tint, 3, 3); else gl.disableVertexAttribArray(3);
+    if (mesh.uv) mk(mesh.uv, 4, 2); else gl.disableVertexAttribArray(4);
     const ib = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.idx, gl.STATIC_DRAW);
     gl.bindVertexArray(null);
-    return { vao, count: mesh.idx.length, ref: mesh, hasTint: !!mesh.tint };
+    return { vao, count: mesh.idx.length, ref: mesh, hasTint: !!mesh.tint, hasUV: !!mesh.uv };
   }
   release(gm) { if (gm && gm.vao) this.gl.deleteVertexArray(gm.vao); }
   _quad() {
@@ -282,6 +303,16 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas2d);
+    return t;
+  }
+  /** Texture from a decoded image (ImageBitmap), with mipmaps and anisotropic filtering when available. */
+  imageTexture(img) {
+    const gl = this.gl, t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img); gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    const an = gl.getExtension('EXT_texture_filter_anisotropic'); if (an) gl.texParameterf(gl.TEXTURE_2D, an.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, gl.getParameter(an.MAX_TEXTURE_MAX_ANISOTROPY_EXT)));
     return t;
   }
   updateTexture(t, canvas2d) { if (this.mode === 'shadow') return; const gl = this.gl; gl.bindTexture(gl.TEXTURE_2D, t); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas2d); }
@@ -325,6 +356,7 @@ export class Renderer {
     const ld = vec3.norm(vec3.sub(this.lightTarget, this.lightPos)); gl.uniform3fv(this.u.uLightDir, ld);
     gl.uniformMatrix4fv(this.u.uLightVP, false, this.lightVP); gl.uniform1i(this.u.uDirect, this.postActive ? 0 : 1);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.shOk ? this.shTex : null); gl.uniform1i(this.u.uShadow, 1); gl.activeTexture(gl.TEXTURE0);
+    gl.uniform1i(this.u.uAlbedo, 2); gl.uniform1i(this.u.uNormalMap, 3);
   }
   /** Resolve the HDR target, build the bloom chain and write the tone-mapped picture to the canvas. */
   end() {
@@ -353,7 +385,7 @@ export class Renderer {
     if (this.mode === 'skip') return;
     if (this.mode === 'shadow') {
       if ((o.alpha ?? 1) < 0.9 || o.noShadow || (o.pattern || 0) === 1 || (o.pattern || 0) === 2) return;
-      gl.uniformMatrix4fv(this.us.uModel, false, model); gl.uniform1f(this.us.uBreath, o.breath || 0); gl.uniform1f(this.us.uCompress, o.compress || 0);
+      gl.uniformMatrix4fv(this.us.uModel, false, model); gl.uniform1f(this.us.uBreath, o.breath || 0); gl.uniform1f(this.us.uCompress, o.compress || 0); gl.uniform1f(this.us.uInflate, o.inflate || 0); gl.uniform3fv(this.us.uCompDir, o.compDir || [0, 0, 1]);
       gl.bindVertexArray(gm.vao); gl.drawElements(gl.TRIANGLES, gm.count, gl.UNSIGNED_INT, 0); return;
     }
     gl.useProgram(this.prog);
@@ -365,9 +397,22 @@ export class Renderer {
     gl.uniform1i(this.u.uPattern, o.pattern || 0);
     gl.uniform1f(this.u.uBreath, o.breath || 0);
     gl.uniform1f(this.u.uCompress, o.compress || 0);
+    gl.uniform1f(this.u.uInflate, o.inflate || 0); gl.uniform3fv(this.u.uCompDir, o.compDir || [0, 0, 1]);
+    const tm = o.albedo ? (o.normalMap ? 2 : 1) : 0;
+    gl.uniform1i(this.u.uTexMode, tm); gl.uniform1f(this.u.uAlphaCut, o.alphaCut ?? 0);
+    if (tm) {
+      gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, o.albedo); gl.uniform1i(this.u.uAlbedo, 2);
+      gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, o.normalMap || o.albedo); gl.uniform1i(this.u.uNormalMap, 3);
+      gl.activeTexture(gl.TEXTURE0);
+    }
+    if (o.cull === false) gl.disable(gl.CULL_FACE);
+    if (o.depthWrite === false) gl.depthMask(false);
     gl.bindVertexArray(gm.vao);
     if (!gm.hasTint) gl.vertexAttrib3f(3, 1, 1, 1);
+    if (!gm.hasUV) gl.vertexAttrib2f(4, 0, 0);
     gl.drawElements(gl.TRIANGLES, gm.count, gl.UNSIGNED_INT, 0);
+    if (o.cull === false) gl.enable(gl.CULL_FACE);
+    if (o.depthWrite === false) gl.depthMask(true);
   }
   /** Retained for compatibility: shadows now come from the shadow map. */
   drawShadow() {}

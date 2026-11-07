@@ -202,3 +202,28 @@ export class Guide {
     return { n, done: c('done'), early: c('early'), warn: c('warn'), skipped: c('skipped') };
   }
 }
+
+/**
+ * Hands-on gestures (handson.js): the instrument, its target landmark (scene.world key, or 'chestSite' resolved from the
+ * drop point), the tolerance radius, and the gesture with its limits. Steps without an entry keep the "Do this step" button.
+ * Depth and length limits are teaching values, not clinical standards (REF design in docs/VALIDATION.md).
+ */
+const HANDS = {
+  'rsi.iv': { tool: 'ivCannula', target: 'rightArmIV', radiusCm: 4, gesture: 'push', minCm: 1, maxCm: 3.5 },
+  'rsi.induce': { tool: 'syringe', target: 'rightArmIV', radiusCm: 6, gesture: 'place' },
+  'rsi.nmb': { tool: 'syringe', target: 'rightArmIV', radiusCm: 6, gesture: 'place' },
+  'defib.pads': { tool: 'defibPadRight', target: 'padRight', radiusCm: 5, gesture: 'place' },
+  'defib.drugs': { tool: 'syringe', target: 'rightArmIV', radiusCm: 6, gesture: 'place' },
+  'needle.site': { tool: 'forcepsGauze', target: 'chestSite', radiusCm: 3, gesture: 'hold', holdS: 2 },
+  'needle.insert': { tool: 'needle14G', target: 'chestSite', radiusCm: 2.5, gesture: 'push', minCm: 3, maxCm: 8, cmPerPx: 0.06 },
+  'drain.site': { tool: 'forcepsGauze', target: 'chestSite', site: 'mal5', radiusCm: 3, gesture: 'hold', holdS: 2 },
+  'drain.incise': { tool: 'scalpel', target: 'chestSite', site: 'mal5', radiusCm: 3, gesture: 'stroke', minCm: 2.5, maxCm: 5, axis: 'body' },
+  'drain.insert': { tool: 'chestDrain', target: 'chestSite', site: 'mal5', radiusCm: 3, gesture: 'push', minCm: 6, maxCm: 14, cmPerPx: 0.1 },
+  'fona.incise': { tool: 'scalpel', target: 'neck', radiusCm: 2, gesture: 'stroke', minCm: 1, maxCm: 10, axis: 'free', deriveApproach: true },
+  'fona.tube': { tool: 'bougie', target: 'neck', radiusCm: 2, gesture: 'push', minCm: 4, maxCm: 12, cmPerPx: 0.08 },
+  'iv.tourniquet': { tool: 'tourniquet', target: 'rightArmIV', radiusCm: 10, gesture: 'place' },
+  'iv.clean': { tool: 'forcepsGauze', target: 'rightArmIV', radiusCm: 4, gesture: 'hold', holdS: 2 },
+  'iv.insert': { tool: 'ivCannula', target: 'rightArmIV', radiusCm: 4, gesture: 'push', minCm: 1, maxCm: 3.5 },
+  'iv.flush': { tool: 'syringe', target: 'rightArmIV', radiusCm: 6, gesture: 'place' },
+};
+for (const pr of PROCEDURES) for (const st of pr.steps) { const h = HANDS[`${pr.id}.${st.id}`]; if (h) st.hand = h; }

@@ -5,6 +5,7 @@ import { Scene } from './scene.js';
 import { UI } from './ui.js';
 import { initLang, t } from './i18n.js';
 import { Bronchoscope } from './bronchoscope.js';
+import { HandsOn } from './handson.js';
 
 initLang();
 const root = document.getElementById('app');
@@ -24,6 +25,9 @@ try { scene = new Scene(glCanvas, monCanvas); } catch (e) {
 }
 const ui = new UI(root, { sim, scene, monitor, sound, glCanvas, monCanvas });
 ui.bronch = new Bronchoscope({ sim, scene, ui });
+scene.loadPatientAsset?.(); scene.loadInstruments?.();
+if (!noGl) ui.handsOn = new HandsOn({ scene, ui });
+scene.onAsset = () => { if (ui.panelOpen && ui.tab === 'tab_guide') ui.buildTabs(); };                          // realistic patient (assets/patient.glb); the procedural body stays until it is ready
 window.__tbl = { sim, scene, monitor, ui };         // debugging / automated UI tests
 
 monitor.onBeat = (spo2) => sound.beep(spo2);

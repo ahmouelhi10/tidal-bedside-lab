@@ -452,7 +452,10 @@ export class UI {
     if (cur) {
       this.dom.gdWait = el('div', { class: 'gd-wait small' });
       P.append(el('div', { class: 'gd-cur' }, el('div', { class: 'small muted', text: t('gd_step', { i: g.i + 1, n: steps.length }) }), el('b', { text: L(cur) }), cur.why ? el('p', { class: 'small', text: L(cur.why) }) : null, this.dom.gdWait,
-        el('div', { class: 'row2' }, this.btn(t('gd_do'), () => this.guideDo(), 'act primary', { id: 'btnGuideDo' }), this.btn(t('gd_skip'), () => this.guideSkip(), 'act'))));
+        cur.hand && this.handsOn?.available
+          ? el('div', { class: 'stack' }, this.btn('✋ ' + t('ho_use'), () => this.guideHands(), 'act primary', { id: 'btnGuideHands' }),
+              el('div', { class: 'row2' }, this.btn(t('ho_auto'), () => this.guideDo(), 'act', { id: 'btnGuideDo' }), this.btn(t('gd_skip'), () => this.guideSkip(), 'act')))
+          : el('div', { class: 'row2' }, this.btn(t('gd_do'), () => this.guideDo(), 'act primary', { id: 'btnGuideDo' }), this.btn(t('gd_skip'), () => this.guideSkip(), 'act'))));
       this.updateGuideWait();
     } else {
       const s = g.summary();
@@ -469,21 +472,30 @@ export class UI {
     const g = this.guide; if (!g || !g.step) return;
     g.status[g.i] = 'skipped'; this.sim.act({ type: 'note', text: `guide ${g.proc.id}: ${g.step.id} (skipped)` }); this._guideNext();
   }
-  guideDo() {
+  /** Hands-on: frame the site and hand over to the instrument tray; the gesture result then performs the step. */
+  guideHands() {
+    const g = this.guide, s = g?.step; if (!s?.hand || !this.handsOn) return;
+    this.scene.setCamera(s.cam || 'chest');
+    this.handsOn.begin(s, g.prm, (r) => { if (r) this.guideDo(r); else this.buildTabs(); });
+  }
+  guideDo(hand = null) {
     const g = this.guide, s = g?.step, p = this.sim.patient; if (!s || !p || this.sim.finished) return;
+    if (hand?.prm) Object.assign(g.prm, hand.prm);                               // the drop point chose the side / site / approach
     const ctx = { p, b: p.body, prm: g.prm }, rem = g.remaining(p), nr = s.ready?.(ctx), warn = s.check?.(ctx), lines = [];
     let status = rem > 0 || nr ? 'early' : warn ? 'warn' : 'done', engineGesture = false;
+    if (hand) { lines.push(`${hand.res.ok ? '✓' : '✗'} ${hand.note}`); if (!hand.res.ok && status === 'done') status = 'warn'; }
     if (rem > 0) lines.push(`${L(s.wait)} (${t('gd_wait', { s: Math.ceil(rem) })})`);
     if (nr) lines.push(L(nr));
     if (warn) lines.push(L(warn));
     for (const ev of (s.run ? s.run(ctx) : [])) {
       const r = this.sim.act(ev);
       if (GESTURE_TYPES.has(ev.type)) engineGesture = true;
-      if (r && r.ok === false) { status = 'warn'; lines.push(r.error || t('err_generic')); } else lines.push(...this.resultLines(ev, r));
+      if (r && r.ok === false) { status = 'warn'; lines.push(r.error || t('err_generic')); } else { lines.push(...this.resultLines(ev, r)); if (r && (r.wrongSide || r.reached === false) && status === 'done') status = 'warn'; }   // a needle on the wrong side or too short is a problem, not a success
     }
     if (s.msg) lines.push(L(s.msg(ctx)));
-    this.sim.act({ type: 'note', text: `guide ${g.proc.id}: ${s.id}${status !== 'done' ? ` (${status})` : ''}` });
-    if (s.g) this.scene.stepGesture(s.g, s.cam, this.scene.siteOf(s.at, g.prm)); else if (!engineGesture) this.scene.focus(s.cam || 'default', 2.2);
+    this.sim.act({ type: 'note', text: `guide ${g.proc.id}: ${s.id}${status !== 'done' ? ` (${status})` : ''}${hand ? ` [hands-on: ${hand.note}]` : ''}`.slice(0, 300) });
+    if (hand) this.scene.focus(s.cam || 'default', 1.6);                         // the learner's own instrument already showed the gesture
+    else if (s.g) this.scene.stepGesture(s.g, s.cam, this.scene.siteOf(s.at, g.prm)); else if (!engineGesture) this.scene.focus(s.cam || 'default', 2.2);
     g.status[g.i] = status; g.done[s.id] = p.t; g.notes[g.i] = lines.filter(Boolean).join(' · ') || null;
     if (lines.length) this.toast(lines[0], status !== 'done');
     this._guideNext();

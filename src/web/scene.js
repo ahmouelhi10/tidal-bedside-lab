@@ -5,6 +5,9 @@ import { Renderer, mat4, vec3 } from './gl/renderer.js';
 import { box, sphere, cylinder } from './gl/geometry.js';
 import { morphology, buildBody, supineMatrix, SKIN_TONES, skinColor, localToWorld } from './gl/body.js';
 import { raySphere } from './gl/math.js';
+import { parseGlb, decodeImages } from './gl/gltf.js';
+import { buildGlbBody } from './gl/patient-glb.js';
+import { prepare as preparePick, rayMesh } from './gl/pick.js';
 
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 const HOTSPOTS = [
@@ -12,6 +15,8 @@ const HOTSPOTS = [
   ['groin', 'femoral', 0.13, 'hs_groin'], ['abdomen', 'abdomen', 0.15, 'hs_abdomen'], ['neck', 'neck', 0.08, 'hs_neck'],
 ];
 const PIN_PATIENT = new Set(['head', 'chest', 'rarm', 'larm', 'groin', 'neck', 'flank']);
+// realistic patient (assets/patient.glb): crown position on the mattress and mattress top; asset axes already match the bay (+x head, +y up, +z patient's left)
+const CROWN_X = 0.93, BED_TOP = 0.86, TONE_REF = [0.80, 0.60, 0.44];
 
 // Room and equipment layout (metres; the bed is centred on x = -0.1, the patient's head points to +x). The IV pole stands on the far side, by the IV arm, out of the overview's line of sight.
 const ROOM = { x0: -3.0, x1: 1.95, z0: -2.6, z1: 3.7, h: 3.0 };
@@ -106,18 +111,70 @@ export class Scene {
   }
 
   /** (Re)build the patient mesh for a body spec. */
+  /** Load the realistic patient once; until it arrives (or if it fails) the procedural body is used. */
+  async loadPatientAsset(base = '/assets/') {
+    try {
+      const [buf, meta] = await Promise.all([fetch(base + 'patient.glb').then(r => { if (!r.ok) throw new Error('patient.glb ' + r.status); return r.arrayBuffer(); }), fetch(base + 'patient.json').then(r => r.json())]);
+      const glb = parseGlb(buf), imgs = await decodeImages(glb), r = this.r, tex = {};
+      const texFor = (mat, key) => { const i = glb.texImage(mat?.[key]?.index ?? mat?.pbrMetallicRoughness?.[key]?.index); return i != null && imgs[i] ? r.imageTexture(imgs[i]) : null; };
+      for (const [name, m] of Object.entries(glb.meshes)) tex[name] = { albedo: texFor(m.material, 'baseColorTexture'), normal: m.material?.normalTexture ? texFor(m.material, 'normalTexture') : null };
+      this.asset = { glb, meta, tex };
+      if (this.body) this.setPatient(this.body.spec, this.tone);
+      this.onAsset?.();
+    } catch (e) { console.warn('realistic patient unavailable, using the procedural body:', e && e.message); }
+  }
+
+  /** Instrument meshes for the hands-on procedures (assets/instruments.glb): name -> [{ g, color, alpha }]. */
+  async loadInstruments(base = '/assets/') {
+    try {
+      const buf = await fetch(base + 'instruments.glb').then(r => { if (!r.ok) throw new Error('instruments.glb ' + r.status); return r.arrayBuffer(); });
+      const glb = parseGlb(buf), out = {};
+      for (const [name, m] of Object.entries(glb.meshes)) out[name] = m.prims.map(pr => { const f = pr.material?.pbrMetallicRoughness?.baseColorFactor || [0.8, 0.8, 0.8, 1]; return { g: this.r.upload({ pos: pr.pos, nrm: pr.nrm, w: new Float32Array(pr.pos.length / 3 * 2), idx: pr.idx }), color: f.slice(0, 3), alpha: f[3], metal: pr.material?.pbrMetallicRoughness?.metallicFactor ?? 0 }; });
+      this.instruments = out;
+    } catch (e) { console.warn('instruments unavailable:', e && e.message); }
+  }
+  /** Ray-pick the realistic body's skin: { p, n, region } in world space, or null (also null with the procedural body). */
+  pickBody(cx, cy) {
+    const B = this.body; if (!B?.b?.glb || !this.r.invVP) return null;
+    if (!B.pick) B.pick = preparePick(B.b.meshes.body);
+    const ray = this.r.rayFromClient(cx, cy), s = B.b.scale, T = [CROWN_X, BED_TOP, 0];
+    const ro = ray.origin, o = [(ro[0] - T[0]) / s, (ro[1] - T[1]) / s, (ro[2] - T[2]) / s];
+    const h = rayMesh({ o, d: ray.dir }, B.pick); if (!h) return null;
+    return { p: [T[0] + h.p[0] * s, T[1] + h.p[1] * s, T[2] + h.p[2] * s], n: h.n, region: B.b.meshes.body.region[h.vert] };
+  }
+  /** Draw one instrument with its working point at p, long axis along n, turned by angle about n. */
+  _instrument(name, p, n, angle = 0) {
+    const parts = this.instruments?.[name]; if (!parts) return;
+    const ey = vec3.norm(n), ref = Math.abs(ey[0]) > 0.9 ? [0, 0, 1] : [1, 0, 0];
+    let ex = vec3.norm(vec3.cross(ref, ey)); const ez0 = vec3.cross(ex, ey);
+    ex = vec3.norm(vec3.add(vec3.scale(ex, Math.cos(angle)), vec3.scale(ez0, Math.sin(angle)))); const ez = vec3.cross(ex, ey);
+    const M = mat4.fromBasis(ex, ey, ez, p);
+    for (const pt of parts) this.r.draw(pt.g, M, { color: pt.color, alpha: pt.alpha, spec: pt.metal > 0.5 ? 0.9 : 0.35, noShadow: pt.alpha < 0.9 });
+  }
+
   setPatient(spec, tone = this.tone) {
     const r = this.r;
-    if (this.body) for (const k of ['skin', 'hair', 'eyes', 'pupils', 'lips', 'sheet']) r.release(this.body.g[k]);
-    const b = buildBody(morphology({ sex: spec.sex, age: spec.age, heightCm: spec.heightCm, weightKg: spec.weightKg }));
-    this.body = { b, g: { skin: r.upload(b.skin), hair: r.upload(b.hair), eyes: r.upload(b.eyes), pupils: r.upload(b.pupils), lips: r.upload(b.lips), sheet: r.upload(b.sheet) }, M: supineMatrix(b), spec };
+    if (this.body) for (const g of Object.values(this.body.g)) r.release(g);
+    const morph = morphology({ sex: spec.sex, age: spec.age, heightCm: spec.heightCm, weightKg: spec.weightKg });
+    let b, g, M;
+    if (this.asset) {
+      b = buildGlbBody(this.asset.glb, this.asset.meta, spec, morph);
+      g = Object.fromEntries(Object.entries(b.meshes).map(([k, m]) => [k, r.upload(m)]));
+      M = mat4.multiply(mat4.translation(CROWN_X, BED_TOP, 0), mat4.scaling(b.scale, b.scale, b.scale));
+    } else {
+      b = buildBody(morph);
+      g = { skin: r.upload(b.skin), hair: r.upload(b.hair), eyes: r.upload(b.eyes), pupils: r.upload(b.pupils), lips: r.upload(b.lips), sheet: r.upload(b.sheet) };
+      M = supineMatrix(b);
+    }
+    this.body = { b, g, M, spec }; this.cut = null;
     this.tone = tone; this.gest.clear();
     const ls = b.landmarks;
-    this.hot = HOTSPOTS.map(([id, lm, rad, label]) => ({ id, label, c: localToWorld(this.body.M, ls[lm]), rad: rad * (0.8 + 0.5 * Math.min(1, b.morph.bmi / 40)) }));
+    this.hot = HOTSPOTS.map(([id, lm, rad, label]) => ({ id, label, c: localToWorld(this.body.M, ls[lm]), rad: rad * (0.8 + 0.5 * Math.min(1, morph.bmi / 40)) }));
     // lateral chest wall (needle / drain sites) and the two sides, derived from the sternum and the right arm
-    { const st = this.hot.find(h => h.id === 'chest').c, ra = localToWorld(this.body.M, ls.rightArmIV), sgn = Math.sign(ra[2] - st[2]) || 1, hw = Math.min(0.3, Math.abs(ra[2] - st[2]) * 0.55), k = 0.8 + 0.5 * Math.min(1, b.morph.bmi / 40);
+    { const st = this.hot.find(h => h.id === 'chest').c, ra = localToWorld(this.body.M, ls.rightArmIV), sgn = Math.sign(ra[2] - st[2]) || 1, hw = Math.min(0.3, Math.abs(ra[2] - st[2]) * 0.55), k = 0.8 + 0.5 * Math.min(1, morph.bmi / 40);
       this.sideSign = sgn;
-      this.chestSites = Object.fromEntries(['R', 'L'].map(sd => { const z = sd === 'R' ? sgn : -sgn; return [sd, { mcl2: [st[0] + 0.1, st[1] - 0.01, st[2] + z * hw * 0.5], mal5: [st[0] - 0.07, st[1] - 0.045, st[2] + z * hw * 0.95], aal5: [st[0] - 0.05, st[1] - 0.03, st[2] + z * hw * 0.8] }]; }));
+      this.chestSites = b.glb ? Object.fromEntries(['R', 'L'].map(sd => [sd, Object.fromEntries(['mcl2', 'mal5', 'aal5'].map(k => [k, localToWorld(this.body.M, ls[`${sd}_${k}`])]))]))
+        : Object.fromEntries(['R', 'L'].map(sd => { const z = sd === 'R' ? sgn : -sgn; return [sd, { mcl2: [st[0] + 0.1, st[1] - 0.01, st[2] + z * hw * 0.5], mal5: [st[0] - 0.07, st[1] - 0.045, st[2] + z * hw * 0.95], aal5: [st[0] - 0.05, st[1] - 0.03, st[2] + z * hw * 0.8] }]; }));
       this.hot.push({ id: 'flank', label: 'hs_flank', c: this.chestSites[this.sideSign > 0 ? 'R' : 'L'].mal5, rad: 0.11 * k }); }
     this.equip = EQUIP.map(e => ({ id: e.id, label: e.label, c: e.c, rad: e.rad, equip: true }));
     this.world = Object.fromEntries(['sternum', 'padRight', 'padLeft', 'face', 'airway', 'rightArmIV', 'leftArm', 'neck', 'abdomen', 'femoral'].map(k => [k, localToWorld(this.body.M, ls[k])]));
@@ -311,13 +368,33 @@ export class Scene {
     // ---------------- patient
     const M = mat4.multiply(mat4.translation(0, jerk, 0), B.M);
     const o = { breath, compress: this.compAmt };
-    r.drawShadow(B.g.skin, M, { alpha: 0.22 });
-    r.draw(B.g.skin, M, { color: skin, spec: 0.3, pattern: 3, ...o });
-    r.draw(B.g.hair, M, { color: B.b.morph.fem ? [0.24, 0.14, 0.08] : [0.17, 0.115, 0.075], spec: 0.2, pattern: 4 });
-    r.draw(B.g.eyes, M, { color: [0.93, 0.93, 0.93], spec: 0.9, pattern: 6 });
-    r.draw(B.g.pupils, M, { color: arrested ? [0.02, 0.02, 0.02] : [0.05, 0.05, 0.05] });
-    r.draw(B.g.lips, M, { color: [0.62 - cyan * 0.25, 0.28, 0.28 + cyan * 0.2] });
-    r.draw(B.g.sheet, M, { color: p.therm.cover < 1 ? [0.74, 0.58, 0.40] : [0.72, 0.79, 0.84], spec: 0.05, pattern: 5, ...{ breath: breath * 0.2 } });
+    const sheetCol = p.therm.cover < 1 ? [0.74, 0.58, 0.40] : [0.72, 0.79, 0.84];
+    if (B.b.glb) {
+      const T = this.asset.tex, tint = skin.map((v, i) => v / TONE_REF[i]), A = (k) => T['patient_' + k] || {};
+      o.compDir = [0, 1, 0];                                   // the asset's anterior axis is +y (procedural body: +z)
+      // the chest is exposed for anything done on it: pads, leads, CPR, chest procedures and examinations in progress
+      const exposed = p.flags.padsOn || p.flags.ecgLeads || arrested || !!(p.chest && (p.chest.needle || p.chest.tube)) || this.gest.list.some(g => ['needle', 'tube', 'steth', 'probe', 'step_pads'].includes(g.k));
+      r.draw(B.g.body, M, { color: tint, spec: 0.3, pattern: 7, albedo: A('body').albedo, normalMap: A('body').normal, ...o });
+      r.draw(B.g.eyes, M, { color: [1, 1, 1], spec: 0.9, pattern: 6, albedo: A('eyes').albedo, ...o });
+      r.draw(B.g.eyebrows, M, { color: [1, 1, 1], spec: 0.05, albedo: A('eyebrows').albedo, alphaCut: -1, cull: false, depthWrite: false, noShadow: true, ...o });
+      const grey = Math.min(1, Math.max(0, (B.spec.age - 45) / 35));
+      r.draw(B.g.hair, M, { color: [1 + grey * 1.6, 1 + grey * 1.55, 1 + grey * 1.5], spec: 0.2, pattern: 4, albedo: A('hair').albedo, alphaCut: 0.5, cull: false, noShadow: true, ...o });
+      const infl = 0.004 + 0.016 * Math.min(1, B.b.weights.heavy + 0.5 * B.b.weights.female_heavy);   // heavier morphs need more clearance
+      if (!exposed) r.draw(B.g.gown, M, { color: [0.36, 0.55, 0.66], spec: 0.05, pattern: 5, cull: false, inflate: infl, ...o });
+      r.draw(B.g.sheet, M, { color: sheetCol, spec: 0.05, pattern: 5, cull: false, ...o });   // the draped sheet's normals are not consistently outward: no inflate
+      // arm board under the abducted right arm
+      const ra = this.world.rightArmIV, sh = [this.world.padRight[0] + 0.07, BED_TOP, this.world.padRight[2] - 0.12], d = [ra[0] - sh[0], 0, ra[2] - sh[2]], dl = Math.hypot(d[0], d[2]) || 1, ex = [d[0] / dl, 0, d[2] / dl], ez = [-ex[2], 0, ex[0]];
+      const c = [ra[0] + ex[0] * 0.08, BED_TOP - 0.025, ra[2] + ex[2] * 0.08];
+      r.draw(fr.ub, mat4.multiply(mat4.fromBasis(ex, [0, 1, 0], ez, c), mat4.scaling(0.62, 0.035, 0.15)), { color: [0.20, 0.24, 0.29], spec: 0.15 });
+      r.draw(fr.cyl, mat4.multiply(mat4.translation(c[0] + ex[0] * 0.12, BED_TOP - 0.33, c[2] + ex[2] * 0.12), mat4.scaling(0.018, 0.6, 0.018)), { color: [0.62, 0.64, 0.68], spec: 0.4 });
+    } else {
+      r.draw(B.g.skin, M, { color: skin, spec: 0.3, pattern: 3, ...o });
+      r.draw(B.g.hair, M, { color: B.b.morph.fem ? [0.24, 0.14, 0.08] : [0.17, 0.115, 0.075], spec: 0.2, pattern: 4 });
+      r.draw(B.g.eyes, M, { color: [0.93, 0.93, 0.93], spec: 0.9, pattern: 6 });
+      r.draw(B.g.pupils, M, { color: arrested ? [0.02, 0.02, 0.02] : [0.05, 0.05, 0.05] });
+      r.draw(B.g.lips, M, { color: [0.62 - cyan * 0.25, 0.28, 0.28 + cyan * 0.2] });
+      r.draw(B.g.sheet, M, { color: sheetCol, spec: 0.05, pattern: 5, ...{ breath: breath * 0.2 } });
+    }
     // bleeding
     const bleeding = p.vol.rates.bleed > 0, lost = p.vol.fractionLost;
     if (bleeding || (lost > 0.03 && (p.bleedControlledAt === null))) {
@@ -382,6 +459,11 @@ export class Scene {
       else if (nk.fona?.kind === 'cannula') { seg(up(n, 0.0), up(n, 0.06), 0.004, [0.9, 0.9, 0.95]); blob(up(n, 0.065), 0.01, 0.01, 0.01, nk.fona.displaced ? [0.9, 0.2, 0.2] : [0.95, 0.75, 0.1]); }
     }
     this.gest.draw({ r, fr, seg, blob, scene: this }, this.t);
+    // hands-on: target hint (learning mode), the instrument in the hand, the incision being drawn
+    if (this.targetHint) { const h = this.targetHint; r.draw(fr.sph, mat4.multiply(mat4.translation(...h.p), mat4.scaling(h.r, h.r, h.r)), { color: [0.25, 0.85, 1.0], alpha: 0.18, emissive: [0.0, 0.18, 0.24], noShadow: true }); }
+    const gh = this.ghost || (this.afterGhost && this.t < this.afterGhost.until ? this.afterGhost : null);
+    if (gh) { const n = gh.n, q = [gh.p[0] + n[0] * ((gh.lift || 0) - (gh.depth || 0)), gh.p[1] + n[1] * ((gh.lift || 0) - (gh.depth || 0)), gh.p[2] + n[2] * ((gh.lift || 0) - (gh.depth || 0))]; this._instrument(gh.tool, q, n, gh.angle || 0); }
+    if (this.cut) { const c = this.cut; seg(up(c.a, 0.002), up(c.b, 0.002), 0.0016, [0.5, 0.03, 0.04], { spec: 0.6 }); }
     // hotspot highlight
     if (this.hover) { const h = this.hover; r.draw(fr.sph, mat4.multiply(mat4.translation(h.c[0], h.c[1], h.c[2]), mat4.scaling(h.rad, h.rad, h.rad)), { color: [0.2, 0.8, 1.0], alpha: h.equip ? 0.13 : 0.28, emissive: [0.0, 0.15, 0.2] }); }
     // defibrillation flash
