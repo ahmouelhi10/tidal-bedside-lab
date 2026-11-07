@@ -8,7 +8,7 @@ Tidal Bedside Lab: a 3D emergency-room / anaesthesia physiology simulator for me
 
 ```bash
 npm start                      # node src/server/server.js -> http://localhost:8080
-npm test                       # node --test "tests/*.test.js" (~2 min)
+npm test                       # node scripts/test.js: runs every tests/*.test.js (~2 min; works on Node 20, which does not expand globs)
 node --test tests/pk.test.js   # one test file
 node --test --test-name-pattern="catalogue" tests/scenarios.test.js   # one test by name
 npm run check                  # node --check on every .js under src/, scripts/, tests/
