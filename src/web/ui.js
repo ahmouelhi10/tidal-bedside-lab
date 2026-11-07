@@ -750,5 +750,15 @@ export class UI {
       default: this.openTab('tab_orders');
     }
   }
+  /** Tell the scene how much of the window the panels cover, so the 3D view centres the patient in the free space. */
+  updateInsets() {
+    if (!this.dom || !this.scene) return;
+    const Wd = window.innerWidth, Hd = window.innerHeight, vis = (e) => e && !e.hidden && e.getClientRects().length > 0;
+    let l = 0, r = 0;
+    for (const e of [this.dom.panelWrap, this.dom.card, this.menuOpen ? this.dom.menu?.querySelector('.menuL') : null]) if (vis(e)) { const b = e.getBoundingClientRect(); if (b.left < Wd * 0.3 && b.height > Hd * 0.15) l = Math.max(l, b.right); }
+    for (const e of [this.menuOpen ? null : this.dom.right, this.menuOpen ? this.dom.menuR : null]) if (vis(e)) { const b = e.getBoundingClientRect(); if (b.right > Wd * 0.7 && b.height > Hd * 0.15) r = Math.max(r, Wd - b.left); }
+    if (Wd <= 600) { l = 0; r = 0; }                                             // phones: panels are bottom sheets
+    this.scene.inset = { l, r };
+  }
   trackMouse(e) { this._mouse = { x: e.clientX, y: e.clientY }; }
 }

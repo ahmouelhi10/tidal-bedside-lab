@@ -413,3 +413,22 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; text-ali
 .pw-step.done { color: var(--text-2); } .pw-step.done .pw-sic { color: #04201b; background: var(--pw); }
 .pw-step.warn .pw-sic, .pw-step.early .pw-sic { color: #2a1c00; background: var(--warn); }
 .pw-step.skipped { opacity: .55; text-decoration: line-through; }
+
+/* ================================================================ medium windows (601-860 px, e.g. a side pane): keep side panels, never cover the patient */
+@media (max-width: 860px) and (min-width: 601px) {
+  .hud-left { left: 8px; right: auto; top: 56px; bottom: 112px; width: min(300px, 42vw); max-height: none; }
+  .hud-right { width: min(34vw, 240px); top: 56px; bottom: auto; max-height: calc(100vh - 180px); }
+  .hud-right .log, .hud-right .trends, .hud-right .teach { display: none; }
+  .scen { max-height: 30vh; }
+  .panel { padding: 8px 10px 12px; }
+  .hud-panel .phead { padding: 10px 12px; }
+  .row4 { grid-template-columns: 1fr 1fr; }
+  .dc { grid-template-columns: minmax(84px, 104px) auto 1fr; }
+  .dc.inf { grid-template-columns: 1fr minmax(84px, 104px) auto; }
+  .dc.inf > :nth-child(n+4) { grid-column: span 1; }
+  .pw-table { grid-template-columns: repeat(2, 1fr); }
+  .menu { grid-template-columns: minmax(0, 1fr) minmax(260px, 42vw); grid-template-rows: minmax(0, 1fr); overflow: hidden; padding: 56px 12px 40px; background: radial-gradient(ellipse at 50% 55%, rgba(5, 8, 11, .1) 22%, rgba(5, 8, 11, .8) 85%); }
+  .menuL { grid-column: 1; grid-row: 1; min-height: 0; overflow-y: auto; } .menuR { grid-column: 2; grid-row: 1; overflow-y: auto; }
+}
+/* phones: bottom sheets, but never more than 42 % of the height */
+@media (max-width: 600px) { .hud-left { max-height: 42vh; } .pw-table { grid-template-columns: repeat(3, 1fr); } }

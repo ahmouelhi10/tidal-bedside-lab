@@ -183,12 +183,13 @@ export class Monitor {
       if (isAlarm) { ctx.fillStyle = '#ff5d6c'; ctx.fillRect(x0 + gap, y + gap, 3 * d, hgt); }
       ctx.textBaseline = 'top'; ctx.textAlign = 'left';
       ctx.font = `700 ${10.5 * d}px ${UI}`; ctx.fillStyle = dim ? COL.text2 : color; ctx.fillText(label, x0 + pad, y + gap + 6 * d);
-      if (unit) { ctx.font = `500 ${10 * d}px ${UI}`; ctx.fillStyle = COL.text2; ctx.textAlign = 'right'; ctx.fillText(unit, x0 + w - pad, y + gap + 6 * d); ctx.textAlign = 'left'; }
-      if (lim) { ctx.font = `500 ${9 * d}px ${UI}`; ctx.fillStyle = COL.text2; ctx.fillText(lim[0], x0 + pad, y + gap + 21 * d); ctx.fillText(lim[1], x0 + pad, y + gap + 31 * d); }
+      const roomy = w > 118 * d;                                               // small monitor: no unit / limits, the number keeps its room
+      if (unit && roomy) { ctx.font = `500 ${10 * d}px ${UI}`; ctx.fillStyle = COL.text2; ctx.textAlign = 'right'; ctx.fillText(unit, x0 + w - pad, y + gap + 6 * d); ctx.textAlign = 'left'; }
+      if (lim && roomy) { ctx.font = `500 ${9 * d}px ${UI}`; ctx.fillStyle = COL.text2; ctx.fillText(lim[0], x0 + pad, y + gap + 21 * d); ctx.fillText(lim[1], x0 + pad, y + gap + 31 * d); }
       // the big number fills the tile, right aligned, tabular figures
       // the digits must sit below the label row and above the sub line: cap height is about 0.72 of the font size
       const room = hgt - 22 * d - (sub ? 17 * d : 7 * d);
-      let fs = Math.max(10 * d, Math.min(room / 0.74, 54 * d)); const maxW = w - 2 * pad - (lim ? 26 * d : 0);
+      let fs = Math.max(10 * d, Math.min(room / 0.74, 54 * d)); const maxW = w - 2 * pad - (lim && roomy ? 26 * d : 0);
       const setF = () => { ctx.font = `600 ${fs}px ${UI}`; };
       setF(); while (ctx.measureText(big).width > maxW && fs > 10 * d) { fs -= 2 * d; setF(); }
       ctx.fillStyle = dim ? '#3c4752' : color; ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';

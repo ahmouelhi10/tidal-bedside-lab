@@ -70,6 +70,7 @@ export class Scene {
     this.yaw = CAMERAS.default.yaw; this.pitch = CAMERAS.default.pitch; this.dist = CAMERAS.default.dist; this.target = [...CAMERAS.default.target];
     this.goal = null; this.off = { yaw: 0, pitch: 0 }; this.hover = null; this.t = 0; this.breathPh = 0; this.compAmt = 0; this.shockT = 0; this.tone = 2; this.body = null;
     this.auto = false;            // slow cinematic orbit (case menu)
+    this.inset = { l: 0, r: 0 }; this.shift = 0;   // screen px covered by panels on the left / right (ui.updateInsets)
     this.gest = new Gestures(); this.rescuerHands = true; this.pins = []; this._bindInput(canvas);
   }
 
@@ -347,6 +348,7 @@ export class Scene {
     const eye = [this.target[0] + D * Math.cos(pitchV) * Math.sin(yawV), this.target[1] + D * Math.sin(pitchV), this.target[2] + D * Math.cos(pitchV) * Math.cos(yawV)];
     eye[0] = clamp(eye[0], ROOM.x0 + 0.15, ROOM.x1 - 0.15); eye[2] = clamp(eye[2], ROOM.z0 + 0.15, ROOM.z1 - 0.15); eye[1] = clamp(eye[1], 0.4, ROOM.h - 0.12);   // never leave the bay
     const cam = { eye, target: this.target, fov: 0.85 };
+    { const W = Math.max(1, this.canvas.clientWidth), goal = clamp((this.inset.l - this.inset.r) / W, -0.5, 0.5); this.shift += (goal - this.shift) * (1 - Math.exp(-realDt * 5)); r.shiftX = this.shift; }
 
     // ---------------- physiology -> appearance
     const sao2 = p.resp.sao2, arrested = p.arrest.arrested, perf = p.circ.mapArt;

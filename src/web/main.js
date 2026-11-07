@@ -83,10 +83,11 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === 'Escape') { const m = document.querySelector('.modal'); if (m) m.remove(); else ui.escape(); }
 });
 
-let last = performance.now(), uiAcc = 0, alarmCheck = 0;
+let last = performance.now(), uiAcc = 0, alarmCheck = 0, insetAcc = 0;
 function loop(now) {
   const dt = Math.min(0.25, (now - last) / 1000); last = now;
   const live = sim.patient;
+  insetAcc += dt; if (insetAcc > 0.2) { insetAcc = 0; ui.updateInsets?.(); }
   try {
     if (ui.menuOpen) {                                          // case menu: slowly orbit the patient being built
       if (sim.previewPatient) { monitor.update(dt, sim.previewPatient); scene.draw(dt, sim.previewPatient); }
