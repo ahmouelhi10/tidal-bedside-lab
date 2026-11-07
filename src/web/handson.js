@@ -29,15 +29,15 @@ export class HandsOn {
   constructor({ scene, ui }) { this.scene = scene; this.ui = ui; this.active = null; this._bind(); }
   get available() { return !!(this.scene.asset && this.scene.instruments); }
 
-  /** Start the hands-on phase of a guided step. onDone(result) receives { res, prm, note } or null when cancelled. */
-  begin(step, prm, onDone) {
+  /** Grab an instrument from the instrument table for the current step. onDone(result) gets { res, prm, note }, or null. */
+  grab(tool, e, step, prm, onDone) {
     this.end();
-    this.active = { step, hand: step.hand, prm: { ...prm }, onDone, phase: 'pick', hit: null, t0: 0 };
-    this._tray(); this._chip();
+    this.active = { step, hand: step.hand, prm: { ...prm }, onDone, phase: 'drag', tool, hit: null, t0: 0 };
+    this._chip(); this._move(e);
   }
   end() {
-    this.active = null; this.scene.ghost = null; this.scene.targetHint = null;
-    this.dom?.remove(); this.dom = null; this.chip?.remove(); this.chip = null;
+    this.active = null; this.scene.ghost = null; this.scene.canvas.style.cursor = '';
+    this.chip?.remove(); this.chip = null;
   }
 
   /** world position of the step's target (chest sites come from the chosen side and site) */
@@ -47,18 +47,6 @@ export class HandsOn {
     return W[h.target] || W.sternum;
   }
 
-  _tray() {
-    const a = this.active, need = a.hand.tool, el = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
-    const tray = this.dom = el('div', 'tray'); tray.setAttribute('role', 'toolbar'); tray.setAttribute('aria-label', t('ho_tray'));
-    const others = Object.keys(TOOLS).filter(k => k !== need).slice(0, 3);
-    for (const k of [need, ...others].sort()) {                                   // the right tool is among others: choosing it is part of the step
-      const b = el('button', 'tool' + (k === need && this.ui.hints ? ' hint' : '')); b.dataset.tool = k;
-      b.append(el('i', 'tool-ic'), el('span', null, L(TOOLS[k])));
-      b.addEventListener('pointerdown', (e) => { e.preventDefault(); this._pickUp(k, e); });
-      tray.append(b);
-    }
-    document.body.append(tray);
-  }
   _chip(extra = '') {
     const a = this.active; if (!a) return;
     if (!this.chip) {
@@ -66,15 +54,8 @@ export class HandsOn {
       this.chip.append(this.chipTxt = document.createElement('span'), Object.assign(document.createElement('button'), { className: 'ghost', textContent: t('ho_cancel'), onclick: () => { const d = this.active?.onDone; this.end(); d?.(null); } }));
       document.body.append(this.chip);
     }
-    const what = a.phase === 'pick' ? t('ho_pick', { tool: L(TOOLS[a.hand.tool]) }) : a.phase === 'drag' ? L(GESTURE_HELP.place) : L(GESTURE_HELP[a.hand.gesture]);
+    const what = a.phase === 'drag' ? L(GESTURE_HELP.place) : L(GESTURE_HELP[a.hand.gesture]);
     this.chipTxt.textContent = what + (extra ? ' · ' + extra : '');
-  }
-
-  _pickUp(tool, e) {
-    const a = this.active; if (!a) return;
-    a.tool = tool; a.phase = 'drag'; this._chip();
-    if (this.ui.hints) this.scene.targetHint = { p: this._target(), r: a.hand.radiusCm / 100 };
-    this._move(e);
   }
 
   _bind() {
@@ -105,11 +86,10 @@ export class HandsOn {
   _holdTick() { const a = this.active; if (!a || a.phase !== 'acting') return; this._chip(`${((performance.now() - a.t0) / 1000).toFixed(1)} s`); requestAnimationFrame(() => this._holdTick()); }
   _up(e) {
     const a = this.active;
-    if (a.phase === 'pick') return;
     if (a.phase === 'drag') {
       this.scene.canvas.style.cursor = '';
-      if (!a.hit) { a.phase = 'pick'; this.scene.ghost = null; this._chip(); return; }      // dropped off the patient: pick it up again
-      if (a.tool !== a.hand.tool) { this.ui.toast(t('ho_wrong_tool', { tool: L(TOOLS[a.tool]) }), true); a.phase = 'pick'; this.scene.ghost = null; this._chip(); return; }
+      if (!a.hit) { this.end(); return; }                                          // dropped off the patient: back on the table
+      if (a.tool !== a.hand.tool) { this.ui.toast(t('ho_wrong_tool', { tool: L(TOOLS[a.tool]) }), true); this.ui.noteWrongTool?.(a.tool); this.end(); return; }
       this.scene.ghost.lift = 0;
       if (a.hand.gesture === 'place') return this._finish();
       a.phase = 'placed'; this._chip(); return;

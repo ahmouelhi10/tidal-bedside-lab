@@ -6,6 +6,13 @@ import { bmiOf, bmiClass } from '/engine/anthropometrics.js';
 import { SKIN_TONES } from './gl/body.js';
 import { CAMERAS } from './scene.js';
 import { PROCEDURES, PARAMS, Guide } from './procedures.js';
+import { icon, stepIcon } from './icons.js';
+import { TOOLS } from './handson.js';
+
+/** Skills training: the case each procedure is practised on (the condition that makes the procedure meaningful). */
+const SKILL_CASE = { iv: '', rsi: 'obese_rsi', defib: 'witnessed_vf', needle: 'tension_ptx', drain: 'tension_ptx', fona: 'cico' };
+/** Instruments on the table besides the ones the procedure needs: choosing the right one is part of the skill. */
+const DISTRACTORS = ['scalpel', 'syringe', 'tourniquet', 'bougie', 'forcepsGauze'];
 
 const L = (o) => (o ? (getLang() === 'fr' ? o.fr : o.en) ?? o.en : '');
 /** Event types that already play their own hand gesture and frame the camera (see Gestures.start). */
@@ -101,7 +108,7 @@ export class UI {
     const top = el('header', { class: 'hud-top' },
       this.dom.clock = el('div', { class: 'clock', 'aria-live': 'off' }),
       el('div', { class: 'spacer' }),
-      this.dom.speed = this.speedBar(), this.dom.cam = this.camBar(),
+      this.dom.speed = this.speedBar(),
       this.dom.btnBrief = el('button', { id: 'btnBrief', class: 'ghost', onclick: () => { this.dom.card.hidden = !this.dom.card.hidden; }, text: t('briefing') }),
       this.dom.btnNew = el('button', { id: 'btnNew', class: 'ghost', onclick: () => this.openMenu(), text: t('new_case') }),
       this.dom.btnFinish = el('button', { id: 'btnFinish', class: 'primary', onclick: () => this.onFinish?.(), text: t('finish') }),
@@ -164,11 +171,46 @@ export class UI {
     this.dom.cards = el('div', { class: 'cards' });
     this.dom.setup = el('section', { class: 'card setup' });
     this.dom.resume = el('button', { id: 'btnResume', class: 'ghost wide', hidden: !this.sim.patient, onclick: () => this.closeMenu(true), text: t('back_to_patient') });
-    m.append(
-      el('div', { class: 'menuL' }, el('h1', { text: t('app') }), el('p', { class: 'muted', text: t('menu_sub') }), el('h3', { text: t('menu_title') }), this.dom.cards),
-      el('div', { class: 'menuR' }, el('h3', { text: t('patient_builder') }), this.dom.setup, el('div', { class: 'muted small previewnote', text: t('preview_note') }), this.dom.resume));
-    this.buildSetup();
+    this.dom.menuBody = el('div', { class: 'menuBody' });
+    this.dom.menuR = el('div', { class: 'menuR' }, el('h3', { text: t('patient_builder') }), this.dom.setup, el('div', { class: 'muted small previewnote', text: t('preview_note') }), this.dom.resume);
+    m.append(el('div', { class: 'menuL' }, el('h1', { text: t('app') }), el('p', { class: 'muted', text: t('menu_sub') }), this.dom.menuBody), this.dom.menuR);
+    this.buildSetup(); this.menuView(this._view || 'home');
     return m;
+  }
+  /** Start screen: home (three sections), physiology lab, skills training, resuscitation and clinical challenges. */
+  menuView(view) {
+    this._view = view; const B = this.dom.menuBody; B.replaceChildren(); this.dom.menuR.hidden = view === 'home';
+    if (view !== 'skills') this.pendingSkill = null;
+    const back = () => el('button', { class: 'ghost menu-back', onclick: () => this.menuView('home') }, el('span', { class: 'ic' }), t('menu_back'));
+    const sec = (id, ic, col, title, sub) => { const b = el('button', { class: 'sect', style: `--sc:${col}`, onclick: () => this.menuView(id) }); b.innerHTML = `<span class="sect-ic">${icon(ic, 26)}</span>`; b.append(el('span', { class: 'sect-t' }, el('b', { text: title }), el('span', { text: sub })), el('span', { class: 'sect-go' })); b.lastChild.innerHTML = icon('chevron', 18); return b; };
+    if (view === 'home') {
+      B.append(el('h3', { text: t('home_q') }), el('div', { class: 'sects' },
+        sec('lab', 'flask', '#4cc3ff', t('sec_lab'), t('sec_lab_sub')),
+        sec('skills', 'hand', '#3ee08f', t('sec_skills'), t('sec_skills_sub')),
+        sec('scen', 'heart', '#ff5d6c', t('sec_resus'), t('sec_resus_sub'))));
+      return;
+    }
+    if (view === 'lab') {
+      this.inputs.scenario.value = ''; this.inputs.scenario.dispatchEvent(new Event('change'));
+      B.append(back(), el('h3', { text: t('sec_lab') }), el('div', { class: 'card lab-note' }, el('p', { text: t('lab_text') }), el('ul', { class: 'muted small' }, [t('lab_1'), t('lab_2'), t('lab_3')].map(x => el('li', { text: x })))));
+    } else if (view === 'scen') {
+      B.append(back(), this.dom.cards); this.buildCards(true);
+      if (!this.inputs.scenario.value) { const first = this.scenarios[0]; if (first) { this.inputs.scenario.value = first.id; this.inputs.scenario.dispatchEvent(new Event('change')); } }
+    } else if (view === 'skills') {
+      const list = el('div', { class: 'cards' });
+      for (const pr of PROCEDURES) {
+        const tools = [...new Set(pr.steps.filter(s => s.hand).map(s => s.hand.tool))];
+        const b = el('button', { class: 'scard skill', dataset: { kind: 'skill', id: pr.id }, onclick: () => {
+          this.pendingSkill = pr.id; this.inputs.scenario.value = SKILL_CASE[pr.id] ?? ''; this.inputs.scenario.dispatchEvent(new Event('change'));
+          for (const c of list.children) c.classList.toggle('on', c === b);
+        } });
+        const ic = el('span', { class: 'skill-ic' }); ic.innerHTML = icon(tools[0] || 'check', 24);
+        b.append(el('div', { class: 'skill-row' }, ic, el('b', { text: L(pr) })), el('div', { class: 'badges' }, el('span', { class: 'badge kind', text: t('gd_nsteps', { n: pr.steps.length }) }), tools.length ? el('span', { class: 'badge', text: `✋ ${tools.length} ${t('pw_instr')}` }) : null));
+        list.append(b);
+      }
+      B.append(back(), el('h3', { text: t('sec_skills') }), el('p', { class: 'muted small', text: t('skills_text') }), list);
+      list.firstChild?.click();
+    }
   }
   openMenu() {
     if (this.sim.patient && !this.sim.finished) { this._speedBefore = this.sim.speed; this.sim.setSpeed(0); }
@@ -183,7 +225,7 @@ export class UI {
     if (!this.menuOpen) return;
     clearTimeout(this._pv); this._pv = setTimeout(() => this.onPreview?.(this.readSetup()), now ? 0 : 120);
   }
-  buildCards() {
+  buildCards(grouped = false) {
     const cards = this.dom.cards; cards.replaceChildren();
     const lvl = { beginner: 1, intermediate: 2, advanced: 3 };
     const badges = (s) => !s ? el('div', { class: 'badges' }, el('span', { class: 'badge kind', text: t('free_badge') })) : el('div', { class: 'badges' },
@@ -192,11 +234,14 @@ export class UI {
       el('span', { class: 'badge', text: `${Math.round(s.durationS / 60)} min` }));
     const mk = (id, title, summary, s) => el('button', { class: 'scard', dataset: { id, kind: s ? s.kind : 'free' }, 'aria-pressed': 'false', onclick: () => { this.inputs.scenario.value = id; this.inputs.scenario.dispatchEvent(new Event('change')); } },
       el('b', { text: title }), el('span', { class: 'sum', text: summary }), badges(s));
-    cards.append(mk('', t('free_play'), t('free_sub'), null));
-    for (const s of this.scenarios) { const x = scenarioText(s); cards.append(mk(s.id, x.title, x.summary, s)); }
+    if (!grouped) { cards.append(mk('', t('free_play'), t('free_sub'), null)); for (const s of this.scenarios) { const x = scenarioText(s); cards.append(mk(s.id, x.title, x.summary, s)); } }
+    else for (const [title, pick] of [[t('grp_resus'), s => s.kind === 'ACLS'], [t('grp_chal'), s => s.kind !== 'ACLS']]) {
+      cards.append(el('h3', { class: 'grp', text: title }));
+      for (const s of this.scenarios.filter(pick)) { const x = scenarioText(s); cards.append(mk(s.id, x.title, x.summary, s)); }
+    }
     this.markCards();
   }
-  markCards() { for (const c of this.dom.cards.children) { const on = c.dataset.id === (this.inputs.scenario.value || ''); c.classList.toggle('on', on); c.setAttribute('aria-pressed', String(on)); } }
+  markCards() { for (const c of this.dom.cards.querySelectorAll('.scard')) { const on = c.dataset.id === (this.inputs.scenario.value || ''); c.classList.toggle('on', on); c.setAttribute('aria-pressed', String(on)); } }
 
   buildLeft() {
     const L = this.dom.left;
@@ -222,6 +267,7 @@ export class UI {
       el('div', { class: 'row2' }, el('label', { class: 'f' }, el('span', { text: t('skin') }), tone), this.dom.bmi),
       el('label', { class: 'f wide' }, el('span', { text: t('learner') }), this.inputs.learner = el('input', { type: 'text', id: 'inLearner', maxlength: 64, autocomplete: 'off', value: this._learner || '', oninput: e => { this._learner = e.target.value; } })),
       el('button', { id: 'btnStart', class: 'primary big wide', onclick: () => this.onStart?.(this.readSetup()), text: this.sim.patient ? t('restart') : t('start_case') }), this.dom.info);
+    if (this.dom.menuR) this.dom.menuR.hidden = this._view === 'home';
     this.buildCards(); this.syncSpecInputs(); this.showScenarioInfo(); stepify(S);
   }
   syncSpecInputs() {
@@ -286,6 +332,8 @@ export class UI {
     this.panelOpen = false; this.dom.panelWrap.hidden = true; this._alarmMode = null; this.dom.alarm.hidden = true;
     this.buildTabs();
     this.syncSetupFromSession(); this.syncPins(); this.syncChrome();
+    const skill = this.pendingSkill && PROCEDURES.find(pr => pr.id === this.pendingSkill);
+    if (skill) setTimeout(() => this.startGuide(skill), 400);
     this.dom.pins.classList.add('learn'); clearTimeout(this._learnT); this._learnT = setTimeout(() => this.dom.pins.classList.remove('learn'), 8000);   // names of the markers show for 8 s, then only on hover
   }
   /** Re-open the case menu with the running case's values (so "restart" and a language change keep what was chosen). */
@@ -430,38 +478,85 @@ export class UI {
   showResult(res) { if (res.findings) this.toast(res.findings); else if (res.note) this.toast(res.note); }
 
   // ---------------------------------------------------------------- guided procedures (step-by-step démarche)
+  /** Procedure workspace: progress, the step coach, the instrument table (drag a tool onto the patient) and the step timeline. */
   panelGuide(P) {
     const g = this.guide, p = this.sim.patient;
     if (!g) {
       P.append(el('p', { class: 'muted small', text: t('gd_intro') }),
-        el('div', { class: 'gd-list' }, PROCEDURES.map(pr => {
-          const b = el('button', { class: 'gd-proc', onclick: () => { this.guide = new Guide(pr, p); this.sim.act({ type: 'note', text: `guide ${pr.id}: start` }); this.scene.focus(pr.cam, 2); this.buildTabs(); } });
-          b.insertAdjacentHTML('afterbegin', ICON[pr.icon] || ICON.proc); b.append(el('span', {}, el('b', { text: L(pr) }), el('span', { class: 'muted small', text: t('gd_nsteps', { n: pr.steps.length }) }))); return b;
+        el('div', { class: 'pw-pick' }, PROCEDURES.map(pr => {
+          const tools = [...new Set(pr.steps.filter(s => s.hand).map(s => s.hand.tool))];
+          const b = el('button', { class: 'pw-proc', onclick: () => this.startGuide(pr) });
+          b.innerHTML = `<span class="pw-proc-ic">${icon(tools[0] || 'check', 24)}</span>`;
+          b.append(el('span', { class: 'pw-proc-t' }, el('b', { text: L(pr) }), el('span', { class: 'small muted', text: t('gd_nsteps', { n: pr.steps.length }) + (tools.length ? ` · ${tools.length} ${t('pw_instr')}` : '') })));
+          return b;
         })));
       return;
     }
-    const steps = g.proc.steps, cur = g.step;
-    P.append(el('div', { class: 'gd-head' }, el('b', { text: L(g.proc) }), this.btn(t('gd_back'), () => { this.guide = null; this.buildTabs(); }, 'ghost small')));
+    const steps = g.proc.steps, cur = g.step, done = g.status.filter(x => x !== 'todo').length, hands = !!this.handsOn?.available;
+    const ctx = { p, b: p.body, prm: g.prm }, evs = (st) => { try { return st.run ? st.run(ctx) : []; } catch { return []; } };
+    // header: title, progress
+    P.append(el('div', { class: 'pw-head' }, el('div', {}, el('b', { text: L(g.proc) }), el('div', { class: 'pw-bar' }, el('i', { style: `width:${(100 * done / steps.length).toFixed(0)}%` })), el('span', { class: 'small muted', text: t('pw_progress', { d: done, n: steps.length }) })),
+      this.btn(t('gd_back'), () => { this.handsOn?.end(); this.guide = null; this.scene.setCamera('default'); this.buildTabs(); }, 'ghost small')));
     if (g.proc.params && !g.finished) P.append(el('div', { class: 'row2 gd-prm' }, g.proc.params.map(k => {
-      const d = PARAMS[k], s = el('select', { onchange: e => { g.prm[k] = d.num ? Number(e.target.value) : e.target.value; } }, d.opts.map(([v, lab]) => el('option', { value: v, text: L(lab), selected: v === g.prm[k] })));
-      return el('label', { class: 'f' }, el('span', { text: L(d) }), s);
+      const d = PARAMS[k], sel = el('select', { onchange: e => { g.prm[k] = d.num ? Number(e.target.value) : e.target.value; this.prefocusStep(); } }, d.opts.map(([v, lab]) => el('option', { value: v, text: L(lab), selected: v === g.prm[k] })));
+      return el('label', { class: 'f' }, el('span', { text: L(d) }), sel);
     })));
-    const icon = { done: '✓', early: '⏱', warn: '!', skipped: '–', todo: '' };
-    P.append(el('ol', { class: 'gd-steps' }, steps.map((s, i) => el('li', { class: `gd-step ${g.status[i]}${i === g.i ? ' cur' : ''}` },
-      el('i', { class: 'gd-ic', text: icon[g.status[i]] || String(i + 1) }), el('span', {}, L(s), g.notes[i] ? el('span', { class: 'gd-note small', text: g.notes[i] }) : null)))));
+    // the step coach
     if (cur) {
+      const handStep = cur.hand && hands, last = g.i > 0 ? g.notes[g.i - 1] : null, lastSt = g.i > 0 ? g.status[g.i - 1] : null;
       this.dom.gdWait = el('div', { class: 'gd-wait small' });
-      P.append(el('div', { class: 'gd-cur' }, el('div', { class: 'small muted', text: t('gd_step', { i: g.i + 1, n: steps.length }) }), el('b', { text: L(cur) }), cur.why ? el('p', { class: 'small', text: L(cur.why) }) : null, this.dom.gdWait,
-        cur.hand && this.handsOn?.available
-          ? el('div', { class: 'stack' }, this.btn('✋ ' + t('ho_use'), () => this.guideHands(), 'act primary', { id: 'btnGuideHands' }),
-              el('div', { class: 'row2' }, this.btn(t('ho_auto'), () => this.guideDo(), 'act', { id: 'btnGuideDo' }), this.btn(t('gd_skip'), () => this.guideSkip(), 'act')))
-          : el('div', { class: 'row2' }, this.btn(t('gd_do'), () => this.guideDo(), 'act primary', { id: 'btnGuideDo' }), this.btn(t('gd_skip'), () => this.guideSkip(), 'act'))));
+      const coach = el('div', { class: 'pw-coach' + (handStep ? ' hands' : '') },
+        el('div', { class: 'pw-coach-top' }, el('span', { class: 'pw-n', text: String(g.i + 1) }), el('span', { class: 'small muted', text: t('gd_step', { i: g.i + 1, n: steps.length }) })),
+        el('b', { class: 'pw-title', text: L(cur) }), cur.why ? el('p', { text: L(cur.why) }) : null, this.dom.gdWait,
+        handStep ? el('div', { class: 'pw-do' }, el('span', { class: 'pw-hand' }), el('span', { text: t('pw_take') })) : null,
+        el('div', { class: 'pw-actions' },
+          handStep ? this.btn(t('ho_auto'), () => this.guideDo(), 'act', { id: 'btnGuideDo' }) : this.btn(t('pw_perform'), () => this.guideDo(), 'act primary', { id: 'btnGuideDo' }),
+          this.btn(t('gd_skip'), () => this.guideSkip(), 'ghost')));
+      if (last) coach.prepend(el('div', { class: 'pw-last ' + (lastSt === 'done' ? 'ok' : 'bad'), text: last }));
+      P.append(coach);
       this.updateGuideWait();
     } else {
-      const s = g.summary();
-      P.append(el('div', { class: 'gd-cur' }, el('b', { text: t('gd_done_title') }), el('p', { class: 'small', text: t('gd_summary', s) }),
-        el('div', { class: 'row2' }, this.btn(t('gd_again'), () => { this.guide = new Guide(g.proc, p); this.buildTabs(); }, 'act'), this.btn(t('gd_back'), () => { this.guide = null; this.buildTabs(); }, 'act primary'))));
+      const sm = g.summary();
+      P.append(el('div', { class: 'pw-coach finished' }, el('b', { class: 'pw-title', text: t('gd_done_title') }), el('p', { text: t('gd_summary', sm) }),
+        el('div', { class: 'pw-actions' }, this.btn(t('gd_again'), () => this.startGuide(g.proc), 'act'), this.btn(t('gd_back'), () => { this.guide = null; this.scene.setCamera('default'); this.buildTabs(); }, 'act primary'))));
     }
+    // the instrument table
+    const need = [...new Set(steps.filter(s => s.hand).map(s => s.hand.tool))];
+    if (need.length) {
+      const tools = [...need, ...DISTRACTORS.filter(x => !need.includes(x)).slice(0, Math.max(2, 6 - need.length))].sort((a, b) => L(TOOLS[a]).localeCompare(L(TOOLS[b])));
+      const usedUpTo = new Set(steps.slice(0, g.i).filter(s => s.hand).map(s => s.hand.tool)), live = cur?.hand && hands;
+      const table = el('div', { class: 'pw-table' + (live ? ' live' : '') });
+      for (const k of tools) {
+        const tile = el('button', { class: 'pw-tool' + (usedUpTo.has(k) ? ' used' : ''), dataset: { tool: k }, title: L(TOOLS[k]), 'aria-label': L(TOOLS[k]), disabled: !live });
+        tile.innerHTML = icon(k, 30); tile.append(el('span', { text: L(TOOLS[k]) }));
+        if (live) tile.addEventListener('pointerdown', (e) => { e.preventDefault(); this.handsOn.grab(k, e, cur, g.prm, (r) => { if (r) this.guideDo(r); }); });
+        table.append(tile);
+      }
+      P.append(el('h4', { text: t('pw_table') + (hands ? '' : ' · ' + t('pw_loading')) }), table);
+    }
+    // the step timeline
+    const glyph = { done: icon('check', 14), early: icon('clock', 14), warn: '!', skipped: '–' };
+    P.append(el('h4', { text: t('pw_steps') }), el('ol', { class: 'pw-steps' }, steps.map((st, i) => {
+      const li = el('li', { class: `pw-step ${g.status[i]}${i === g.i ? ' cur' : ''}` });
+      const ic = el('span', { class: 'pw-sic' }); ic.innerHTML = g.status[i] !== 'todo' && glyph[g.status[i]] ? glyph[g.status[i]] : icon(stepIcon(st, evs(st)), 16);
+      li.append(ic, el('span', { class: 'pw-st' }, el('span', { text: L(st) }), g.notes[i] ? el('span', { class: 'pw-sn', text: g.notes[i] }) : null));
+      return li;
+    })));
+  }
+  /** Begin a procedure: log it, open the workspace and frame its first site. */
+  startGuide(pr) {
+    const p = this.sim.patient; if (!p) return;
+    this.handsOn?.end(); this.guide = new Guide(pr, p); this.sim.act({ type: 'note', text: `guide ${pr.id}: start` });
+    this.tab = 'tab_guide'; this.panelOpen = true; this.dom.card.hidden = true; this.buildTabs(); this.prefocusStep(0);
+  }
+  /** The game moves the camera in advance: to the current step's site (its skin normal) or to the step's preset view. */
+  prefocusStep(delayMs = 0) {
+    clearTimeout(this._pf);
+    this._pf = setTimeout(() => {
+      const g = this.guide, st = g?.step; if (!st || this.menuOpen) return;
+      const h = st.hand, key = h ? (h.target === 'chestSite' ? `${g.prm.side || 'R'}_${h.site || g.prm.site || 'mal5'}` : h.target) : null;
+      if (!(key && this.scene.frameStepSite?.(key, h.gesture === 'stroke' || h.gesture === 'push' ? 0.5 : 0.62))) this.scene.setCamera(st.cam || 'default');
+    }, delayMs);
   }
   updateGuideWait() {
     const w = this.dom.gdWait, g = this.guide, p = this.sim.patient; if (!w || !w.isConnected || !g || !g.step || !p) return;
@@ -471,12 +566,6 @@ export class UI {
   guideSkip() {
     const g = this.guide; if (!g || !g.step) return;
     g.status[g.i] = 'skipped'; this.sim.act({ type: 'note', text: `guide ${g.proc.id}: ${g.step.id} (skipped)` }); this._guideNext();
-  }
-  /** Hands-on: frame the site and hand over to the instrument tray; the gesture result then performs the step. */
-  guideHands() {
-    const g = this.guide, s = g?.step; if (!s?.hand || !this.handsOn) return;
-    this.scene.setCamera(s.cam || 'chest');
-    this.handsOn.begin(s, g.prm, (r) => { if (r) this.guideDo(r); else this.buildTabs(); });
   }
   guideDo(hand = null) {
     const g = this.guide, s = g?.step, p = this.sim.patient; if (!s || !p || this.sim.finished) return;
@@ -501,7 +590,8 @@ export class UI {
     this._guideNext();
   }
   _guideNext() {
-    const g = this.guide; g.i++;
+    const g = this.guide; g.i++; this.prefocusStep(g.finished ? 0 : 2400);
+    if (g.finished) setTimeout(() => this.scene.setCamera('default'), 2400);
     if (g.finished) { const s = g.summary(); this.sim.act({ type: 'note', text: `guide ${g.proc.id}: end ${s.done}/${s.n} in order, ${s.early} early, ${s.warn} with a problem, ${s.skipped} skipped` }); }
     this.buildTabs();
   }

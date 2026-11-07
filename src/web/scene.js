@@ -93,6 +93,30 @@ export class Scene {
     this.tw = { t0: this.t, dur: clamp(0.9 + span * 0.55, 0.9, 2.2), from, to: { ...to, yaw: from.yaw + dYaw }, lift: clamp(span * 0.18, 0, 0.45) };
     this.goal = to;
   }
+  /** Frame a world point seen from direction `dir` (unit vector from the point toward the eye) at distance `dist`, and stay there. */
+  frameSite(p, dir, dist = 0.62) {
+    const d = vec3.norm(dir), pitch = clamp(Math.asin(d[1]), 0.35, 1.45), yaw = Math.atan2(d[0], d[2]);
+    const from = { yaw: this.yaw, pitch: this.pitch, dist: this.dist, target: [...this.target] }, dYaw = Math.atan2(Math.sin(yaw - from.yaw), Math.cos(yaw - from.yaw));
+    this.auto = false; this.returnAt = null; this.view = 'site';
+    this.tw = { t0: this.t, dur: 1.4, from, to: { yaw: from.yaw + dYaw, pitch, dist, target: [...p] }, lift: 0.15 };
+    this.goal = { yaw, pitch, dist, target: [...p] };
+  }
+  /** World position and outward skin normal of a named site (landmark or chest site 'R_mal5'), realistic body only. */
+  siteFrame(key) {
+    const B = this.body; if (!B) return null;
+    if (B.b.glb) {
+      const lm = this.asset.meta.landmarks[key]; if (!lm) return null;
+      const m = B.b.meshes.body, v = lm.anchorVertex, s = B.b.scale;
+      return { p: [CROWN_X + m.pos[v * 3] * s, BED_TOP + m.pos[v * 3 + 1] * s, m.pos[v * 3 + 2] * s], n: [m.nrm[v * 3], m.nrm[v * 3 + 1], m.nrm[v * 3 + 2]] };
+    }
+    const p = this.world[key] || (key.length > 2 && this.chestSites?.[key[0]]?.[key.slice(2)]); return p ? { p, n: [0, 1, 0] } : null;
+  }
+  /** Frame the site of an upcoming procedure step: a little above the skin normal, tilted toward the foot of the bed. */
+  frameStepSite(key, dist = 0.62) {
+    const f = this.siteFrame(key); if (!f) return false;
+    const dir = vec3.norm([f.n[0] * 0.8 - 0.35, f.n[1] * 0.8 + 0.75, f.n[2] * 0.8]);
+    this.frameSite(f.p, dir, dist); return true;
+  }
   /** Frame a site for an action, then glide back to the overview of the patient after holdS seconds. */
   focus(name, holdS = 2.5) { this.setCamera(name); this.returnAt = this.t + (this.tw ? this.tw.dur : 0) + holdS; }
 
@@ -186,18 +210,11 @@ export class Scene {
   }
 
   _bindInput(c) {
-    let drag = null;
-    c.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, moved: false }; c.setPointerCapture(e.pointerId); });
-    c.addEventListener('pointermove', e => {
-      if (drag) {
-        const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
-        if (drag.moved) { this.auto = false; const o = this.off; o.yaw = clamp(o.yaw - dx * 0.004, -1.1, 1.1); o.pitch = clamp(o.pitch + dy * 0.003, -0.25, 0.4); drag.x = e.clientX; drag.y = e.clientY; c.style.cursor = 'grabbing'; this.dragging = true; }
-      } else this.hover = this.pick(e.clientX, e.clientY);
-    });
-    c.addEventListener('pointerup', e => { if (drag && !drag.moved && this.onHotspot) { const h = this.pick(e.clientX, e.clientY); if (h) this.onHotspot(h); } drag = null; c.style.cursor = ''; this.dragging = false; this.releasedAt = this.t; });
-    c.addEventListener('dblclick', () => { this.off.yaw = 0; this.off.pitch = 0; });
+    // The camera is driven by the game (setCamera / focus / frameSite); the pointer only hovers and clicks.
+    c.addEventListener('pointermove', e => { this.hover = this.pick(e.clientX, e.clientY); });
+    c.addEventListener('pointerup', e => { if (this.onHotspot) { const h = this.pick(e.clientX, e.clientY); if (h) this.onHotspot(h); } });
     c.addEventListener('pointerleave', () => { this.hover = null; });
-    c.addEventListener('wheel', e => { e.preventDefault(); }, { passive: false });   // fixed framing: the wheel never zooms; use the camera presets
+    c.addEventListener('wheel', e => { e.preventDefault(); }, { passive: false });
   }
   pick(cx, cy) {
     if (!this.hot || !this.r.invVP) return null;
@@ -459,13 +476,12 @@ export class Scene {
       else if (nk.fona?.kind === 'cannula') { seg(up(n, 0.0), up(n, 0.06), 0.004, [0.9, 0.9, 0.95]); blob(up(n, 0.065), 0.01, 0.01, 0.01, nk.fona.displaced ? [0.9, 0.2, 0.2] : [0.95, 0.75, 0.1]); }
     }
     this.gest.draw({ r, fr, seg, blob, scene: this }, this.t);
-    // hands-on: target hint (learning mode), the instrument in the hand, the incision being drawn
-    if (this.targetHint) { const h = this.targetHint; r.draw(fr.sph, mat4.multiply(mat4.translation(...h.p), mat4.scaling(h.r, h.r, h.r)), { color: [0.25, 0.85, 1.0], alpha: 0.18, emissive: [0.0, 0.18, 0.24], noShadow: true }); }
+    // hands-on: the instrument in the hand, the incision being drawn
     const gh = this.ghost || (this.afterGhost && this.t < this.afterGhost.until ? this.afterGhost : null);
     if (gh) { const n = gh.n, q = [gh.p[0] + n[0] * ((gh.lift || 0) - (gh.depth || 0)), gh.p[1] + n[1] * ((gh.lift || 0) - (gh.depth || 0)), gh.p[2] + n[2] * ((gh.lift || 0) - (gh.depth || 0))]; this._instrument(gh.tool, q, n, gh.angle || 0); }
     if (this.cut) { const c = this.cut; seg(up(c.a, 0.002), up(c.b, 0.002), 0.0016, [0.5, 0.03, 0.04], { spec: 0.6 }); }
     // hotspot highlight
-    if (this.hover) { const h = this.hover; r.draw(fr.sph, mat4.multiply(mat4.translation(h.c[0], h.c[1], h.c[2]), mat4.scaling(h.rad, h.rad, h.rad)), { color: [0.2, 0.8, 1.0], alpha: h.equip ? 0.13 : 0.28, emissive: [0.0, 0.15, 0.2] }); }
+    if (this.hover && this.hover.equip) { const h = this.hover; r.draw(fr.sph, mat4.multiply(mat4.translation(h.c[0], h.c[1], h.c[2]), mat4.scaling(h.rad, h.rad, h.rad)), { color: [0.2, 0.8, 1.0], alpha: 0.1, emissive: [0.0, 0.12, 0.16], noShadow: true }); }
     // defibrillation flash
     if (this.shockT > 0.25) { r.draw(fr.sph, mat4.multiply(mat4.translation(W.sternum[0], W.sternum[1], W.sternum[2]), mat4.scaling(0.3, 0.3, 0.3)), { color: [1, 1, 1], emissive: [1, 1, 1], alpha: 0.6 }); }
     };
