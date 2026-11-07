@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # No dependencies to install: the project has zero runtime and zero dev dependencies.
+      - name: Syntax check and test suite
+        run: npm run verify
+
+  build:
+    name: Build and references
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build dist
+        run: npm run build
+      - name: Dist starts and answers
+        run: |
+          DATA_DIR="$(mktemp -d)" PORT=18081 node dist/src/server/server.js &
+          pid=$!
+          for _ in $(seq 1 20); do curl -fsS http://127.0.0.1:18081/api/health && break; sleep 1; done
+          curl -fsS http://127.0.0.1:18081/api/health | grep -q '"status":"ok"'
+          kill "$pid"
+      - name: References registry is up to date
+        run: |
+          npm run docs
+          git diff --exit-code docs/REFERENCES.md
+      - name: Record build identity
+        run: cat dist/BUILD.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tidal-bedside-lab-dist
+          path: dist
+          if-no-files-found: error
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and smoke-test the image
+        run: bash scripts/docker-smoke.sh tidal-bedside-lab:ci

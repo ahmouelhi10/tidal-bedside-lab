@@ -1,0 +1,5 @@
+# Keep LF line endings everywhere (CI runs on Linux; shell scripts break with CRLF).
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.glb binary

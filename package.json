@@ -1,0 +1,19 @@
+{
+  "name": "tidal-bedside-lab",
+  "version": "0.1.0",
+  "description": "3D emergency-room and anesthesia physiology simulator for clinical and university training. Zero runtime dependencies.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test \"tests/*.test.js\"",
+    "start": "node src/server/server.js",
+    "build": "node scripts/build.js",
+    "check": "node scripts/check-syntax.js",
+    "verify": "npm run check && npm test",
+    "docs": "node scripts/gen-references.js"
+  }
+}
