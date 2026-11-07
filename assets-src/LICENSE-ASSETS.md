@@ -23,9 +23,15 @@ weights, landmark empties, `patient.json`) is also dedicated to the public domai
 Modelled procedurally by `assets-src/build_instruments.py`, with no third-party assets. Dedicated to the public domain
 under **CC0 1.0**.
 
+## Gloved hands (`src/web/assets/hands.glb`)
+
+The hand geometry is the MakeHuman base-mesh right hand and default rig, shipped inside MPFB 2.0.18 (MakeHuman
+assets are **CC0 1.0**, see above). The pose, glove, cuff and sleeve are made by `assets-src/build_hands.py`.
+The exported hands are dedicated to the public domain under **CC0 1.0**.
+
 ## Build scripts
 
-`assets-src/build_patient.py` and `assets-src/build_instruments.py` are part of this repository and fall under the
+`assets-src/build_patient.py`, `assets-src/build_instruments.py` and `assets-src/build_hands.py` are part of this repository and fall under the
 repository's own licence. MPFB itself is GPL-3.0-or-later. It is a build tool only: no MPFB code is shipped in the
 exports or in `src/web/`.
 

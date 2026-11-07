@@ -122,11 +122,31 @@ export class Scene {
   }
   /** Direction of the right forearm on its board, from the antecubital fossa toward the hand. */
   armAxis() { const a = this.world.rightArmIV, b = this.world.padRight, d = [a[0] - b[0], 0, a[2] - b[2]], l = Math.hypot(d[0], d[2]) || 1; return [d[0] / l, 0, d[2] / l]; }
-  /** Frame the site of an upcoming procedure step: a little above the skin normal, tilted toward the foot of the bed. */
+  /** The operator's eye for a site: at the head of the bed for the face, neck and airway, otherwise standing at the patient's
+   *  side nearest the site (the right side, by the IV arm, for midline sites), eyes about 1.55 m high, looking down at it. */
+  operatorEye(key, p) {
+    if (['face', 'airway', 'neck'].includes(key)) return [p[0] + 0.5, 1.48, p[2] + 0.05];
+    const side = key.startsWith('L_') || key === 'padLeft' || key === 'leftArm' ? 1 : key.startsWith('R_') || key === 'rightArmIV' || key === 'padRight' || key === 'femoral' ? -1 : (p[2] > 0.03 ? 1 : -1);
+    const reach = key === 'rightArmIV' ? 0.32 : 0.5;                          // the arm board already brings the forearm out to the operator
+    return [p[0] - 0.12, 1.55, p[2] + side * reach];
+  }
+  /** Frame the site of an upcoming procedure step from the operator's viewpoint, close enough for the hand and instrument to fill the view. */
   frameStepSite(key, dist = 0.62) {
     const f = this.siteFrame(key); if (!f) return false;
-    const dir = vec3.norm([f.n[0] * 0.8 - 0.35, f.n[1] * 0.8 + 0.75, f.n[2] * 0.8]);
-    this.frameSite(f.p, dir, dist); return true;
+    const eye = this.operatorEye(key, f.p), d = vec3.sub(eye, f.p), L = Math.hypot(...d);
+    this.frameSite(f.p, vec3.scale(d, 1 / L), Math.min(dist, L)); return true;
+  }
+  /** Site key of an engine event, for the operator's viewpoint during its gesture. */
+  _eventSite(ev) {
+    switch (ev.type) {
+      case 'drug.bolus': case 'bicarb.bolus': case 'iv.access': return 'rightArmIV';
+      case 'procedure.needle_decompression': return `${ev.side || 'R'}_${ev.site || 'mcl2'}`;
+      case 'procedure.chest_tube': return `${ev.side || 'R'}_mal5`;
+      case 'procedure.cricothyroidotomy': case 'exam.neck': return 'neck';
+      case 'airway.intubate': return 'airway';
+      case 'exam.chest': case 'exam.pocus': return 'sternum';
+      default: return null;
+    }
   }
   /** Frame a site for an action, then glide back to the overview of the patient after holdS seconds. */
   focus(name, holdS = 2.5) { this.setCamera(name); this.returnAt = this.t + (this.tw ? this.tw.dur : 0) + holdS; }
@@ -134,10 +154,16 @@ export class Scene {
   /** An engine action happened: play the matching hand gesture, frame it, then return to the overview. */
   gesture(ev, res) {
     const cam = this.gest.start(this, ev, res); if (!cam) return;
-    const g = this.gest.list[this.gest.list.length - 1]; this.focus(cam, (g ? g.dur : 2) + 1.2);
+    const g = this.gest.list[this.gest.list.length - 1], hold = (g ? g.dur : 2) + 1.2, key = this._eventSite(ev);
+    if (key && this.frameStepSite(key, ev.type === 'airway.intubate' ? 0.7 : 0.58)) this.returnAt = this.t + 1.4 + hold; else this.focus(cam, hold);
   }
   /** A guided-procedure step without an engine gesture of its own: frame the site and play a generic hand gesture. */
-  stepGesture(kind, cam, site) { const g = kind ? this.gest.startStep(this, kind, site) : null; this.focus(cam || 'default', (g ? g.dur : 1.5) + 1.2); }
+  stepGesture(kind, cam, site) {
+    const g = kind ? this.gest.startStep(this, kind, site) : null, hold = (g ? g.dur : 1.5) + 1.2;
+    const chest = Object.entries(this.chestSites || {}).flatMap(([sd, o]) => Object.entries(o).map(([k, v]) => [`${sd}_${k}`, v]));
+    const key = site && [...Object.entries(this.world || {}), ...chest].find(([, v]) => v === site)?.[0];
+    if (key && this.frameStepSite(key, 0.58)) this.returnAt = this.t + 1.4 + hold; else this.focus(cam || 'default', hold);
+  }
   /** World point of a named site for guided steps: face, chest, neck, arm, or chestSite (needle/drain site from side + site). */
   siteOf(at, prm = {}) {
     const W = this.world; if (!W) return null;
@@ -166,6 +192,9 @@ export class Scene {
       const glb = parseGlb(buf), out = {};
       for (const [name, m] of Object.entries(glb.meshes)) out[name] = m.prims.map(pr => { const f = pr.material?.pbrMetallicRoughness?.baseColorFactor || [0.8, 0.8, 0.8, 1]; return { g: this.r.upload({ pos: pr.pos, nrm: pr.nrm, w: new Float32Array(pr.pos.length / 3 * 2), idx: pr.idx }), color: f.slice(0, 3), alpha: f[3], metal: pr.material?.pbrMetallicRoughness?.metallicFactor ?? 0, mat: pr.material?.name || '' }; });
       this.instruments = out;
+      // gloved hands posed in each instrument's frame (assets/hands.glb, optional)
+      const hb = await fetch(base + 'hands.glb').then(r => (r.ok ? r.arrayBuffer() : null)).catch(() => null);
+      if (hb) { const hg = parseGlb(hb), hands = {}; for (const [name, m] of Object.entries(hg.meshes)) hands[name] = m.prims.map(pr => { const f = pr.material?.pbrMetallicRoughness?.baseColorFactor || [0.23, 0.44, 0.85, 1]; return { g: this.r.upload({ pos: pr.pos, nrm: pr.nrm, w: new Float32Array(pr.pos.length / 3 * 2), idx: pr.idx }), color: f.slice(0, 3) }; }); this.hands = hands; }
     } catch (e) { console.warn('instruments unavailable:', e && e.message); }
   }
   /** Ray-pick the realistic body's skin: { p, n, region } in world space, or null (also null with the procedural body). */
@@ -179,11 +208,13 @@ export class Scene {
   }
   /** Draw one instrument with its working point at p, long axis along n, turned by angle about n. */
   _instrument(name, p, n, angle = 0, opts = {}) {
-    const parts = this.instruments?.[name]; if (!parts) return;
+    const parts = this.instruments?.[name] || []; if (!parts.length && !this.hands?.['hand_' + name]) return;   // a hand alone ('press') is fine
     const ey = vec3.norm(n), ref = Math.abs(ey[0]) > 0.9 ? [0, 0, 1] : [1, 0, 0];
     let ex = vec3.norm(vec3.cross(ref, ey)); const ez0 = vec3.cross(ex, ey);
     ex = vec3.norm(vec3.add(vec3.scale(ex, Math.cos(angle)), vec3.scale(ez0, Math.sin(angle)))); const ez = vec3.cross(ex, ey);
     const M = mat4.fromBasis(ex, ey, ez, p);
+    const hand = opts.noHand ? null : this.hands?.['hand_' + name];             // the gloved hand holding it, same frame
+    if (hand) for (const pt of hand) this.r.draw(pt.g, M, { color: pt.color, spec: 0.55, pattern: 0 });
     for (const pt of parts) { if (opts.only && !opts.only.includes(pt.mat)) continue; if (opts.skip && opts.skip.includes(pt.mat)) continue; this.r.draw(pt.g, M, { color: pt.color, alpha: pt.alpha, spec: pt.metal > 0.5 ? 0.95 : 0.4, noShadow: pt.alpha < 0.9 }); }
   }
 
@@ -450,7 +481,7 @@ export class Scene {
     const SF = (k) => this.siteFrame?.(k);
     const onSkin = (f, h = 0.002) => [f.p[0] + f.n[0] * h, f.p[1] + f.n[1] * h, f.p[2] + f.n[2] * h];
     if (fl.padsOn) {                                            // multifunction pads stuck on the skin, red leads to the defibrillator
-      for (const [k, nm] of [['padRight', 'defibPadRight'], ['padLeft', 'defibPadLeft']]) { const f = SF(k) || { p: W[k], n: [0, 1, 0] }; inst(nm, onSkin(f, 0.003), f.n, 0); }
+      for (const [k, nm] of [['padRight', 'defibPadRight'], ['padLeft', 'defibPadLeft']]) { const f = SF(k) || { p: W[k], n: [0, 1, 0] }; inst(nm, onSkin(f, 0.003), f.n, 0, { noHand: true }); }
       const pr = W.padRight; hose(up(pr, 0.02), [pr[0] + 0.3, 1.05, pr[2] - 0.35], [CART[0] + 0.19, 1.0, CART[2] + 0.17], 0.004, [0.72, 0.07, 0.06], { spec: 0.5 });
     }
     if (fl.ecgLeads) {                                          // three foam electrodes with snaps, leads gathered toward the monitor
@@ -465,7 +496,7 @@ export class Scene {
     if (fl.nibp) { const a = W.leftArm; seg(up([a[0] + 0.03, a[1] - 0.02, a[2]], 0.0), up([a[0] + 0.15, a[1] - 0.02, a[2]], 0.0), 0.05, [0.2, 0.22, 0.28], { spec: 0.15 }); }
     if (fl.ivAccess && this.gest.ok('iv', this.t)) {            // 18 G cannula taped under a clear dressing, giving set to the IV pole
       const f = SF('rightArmIV') || { p: W.rightArmIV, n: [0, 1, 0] }, ax = this.armAxis(), dir = vec3.norm(vec3.add(vec3.scale(f.n, -1), vec3.scale(ax, 2.7)));
-      const tip = vec3.add(f.p, vec3.scale(dir, 0.02)); inst('ivCannula', tip, vec3.scale(dir, -1), 0, { skip: ['steel'] });
+      const tip = vec3.add(f.p, vec3.scale(dir, 0.02)); inst('ivCannula', tip, vec3.scale(dir, -1), 0, { skip: ['steel'], noHand: true });
       disc(onSkin(f, 0.003), f.n, ax, 0.022, 0.018, [0.92, 0.96, 1.0], { alpha: 0.18, spec: 1, noShadow: true });
       const hub = vec3.add(f.p, vec3.add(vec3.scale(dir, -0.05), vec3.scale(f.n, 0.012)));
       hose(hub, [hub[0] + 0.05, hub[1] + 0.25, hub[2] - 0.2], [POLE[0] + 0.07, 1.25, POLE[2]], 0.0025, [0.86, 0.93, 0.97], { alpha: 0.75, spec: 0.9 });
@@ -499,13 +530,13 @@ export class Scene {
     if (ch) {
       if (ch.needle && ch.side && this.gest.ok('needle', this.t)) {           // 14 G catheter left in the chest wall, perpendicular to the skin
         const f = SF(`${ch.side}_${ch.needle.site || 'mcl2'}`) || { p: this.chestSites[ch.side].mal5, n: [0, 1, 0] };
-        inst('needle14G', vec3.add(f.p, vec3.scale(f.n, -0.045)), f.n, 0, { skip: ['steel', 'flash_orange'] });
+        inst('needle14G', vec3.add(f.p, vec3.scale(f.n, -0.045)), f.n, 0, { skip: ['steel', 'flash_orange'], noHand: true });
         if (!ch.needle.patent) disc(onSkin(f, 0.003), f.n, [1, 0, 0], 0.006, 0.006, [0.6, 0.05, 0.05], { spec: 0.8 });
       }
       if (ch.tube && ch.tube.side && this.gest.ok('tube', this.t)) {         // drain aimed at the apex, sutured, tubing to an underwater-seal bottle on the floor
         const f = SF(`${ch.tube.side}_mal5`) || { p: this.chestSites[ch.tube.side].mal5, n: [0, 1, 0] };
         const dir = vec3.norm(vec3.add(vec3.scale(f.n, -1), vec3.scale([1, 0, 0], 0.9)));
-        inst('chestDrain', vec3.add(f.p, vec3.scale(dir, 0.11)), vec3.scale(dir, -1), 0);
+        inst('chestDrain', vec3.add(f.p, vec3.scale(dir, 0.11)), vec3.scale(dir, -1), 0, { noHand: true });
         const out = vec3.add(f.p, vec3.scale(dir, -0.35)), lat = ch.tube.side === 'R' ? -1 : 1, bottle = [f.p[0] - 0.35, 0.16, lat * 0.62];
         hose(out, [out[0] - 0.05, 0.75, lat * 0.6], [bottle[0], 0.33, bottle[2]], 0.006, [0.85, 0.92, 0.95], { alpha: 0.65, spec: 1 });
         r.draw(fr.cyl, mat4.multiply(mat4.translation(...bottle), mat4.scaling(0.075, 0.32, 0.075)), { color: [0.82, 0.92, 0.96], alpha: 0.35, spec: 1, noShadow: true });
@@ -523,7 +554,7 @@ export class Scene {
         const dir = vec3.norm(vec3.add(vec3.scale(f.n, -1), [-0.7, 0, 0]));
         hose(vec3.add(f.p, vec3.scale(dir, 0.05)), f.p, vec3.add(f.p, vec3.scale(f.n, 0.07)), 0.0052, [0.88, 0.94, 0.96], { alpha: 0.85, spec: 1 });
         const top = vec3.add(f.p, vec3.scale(f.n, 0.07)); seg(top, vec3.add(top, vec3.scale(f.n, 0.025)), 0.0085, [0.95, 0.95, 0.93], { spec: 0.5 });
-      } else if (nk.fona?.kind === 'cannula') { inst('needle14G', vec3.add(f.p, vec3.scale(f.n, -0.03)), f.n, 0, { skip: ['steel', 'flash_orange'] }); }
+      } else if (nk.fona?.kind === 'cannula') { inst('needle14G', vec3.add(f.p, vec3.scale(f.n, -0.03)), f.n, 0, { skip: ['steel', 'flash_orange'], noHand: true }); }
     }
     this.gest.draw({ r, fr, seg, blob, scene: this, inst, disc }, this.t);
     // hands-on: the instrument in the hand, the incision being drawn

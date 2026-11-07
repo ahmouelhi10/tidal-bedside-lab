@@ -32,7 +32,7 @@ export class Gestures {
       case 'procedure.cricothyroidotomy': { const f = site('neck', W.neck); g = { k: 'fona', dur: 5.5, f, vertical: ev.approach === 'vertical' }; cam = 'neck'; this.hold.neck = t0 + 5.5 * 0.9; break; }
       case 'exam.pocus': g = { k: 'probe', dur: 3.2, f: site('sternum', W.sternum) }; cam = 'chest'; break;
       case 'exam.chest': g = { k: 'steth', dur: 3.6, f: site('sternum', W.sternum) }; cam = 'chest'; break;
-      case 'exam.neck': cam = 'neck'; break;
+      case 'exam.neck': g = { k: 'press', dur: 2.2, f: site('neck', W.neck) }; cam = 'neck'; break;
       case 'airway.intubate': g = { k: 'laryn', dur: 3.6 }; cam = 'head'; this.hold.ett = t0 + 3.6 * 0.8; break;
       default: break;
     }
@@ -44,8 +44,8 @@ export class Gestures {
   startStep(scene, kind, site) {
     if (!scene.world || !site) return null;
     const f = { p: site, n: scene.normalAt?.(site) || [0, 1, 0] };
-    const dur = { touch: 1.6, swab: 2.6, scalpel: 2.4, mask: 2.6, pads: 2.8 }[kind]; if (!dur) return null;
-    const g = { k: 'step_' + kind, dur, f, t0: scene.t };
+    const dur = { touch: 1.8, swab: 2.6, scalpel: 2.4, mask: 2.6, pads: 2.8 }[kind]; if (!dur) return null;
+    const g = { k: kind === 'touch' ? 'press' : 'step_' + kind, dur, f, t0: scene.t };
     if (kind === 'pads') g.pads = [scene.siteFrame?.('padRight'), scene.siteFrame?.('padLeft')];
     this.list.push(g); return g;
   }
@@ -56,7 +56,7 @@ export class Gestures {
     for (const g of this.list) {
       const u = Math.min(1, (t - g.t0) / g.dur);
       ({ syringe: this._syringe, cannula: this._cannula, needle: this._needle, drain: this._drain, fona: this._fona, probe: this._probe, steth: this._steth, laryn: this._laryn,
-        step_swab: this._swab, step_scalpel: this._scalpelStep, step_mask: this._mask, step_pads: this._pads })[g.k]?.call(this, c, g, u, t);
+        press: this._press, step_swab: this._swab, step_scalpel: this._scalpelStep, step_mask: this._mask, step_pads: this._pads })[g.k]?.call(this, c, g, u, t);
     }
   }
 
@@ -118,6 +118,10 @@ export class Gestures {
     }
     if (u >= 0.12 && !g._m) { g._m = { kind: 'cut', p: f.p, n: f.n, tan, len: g.vertical ? 0.06 : 0.015, t0: g.t0 + g.dur * 0.12, grow: g.dur * 0.15 }; this.marks.push(g._m); }
     if (u >= 0.4 && u < 0.92) { const dir = norm(add(neg(f.n), FOOT, 0.7)); this._insert(c, 'bougie', f.p, dir, 0.08 * seg01(u, 0.45, 0.75), 0.25 * (1 - seg01(u, 0.4, 0.5))); }
+  }
+  _press(c, g, u) {                                                            // a gloved hand palpates / presses the site (drawn only when hands.glb is present)
+    const f = g.f, lift = 0.1 * (1 - seg01(u, 0, 0.25)) + 0.1 * seg01(u, 0.8, 1) - 0.004 * Math.sin(Math.min(1, Math.max(0, (u - 0.3) / 0.45)) * Math.PI * 3);
+    c.inst('press', add(f.p, f.n, lift), f.n, 0);
   }
   _probe(c, g, u) {                                                            // ultrasound probe: dark rounded body, lens on the skin, sweeping
     const f = g.f, side = this._tan(f, [0, 0, 1]), sw = Math.sin(u * Math.PI * 2.4);
