@@ -35,6 +35,17 @@ const ICON = {
 const mmss = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const round = (x, step) => Math.round(x / step) * step;
 const fmt = (x, d = 1) => (Number.isFinite(x) ? x.toFixed(d) : '-');
+/** Wrap every numeric field in [-][value][+]. The input stays first in the DOM, so a surrounding <label> still targets it. */
+function stepify(root) {
+  for (const inp of root.querySelectorAll('input[type=number]')) {
+    if (inp.parentElement?.classList.contains('stp')) continue;
+    const step = Number(inp.step) || 1, min = inp.min === '' ? -Infinity : Number(inp.min), max = inp.max === '' ? Infinity : Number(inp.max);
+    const dec = (String(inp.step).split('.')[1] || '').length;
+    const bump = (k) => { const v = Math.min(max, Math.max(min, (Number(inp.value) || 0) + k * step)); inp.value = v.toFixed(dec); inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true })); };
+    const w = el('div', { class: 'stp' }); inp.replaceWith(w);
+    w.append(inp, el('button', { type: 'button', tabindex: '-1', 'aria-label': '-', text: '−', style: 'order:-1', onclick: () => bump(-1) }), el('button', { type: 'button', tabindex: '-1', 'aria-label': '+', text: '+', onclick: () => bump(1) }));
+  }
+}
 
 /** dose table: perKg x basis weight. basis: lbm | ibw | tbw | fixed. inf: infusion units shown to the user and conversion to engine units/min. */
 const DRUG_UI = [
@@ -174,10 +185,15 @@ export class UI {
   }
   buildCards() {
     const cards = this.dom.cards; cards.replaceChildren();
-    const mk = (id, title, summary, meta) => el('button', { class: 'scard', dataset: { id }, 'aria-pressed': 'false', onclick: () => { this.inputs.scenario.value = id; this.inputs.scenario.dispatchEvent(new Event('change')); } },
-      el('b', { text: title }), el('span', { class: 'sum', text: summary }), el('span', { class: 'muted small', text: meta }));
-    cards.append(mk('', t('free_play'), t('free_sub'), ''));
-    for (const s of this.scenarios) { const x = scenarioText(s); cards.append(mk(s.id, x.title, x.summary, `${s.kind} · ${s.difficulty} · ${Math.round(s.durationS / 60)} min`)); }
+    const lvl = { beginner: 1, intermediate: 2, advanced: 3 };
+    const badges = (s) => !s ? el('div', { class: 'badges' }, el('span', { class: 'badge kind', text: t('free_badge') })) : el('div', { class: 'badges' },
+      el('span', { class: 'badge kind', text: s.kind }),
+      el('span', { class: 'badge', title: s.difficulty }, el('span', { class: 'lvl' }, [1, 2, 3].map(i => el('i', { class: i <= (lvl[s.difficulty] || 1) ? 'on' : '' }))), ' ', s.difficulty),
+      el('span', { class: 'badge', text: `${Math.round(s.durationS / 60)} min` }));
+    const mk = (id, title, summary, s) => el('button', { class: 'scard', dataset: { id, kind: s ? s.kind : 'free' }, 'aria-pressed': 'false', onclick: () => { this.inputs.scenario.value = id; this.inputs.scenario.dispatchEvent(new Event('change')); } },
+      el('b', { text: title }), el('span', { class: 'sum', text: summary }), badges(s));
+    cards.append(mk('', t('free_play'), t('free_sub'), null));
+    for (const s of this.scenarios) { const x = scenarioText(s); cards.append(mk(s.id, x.title, x.summary, s)); }
     this.markCards();
   }
   markCards() { for (const c of this.dom.cards.children) { const on = c.dataset.id === (this.inputs.scenario.value || ''); c.classList.toggle('on', on); c.setAttribute('aria-pressed', String(on)); } }
@@ -206,7 +222,7 @@ export class UI {
       el('div', { class: 'row2' }, el('label', { class: 'f' }, el('span', { text: t('skin') }), tone), this.dom.bmi),
       el('label', { class: 'f wide' }, el('span', { text: t('learner') }), this.inputs.learner = el('input', { type: 'text', id: 'inLearner', maxlength: 64, autocomplete: 'off', value: this._learner || '', oninput: e => { this._learner = e.target.value; } })),
       el('button', { id: 'btnStart', class: 'primary big wide', onclick: () => this.onStart?.(this.readSetup()), text: this.sim.patient ? t('restart') : t('start_case') }), this.dom.info);
-    this.buildCards(); this.syncSpecInputs(); this.showScenarioInfo();
+    this.buildCards(); this.syncSpecInputs(); this.showScenarioInfo(); stepify(S);
   }
   syncSpecInputs() {
     const id = this.inputs.scenario.value, sc = this.scenarios.find(s => s.id === id), sp = sc ? sc.spec : { sex: 'M', age: 45, heightCm: 175, weightKg: 80 };
@@ -290,6 +306,7 @@ export class UI {
     this.dom.panelTitle.textContent = t(this.tab);
     const P = this.dom.panel; P.replaceChildren();
     const b = this.sim.patient.body;
+    queueMicrotask(() => stepify(P));
     ({ tab_guide: () => this.panelGuide(P), tab_drugs: () => this.panelDrugs(P, b), tab_fluids: () => this.panelFluids(P), tab_airway: () => this.panelAirway(P, b), tab_circ: () => this.panelCirc(P), tab_proc: () => this.panelProc(P), tab_orders: () => this.panelOrders(P) })[this.tab]();
   }
 
@@ -568,21 +585,30 @@ export class UI {
     if (h && this._mouse) { this.dom.tip.hidden = false; this.dom.tip.textContent = t(h.label); this.dom.tip.style.left = this._mouse.x + 14 + 'px'; this.dom.tip.style.top = this._mouse.y + 10 + 'px'; } else this.dom.tip.hidden = true;
   }
   drawTrend() {
-    const c = this.dom.trend, g = c.getContext('2d'), W = c.width, H = c.height, data = this.sim.trend; g.fillStyle = '#0b1215'; g.fillRect(0, 0, W, H);
-    if (data.length < 2) return; const t1 = data[data.length - 1].t, span = Math.min(600, Math.max(60, t1)), t0 = t1 - span;
-    g.strokeStyle = '#1b2a30'; g.lineWidth = 1; for (let y = 0; y <= 200; y += 50) { const py = H - 14 - (y / 200) * (H - 24); g.beginPath(); g.moveTo(26, py); g.lineTo(W, py); g.stroke(); g.fillStyle = '#6b8590'; g.font = '10px monospace'; g.fillText(String(y), 2, py + 3); g.fillText(String(y / 2), W - 22, py - 2); }
-    const series = [['hr', '#39ff6a', 200], ['map', '#ff5c5c', 200], ['spo2', '#35d6ff', 100], ['etco2', '#ffd84a', 100]];
+    const c = this.dom.trend, g = c.getContext('2d'), W = c.width, H = c.height, data = this.sim.trend;
+    g.fillStyle = '#05080b'; g.fillRect(0, 0, W, H);
+    const L = 30, R = 30, T = 18, B = 16, font = '600 10px "Segoe UI", system-ui, sans-serif';
+    g.font = font; g.textBaseline = 'middle';
+    for (let y = 0; y <= 200; y += 50) {                                     // left axis: HR / MAP (0-200), right axis: SpO2 / EtCO2 (0-100)
+      const py = H - B - (y / 200) * (H - T - B);
+      g.fillStyle = 'rgba(255,255,255,0.06)'; g.fillRect(L, Math.round(py), W - L - R, 1);
+      g.fillStyle = '#6f7d8a'; g.textAlign = 'right'; g.fillText(String(y), L - 6, py); g.textAlign = 'left'; g.fillText(String(y / 2), W - R + 6, py);
+    }
+    const series = [['hr', '#3ee08f', 200, 'HR'], ['map', '#ff5d6c', 200, 'MAP'], ['spo2', '#4cd7ff', 100, 'SpO2'], ['etco2', '#ffd23d', 100, 'EtCO2']];
+    let lx = L; g.textAlign = 'left';
+    for (const [, col, , name] of series) { g.fillStyle = col; g.fillRect(lx, 6, 8, 3); g.fillStyle = '#a3b0bd'; g.fillText(name, lx + 12, 8); lx += g.measureText(name).width + 28; }
+    if (data.length < 2) return;
+    const t1 = data[data.length - 1].t, span = Math.min(600, Math.max(60, t1)), t0 = t1 - span;
     for (const [k, col, mx] of series) {
-      g.strokeStyle = col; g.lineWidth = 1.5; g.beginPath(); let started = false;
+      g.strokeStyle = col; g.lineWidth = 1.8; g.lineJoin = 'round'; g.beginPath(); let started = false;
       for (const d of data) {
         if (d.t < t0 || !Number.isFinite(d[k])) continue;
-        const x = 26 + ((d.t - t0) / span) * (W - 26), y = H - 14 - (Math.max(0, Math.min(mx, d[k])) / mx) * (H - 24);
+        const x = L + ((d.t - t0) / span) * (W - L - R), y = H - B - (Math.max(0, Math.min(mx, d[k])) / mx) * (H - T - B);
         if (!started) { g.moveTo(x, y); started = true; } else g.lineTo(x, y);
       }
       g.stroke();
     }
-    g.fillStyle = '#6b8590'; g.fillText(mmss(Math.max(0, t0)), 26, H - 2); g.fillText(mmss(t1), W - 70, H - 2);
-    [['HR', '#39ff6a'], ['MAP', '#ff5c5c'], ['SpO2', '#35d6ff'], ['EtCO2', '#ffd84a']].forEach(([n, col], i) => { g.fillStyle = col; g.fillText(n, 60 + i * 46, 10); });
+    g.fillStyle = '#6f7d8a'; g.textAlign = 'left'; g.fillText(mmss(Math.max(0, t0)), L, H - 6); g.textAlign = 'right'; g.fillText(mmss(t1), W - R, H - 6); g.textAlign = 'left';
   }
 
   // ---------------------------------------------------------------- debrief
@@ -590,13 +616,22 @@ export class UI {
     const x = this.sim.scenarioId ? scenarioText(this.scenarios.find(s => s.id === this.sim.scenarioId)) : null;
     const sc = (out.server && out.server.score) || out.local;
     const ov = el('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': t('score_title') });
-    const box = el('div', { class: 'box' }, el('h2', { text: t('score_title') + (x ? ' - ' + x.title : '') }));
-    if (sc) {
-      box.append(el('div', { class: 'big' }, `${t('score_total')}: ${sc.pct.toFixed(0)}% (${sc.grade})`), el('table', {}, el('tbody', {}, sc.items.map(i => el('tr', {}, el('td', { text: getLang() === 'fr' && CRITERION_FR[i.id] ? CRITERION_FR[i.id] : i.label }), el('td', { class: 'num', text: `${i.points.toFixed(1)} / ${i.weight}` }), el('td', { class: 'muted small', text: i.detail }))))));
-      if (x) box.append(el('h4', { text: t('learning') }), el('ul', {}, x.learning.map(l => el('li', { text: l }))));
-    }
+    const box = el('div', { class: 'box' }, el('div', { class: 'phead' }, el('h2', { text: t('score_title') + (x ? ' · ' + x.title : '') }), el('button', { class: 'x', 'aria-label': t('close'), onclick: () => ov.remove(), text: '×' })));
     const v = out.server ? (out.server.verified ? t('verified') : t('unverified')) : t('offline');
-    box.append(el('p', { class: 'muted', text: `${t('score_server')}: ${v}` }), el('button', { class: 'primary', onclick: () => ov.remove(), text: t('close') }));
+    if (sc) {
+      const pct = Math.max(0, Math.min(100, sc.pct)), C = 2 * Math.PI * 54, col = pct >= 80 ? 'var(--good)' : pct >= 60 ? 'var(--warn)' : 'var(--bad)';
+      const ring = el('div', { class: 'ring', style: `--ring:${col}` });
+      ring.innerHTML = `<svg viewBox="0 0 132 132" aria-hidden="true"><circle class="trk" cx="66" cy="66" r="54"/><circle class="val" cx="66" cy="66" r="54" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${C.toFixed(1)}"/></svg>`;
+      ring.append(el('div', { class: 'lbl' }, el('b', { text: `${pct.toFixed(0)}%` }), el('span', { text: t('score_total') })));
+      requestAnimationFrame(() => requestAnimationFrame(() => ring.querySelector('.val')?.setAttribute('stroke-dashoffset', (C * (1 - pct / 100)).toFixed(1))));
+      box.append(el('div', { class: 'db-head' }, ring, el('div', { class: 'db-meta' }, el('span', { class: 'grade', text: `${t('grade')} ${sc.grade}` }), el('span', { class: 'muted', text: `${sc.total} / ${sc.max} ${t('points')}` }), el('span', { class: out.server?.verified ? 'good small' : 'muted small', text: `${t('score_server')}: ${v}` }))));
+      box.append(el('div', {}, sc.items.map(i => { const f = i.weight ? i.points / i.weight : 0; return el('div', { class: 'crit' },
+        el('span', { class: 'cl', text: getLang() === 'fr' && CRITERION_FR[i.id] ? CRITERION_FR[i.id] : i.label }), el('span', { class: 'cp', text: `${i.points.toFixed(1)} / ${i.weight}` }),
+        el('span', { class: 'bar' }, el('i', { class: f >= 0.8 ? '' : f >= 0.4 ? 'mid' : 'low', style: `width:${(f * 100).toFixed(0)}%` })), el('span', { class: 'cd', text: i.detail })); })));
+      if (x) box.append(el('h4', { text: t('learning') }), el('ul', { class: 'muted' }, x.learning.map(l => el('li', { text: l }))));
+    } else box.append(el('p', { class: 'muted', text: `${t('score_server')}: ${v}` }));
+    box.append(el('div', { class: 'db-actions' }, el('button', { class: 'primary', onclick: () => ov.remove(), text: t('close') })));
+    ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
     ov.append(box); document.body.append(ov);
   }
   hotspot(h) {

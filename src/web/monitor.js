@@ -3,6 +3,9 @@
 import { t as tr } from './i18n.js';
 
 const TAU = Math.PI * 2;
+// Same vital-sign colours as the --v-* tokens in styles.css. Numerics use the system UI font with tabular figures, like current monitors.
+const COL = { hr: '#3ee08f', spo2: '#4cd7ff', abp: '#ff5d6c', nibp: '#f2f5f8', co2: '#ffd23d', temp: '#ff8fd0', off: '#2b3540', bg: '#04070a', grid: 'rgba(120,160,190,0.07)', line: 'rgba(255,255,255,0.07)', text2: '#8c99a6' };
+const UI = '"Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif';
 const g = (x, c, w) => Math.exp(-((x - c) * (x - c)) / (2 * w * w));
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 
@@ -69,7 +72,7 @@ export class Monitor {
 
   resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2), c = this.cv, w = Math.max(200, Math.floor(c.clientWidth * dpr)), h = Math.max(120, Math.floor(c.clientHeight * dpr));
-    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; this.trace.x = [0, 0, 0, 0]; this.trace.y = [null, null, null, null]; this.ctx.fillStyle = '#04080a'; this.ctx.fillRect(0, 0, w, h); this.dpr = dpr; this._layout = null; }
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; this.trace.x = [0, 0, 0, 0]; this.trace.y = [null, null, null, null]; this.ctx.fillStyle = COL.bg; this.ctx.fillRect(0, 0, w, h); this.dpr = dpr; this._layout = null; }
     this.dpr = dpr;
   }
 
@@ -77,7 +80,7 @@ export class Monitor {
   update(realDt, p) {
     this.resize(); const ctx = this.ctx, W = this.cv.width, H = this.cv.height, d = this.dpr;
     const m = p.monitor, f = p.flags, arrested = p.arrest.arrested, key = f.ecgLeads ? p.arrest.key : null;
-    const numW = Math.floor(W * 0.27), trW = W - numW, rowH = H / 4;
+    const numW = Math.floor(W * 0.3), trW = W - numW - Math.round(2 * d), rowH = H / 4, gridStep = 20 * d;
     const dt = clamp(realDt, 0, 0.1), step = 1 / 240; let rem = dt;
     const cprHz = p.cpr.stats && p.cpr.stats.lastAge < 1.5 && p.cpr.stats.rate > 0 && arrested ? p.cpr.stats.rate / 60 : 0;
     const perf = p.arrest.info.perfusing && p.circ.sbp > 40;
@@ -92,10 +95,10 @@ export class Monitor {
     if (p.shockLog.length && p.shockLog[p.shockLog.length - 1].t !== this._lastShockT) { this._lastShockT = p.shockLog[p.shockLog.length - 1].t; this.shock = 0.18; }
 
     const rows = [
-      { name: 'II', color: '#39ff6a', on: f.ecgLeads, label: tr('mon_ii') },
-      { name: 'PLETH', color: '#35d6ff', on: f.spo2Probe && (perf || cprHz > 0), probe: f.spo2Probe, label: tr('mon_pleth') },
-      { name: 'ABP', color: '#ff4d4d', on: f.aline, probe: f.aline, label: tr('mon_abp') },
-      { name: 'CO2', color: '#ffd84a', on: f.capnography, probe: f.capnography, label: tr('mon_co2') },
+      { name: 'II', color: COL.hr, on: f.ecgLeads, probe: f.ecgLeads, label: tr('mon_ii'), scale: 'x1' },
+      { name: 'PLETH', color: COL.spo2, on: f.spo2Probe && (perf || cprHz > 0), probe: f.spo2Probe, label: tr('mon_pleth'), scale: '' },
+      { name: 'ABP', color: COL.abp, on: f.aline, probe: f.aline, label: tr('mon_abp'), scale: '0-160' },
+      { name: 'CO2', color: COL.co2, on: f.capnography, probe: f.capnography, label: tr('mon_co2'), scale: '0-60' },
     ];
     // clear + draw
     while (rem > 1e-6) {
@@ -128,52 +131,79 @@ export class Monitor {
         const y0 = this.trace.y[i];
         const y = i === 0 ? rowH * (0.52 + scales[0](vals[0])) : rowH * (0.14 + 0.76 * (i === 1 ? clamp(0.88 - vals[1] * 0.62, 0.06, 0.92) : i === 2 ? clamp(0.9 - vals[2] / 190 * 0.8, 0.05, 0.95) : clamp(0.9 - vals[3] / 60 * 0.8, 0.05, 0.95)));
         const yy = i * rowH + (row.on ? y : rowH * 0.5);
-        ctx.strokeStyle = row.on ? row.color : '#1c3b2e'; ctx.lineWidth = 2 * d; ctx.lineJoin = 'round';
-        // erase ahead
-        ctx.fillStyle = '#04080a'; const eraseW = 14 * d;
-        if (x1 >= x0) ctx.fillRect(x1, i * rowH, eraseW, rowH); else { ctx.fillRect(x1, i * rowH, eraseW, rowH); ctx.fillRect(0, i * rowH, eraseW, rowH); }
+        // erase ahead of the sweep, then put the faint grid back in the cleared strip
+        const eraseW = 16 * d, top = i * rowH, strip = (x) => {
+          ctx.fillStyle = COL.bg; ctx.fillRect(x, top, eraseW, rowH);
+          ctx.fillStyle = COL.grid;
+          for (let gx = Math.ceil(x / gridStep) * gridStep; gx < x + eraseW; gx += gridStep) ctx.fillRect(gx, top + 2 * d, 1, rowH - 4 * d);
+          for (let k = 1; k < 4; k++) ctx.fillRect(x, top + (rowH * k) / 4, eraseW, 1);
+        };
+        if (x1 >= x0) strip(x1); else { strip(x1); strip(0); }
+        ctx.strokeStyle = row.on ? row.color : COL.off; ctx.lineWidth = (row.on ? 2.2 : 1.4) * d; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        if (row.on) { ctx.shadowColor = row.color; ctx.shadowBlur = 6 * d; }
         if (y0 !== null && x1 >= x0) { ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, yy); ctx.stroke(); }
+        ctx.shadowBlur = 0;
         this.trace.x[i] = x1; this.trace.y[i] = (x1 >= x0) ? yy : null;
       }
     }
     // static labels + numerics (redrawn each frame on a clean panel)
-    ctx.fillStyle = '#04080a'; ctx.fillRect(trW, 0, numW, H);
-    ctx.fillStyle = '#04080a'; ctx.fillRect(0, 0, 100 * d, H);
+    ctx.fillStyle = COL.bg; ctx.fillRect(trW, 0, W - trW, H);
     for (let i = 0; i < 4; i++) {
-      const row = rows[i]; ctx.fillStyle = row.on ? row.color : '#3a5a4c'; ctx.font = `${11 * d}px ui-monospace, monospace`; ctx.textBaseline = 'top';
-      ctx.fillText(row.label + (!row.on && row.probe === false ? '  ' + tr('mon_off') : ''), 6 * d, i * rowH + 4 * d);
-      if (i === 0 && f.ecgLeads && key) { ctx.fillStyle = '#9ad'; ctx.fillText(key.replace('_', ' '), 6 * d, i * rowH + 18 * d); }
-      if (i === 3 && f.capnography && capRR === 0) { ctx.fillStyle = '#ff8a4a'; ctx.fillText('APNEA', 6 * d, i * rowH + 18 * d); }
-      ctx.strokeStyle = '#102019'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, (i + 1) * rowH); ctx.lineTo(W, (i + 1) * rowH); ctx.stroke();
+      const row = rows[i], y = i * rowH;
+      // label chip: lead / channel name in its colour, scale in grey; status message when the sensor is off
+      ctx.fillStyle = COL.bg; ctx.fillRect(0, y + 2 * d, 112 * d, 34 * d);
+      ctx.font = `700 ${11 * d}px ${UI}`; ctx.textBaseline = 'top'; ctx.fillStyle = row.on || row.probe ? row.color : COL.text2;
+      ctx.fillText(row.label, 8 * d, y + 6 * d);
+      const lw = ctx.measureText(row.label).width;
+      if (row.scale) { ctx.font = `500 ${10 * d}px ${UI}`; ctx.fillStyle = COL.text2; ctx.fillText(row.scale, 8 * d + lw + 7 * d, y + 7 * d); }
+      ctx.font = `600 ${10.5 * d}px ${UI}`;
+      if (!row.probe) { ctx.fillStyle = COL.text2; ctx.fillText(tr('mon_off'), 8 * d, y + 21 * d); }
+      else if (i === 0 && key) { ctx.fillStyle = key === 'NSR' || key === 'SINUS' ? '#c9d6e2' : '#ff8b95'; ctx.fillText(key.replace(/_/g, ' '), 8 * d, y + 21 * d); }
+      else if (i === 3 && capRR === 0) { ctx.fillStyle = '#ffb35c'; ctx.fillText('APNEA', 8 * d, y + 21 * d); }
+      if (i < 3) { ctx.fillStyle = COL.line; ctx.fillRect(0, y + rowH - 1, trW, 1); }
     }
+    ctx.fillStyle = COL.line; ctx.fillRect(trW, 0, 1, H);
     this._numerics(ctx, trW, numW, H, d, m, p, rows);
     if (this.shock > 0.02) { ctx.fillStyle = `rgba(255,255,255,${Math.min(0.5, this.shock * 3)})`; ctx.fillRect(0, 0, trW, H); }
   }
 
   _numerics(ctx, x0, w, H, d, m, p, rows) {
-    const cell = H / 5; const pad = 8 * d;
+    x0 += 1 * d; w -= 1 * d;
     const alarm = {
-      hr: m.hr !== null && (m.hr < 40 || m.hr > 140), spo2: m.spo2 !== null && m.spo2 < 90, map: m.map !== null && m.map < 65,
-      etco2: m.etco2 !== null && (m.etco2 > 60 || (m.etco2 < 20 && !p.arrest.arrested)),
+      hr: m.hr !== null && (m.hr < 50 || m.hr > 120), spo2: m.spo2 !== null && m.spo2 < 90, map: m.map !== null && m.map < 65,
+      etco2: m.etco2 !== null && (m.etco2 > 50 || (m.etco2 < 25 && !p.arrest.arrested)),
     };
-    const blink = Math.floor(this.t * 2) % 2 === 0;
-    const box = (i, label, color, big, small, isAlarm) => {
-      const y = i * cell; ctx.fillStyle = isAlarm && blink ? '#3a0a0a' : '#04080a'; ctx.fillRect(x0, y, w, cell);
-      ctx.strokeStyle = '#102019'; ctx.beginPath(); ctx.moveTo(x0, y + cell); ctx.lineTo(x0 + w, y + cell); ctx.stroke();
-      ctx.textBaseline = 'top'; ctx.fillStyle = color; ctx.font = `${11 * d}px ui-monospace, monospace`; ctx.fillText(label, x0 + pad, y + 4 * d);
-      let fs = Math.min(cell * 0.62, 46 * d); ctx.font = `bold ${fs}px ui-monospace, monospace`;
-      const maxW = w - 2 * pad - (small ? ctx.measureText(small).width * 0.0 : 0); while (ctx.measureText(big).width > maxW && fs > 10 * d) { fs -= 2 * d; ctx.font = `bold ${fs}px ui-monospace, monospace`; }
-      ctx.textBaseline = 'alphabetic'; ctx.fillText(big, x0 + pad, y + cell - 12 * d);
-      if (small) { ctx.font = `${12 * d}px ui-monospace, monospace`; ctx.textAlign = 'right'; ctx.fillText(small, x0 + w - pad, y + 16 * d); ctx.textAlign = 'left'; }
+    const blink = Math.floor(this.t * 2) % 2 === 0, gap = 2 * d, pad = 9 * d;
+    const tiles = [1.25, 1.05, 1.05, 1.05, 0.8], sum = tiles.reduce((a, b) => a + b, 0);
+    let y = 0;
+    const tile = (k, { label, unit, color, big, sub, lim, isAlarm, dim }) => {
+      const hgt = (H * tiles[k]) / sum - gap;
+      ctx.fillStyle = isAlarm ? (blink ? 'rgba(255,60,75,0.32)' : 'rgba(255,60,75,0.14)') : 'rgba(255,255,255,0.025)';
+      ctx.fillRect(x0 + gap, y + gap, w - 2 * gap, hgt);
+      if (isAlarm) { ctx.fillStyle = '#ff5d6c'; ctx.fillRect(x0 + gap, y + gap, 3 * d, hgt); }
+      ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+      ctx.font = `700 ${10.5 * d}px ${UI}`; ctx.fillStyle = dim ? COL.text2 : color; ctx.fillText(label, x0 + pad, y + gap + 6 * d);
+      if (unit) { ctx.font = `500 ${10 * d}px ${UI}`; ctx.fillStyle = COL.text2; ctx.textAlign = 'right'; ctx.fillText(unit, x0 + w - pad, y + gap + 6 * d); ctx.textAlign = 'left'; }
+      if (lim) { ctx.font = `500 ${9 * d}px ${UI}`; ctx.fillStyle = COL.text2; ctx.fillText(lim[0], x0 + pad, y + gap + 21 * d); ctx.fillText(lim[1], x0 + pad, y + gap + 31 * d); }
+      // the big number fills the tile, right aligned, tabular figures
+      // the digits must sit below the label row and above the sub line: cap height is about 0.72 of the font size
+      const room = hgt - 22 * d - (sub ? 17 * d : 7 * d);
+      let fs = Math.max(10 * d, Math.min(room / 0.74, 54 * d)); const maxW = w - 2 * pad - (lim ? 26 * d : 0);
+      const setF = () => { ctx.font = `600 ${fs}px ${UI}`; };
+      setF(); while (ctx.measureText(big).width > maxW && fs > 10 * d) { fs -= 2 * d; setF(); }
+      ctx.fillStyle = dim ? '#3c4752' : color; ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
+      ctx.fillText(big, x0 + w - pad, y + gap + hgt - (sub ? 18 * d : 8 * d));
+      if (sub) { ctx.font = `600 ${11 * d}px ${UI}`; ctx.fillStyle = dim ? '#3c4752' : COL.text2; ctx.fillText(sub, x0 + w - pad, y + gap + hgt - 5 * d); }
+      ctx.textAlign = 'left'; y += hgt + gap;
     };
-    const dash = '--';
-    box(0, tr('mon_hr'), '#39ff6a', m.hr === null ? dash : String(m.hr), m.rhythm ? '' : '', alarm.hr);
-    box(1, tr('mon_spo2') + ' %', '#35d6ff', m.spo2 === null ? dash : String(m.spo2), '', alarm.spo2);
-    const nibpAge = p.nibp.t !== null && p.nibp.t !== undefined ? Math.floor(p.t - p.nibp.t) : null;
-    const ibp = p.flags.aline;
-    box(2, ibp ? tr('mon_abp') : tr('mon_nibp'), ibp ? '#ff4d4d' : '#e8f1ee', m.sbp === null ? dash : `${m.sbp}/${m.dbp}`, m.map !== null ? `(${m.map})${!ibp && nibpAge !== null ? ' ' + Math.floor(nibpAge / 60) + ':' + String(nibpAge % 60).padStart(2, '0') : ''}` : '', alarm.map);
-    box(3, tr('mon_etco2'), '#ffd84a', m.etco2 === null ? dash : String(m.etco2), m.rr !== null ? `${tr('mon_rr')} ${m.rr}` : '', alarm.etco2);
-    box(4, tr('mon_temp') + ' °C', '#ff9ec8', m.temp === null ? dash : m.temp.toFixed(1), '', false);
+    const dash = '--', ibp = p.flags.aline;
+    const nibpAge = p.nibp.t !== null && p.nibp.t !== undefined ? Math.max(0, Math.floor(p.t - p.nibp.t)) : null;
+    tile(0, { label: tr('mon_hr'), unit: 'bpm', color: COL.hr, big: m.hr === null ? dash : String(m.hr), lim: ['120', '50'], isAlarm: alarm.hr, dim: m.hr === null });
+    tile(1, { label: tr('mon_spo2'), unit: '%', color: COL.spo2, big: m.spo2 === null ? dash : String(m.spo2), lim: ['100', '90'], isAlarm: alarm.spo2, dim: m.spo2 === null });
+    tile(2, { label: ibp ? tr('mon_abp') : tr('mon_nibp'), unit: 'mmHg', color: ibp ? COL.abp : COL.nibp, big: m.sbp === null ? dash : `${m.sbp}/${m.dbp}`,
+      sub: m.map !== null ? `(${m.map})${!ibp && nibpAge !== null ? '  ' + Math.floor(nibpAge / 60) + ':' + String(nibpAge % 60).padStart(2, '0') : ''}` : '', isAlarm: alarm.map, dim: m.sbp === null });
+    tile(3, { label: tr('mon_etco2'), unit: 'mmHg', color: COL.co2, big: m.etco2 === null ? dash : String(m.etco2), sub: m.rr !== null ? `${tr('mon_rr')} ${m.rr}` : '', lim: ['50', '25'], isAlarm: alarm.etco2, dim: m.etco2 === null });
+    tile(4, { label: tr('mon_temp'), unit: '°C', color: COL.temp, big: m.temp === null ? dash : m.temp.toFixed(1), dim: m.temp === null });
   }
 }
 
