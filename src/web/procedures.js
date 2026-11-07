@@ -88,6 +88,7 @@ export const PROCEDURES = [
         run: () => [{ type: 'cpr.stop' }] },
       { id: 'shock', cam: 'chest', en: 'Shock', fr: 'Choquer',
         check: ({ p }) => (p.defib.charged ? null : { en: 'The defibrillator is not charged yet', fr: "Le défibrillateur n'est pas encore chargé" }),
+        ready: ({ p }) => (p.defib.charged ? null : p.defib.chargeAt !== null && p.defib.chargeAt > p.t ? { en: 'Charging... wait for the ready tone', fr: 'Charge en cours... attendez le signal' } : { en: 'Not charged: charge first', fr: "Non chargé : chargez d'abord" }),   // live: shocking before the charge is complete counts as early
         run: () => [{ type: 'defib.shock' }] },
       { id: 'resume', cam: 'chest', en: 'Resume CPR immediately for 2 min', fr: 'Reprendre immédiatement la RCP pendant 2 min',
         why: { en: 'Do not check the pulse after the shock: compress straight away.', fr: 'Ne pas chercher le pouls après le choc : comprimer tout de suite.' },
