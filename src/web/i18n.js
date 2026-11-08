@@ -130,6 +130,257 @@ let lang = 'en';
 export const getLang = () => lang;
 export function setLang(l) { lang = l === 'fr' ? 'fr' : 'en'; try { localStorage.setItem('tbl.lang', lang); } catch { /* storage may be unavailable */ } document.documentElement.lang = lang; }
 export function initLang() { let l = 'en'; try { l = localStorage.getItem('tbl.lang') || ((navigator.language || 'en').toLowerCase().startsWith('fr') ? 'fr' : 'en'); } catch { /* ignore */ } setLang(l); }
+// Start screen with eight sections, patient chooser, progress and instructor mode
+Object.assign(EN, {
+  sec_skills_sub: 'Practise one clinical procedure at a time', sec_resus: 'Resuscitation', sec_resus_sub: 'Cardiac arrest training: the cause matters',
+  sec_chal: 'Clinical challenges', sec_chal_sub: 'Stabilise and diagnose complete patients',
+  sec_inf: 'Infectiology', sec_inf_sub: 'Ward cases over days: cultures, antibiograms, stewardship',
+  sec_echo: 'Focused echocardiography', sec_echo_sub: 'Views, measurements and the ICU echo, step by step',
+  sec_prog: 'My progress', sec_prog_sub: 'Level, skill profile, history and achievements',
+  sec_inst: 'Instructor mode', sec_inst_sub: 'Free teaching with every instructor control',
+  soon: 'Coming soon', soon_sources: 'Evidence it will be built on',
+  resus_text: 'Scored cardiac arrest cases. Choose the patient on the right: sex, body shape, age and size change the physiology.',
+  chal_text: 'Scored cases on complete patients: airway, trauma, anaesthesia. The patient on the right is the case default; you may change it.',
+  inf_plan: 'Ward patients followed over several simulated days: you take cultures, read the Gram stain and the antibiogram, start empirical treatment, then narrow, switch to oral or stop it.',
+  inf_items: ['Cultures and Gram stain at the right time, before antibiotics when it is safe', 'Antibiograms read with clinical breakpoints (S / I / R)', 'Empirical choice, de-escalation, duration and stewardship scoring'],
+  inf_sources: ['EUCAST clinical breakpoint tables v16.1 (2026) and their dosage sheet', 'Surviving Sepsis Campaign guidelines 2021 (Evans et al., Crit Care Med 2021)', 'IDSA/SHEA guideline on antibiotic stewardship programmes (Barlam et al., Clin Infect Dis 2016)', 'ATS/IDSA community-acquired pneumonia guideline 2019 (Metlay et al.)', 'IDSA/ESCMID 2026 consensus on S. aureus bacteraemia; IDSA 2026 guidance on resistant Gram-negative infections', 'BALANCE trial (7 vs 14 days for bloodstream infection, N Engl J Med 2025)', 'Not used: the WHO AWaRe antibiotic book (2022) - its full text could not be retrieved, so no AWaRe category is shown or scored'],
+  echo_plan: 'Focused cardiac ultrasound on the simulated patient: find each view, measure, and answer the bedside question (pump, filling, pericardium, right heart).',
+  echo_items: ['Parasternal long and short axis, apical four-chamber, subcostal and IVC views', 'Measurements: LVEF estimate, TAPSE, IVC diameter and collapse, pericardial effusion', 'ICU echo protocol step by step, linked to the live haemodynamics'],
+  echo_sources: ['International evidence-based recommendations for focused cardiac ultrasound (Via et al., J Am Soc Echocardiogr 2014)', 'ASE/EACVI recommendations for cardiac chamber quantification (Lang et al., 2015)', 'ASE guidelines for the echocardiographic assessment of the right heart (Rudski et al., 2010)', 'ASE/EACVI recommendations for LV diastolic function (Nagueh et al., 2016)'],
+  who_patient: 'Who is the patient?', body_shape: 'Body shape',
+  shape_under: 'Underweight', shape_normal: 'Normal', shape_over: 'Overweight', shape_obese: 'Obese', shape_morbid: 'Severe obesity',
+  area_resus: 'Resuscitation', area_chal: 'Challenges', area_skills: 'Skills', area_lab: 'Physiology lab',
+  prog_level: 'Level {n}', prog_xp: '{xp} XP · {next} to the next level', prog_profile: 'Skill profile', prog_cases: '{n} done',
+  prog_meanbest: 'mean {m} · best {b}', prog_ach: 'Achievements', prog_hist: 'History', prog_empty: 'Nothing yet: finish a case or a guided procedure.',
+  prog_local: 'Kept in this browser only. Scores come from the case debrief (server-verified when online) and from guided procedures.',
+  prog_export: 'Export (JSON)', prog_clear: 'Clear history', prog_clear_q: 'Delete your whole progress history in this browser? This cannot be undone.',
+  ach_first: 'First case', ach_first_d: 'Finish any case or guided procedure',
+  ach_five: 'Getting going', ach_five_d: 'Finish 5 cases or procedures',
+  ach_twenty: 'Regular', ach_twenty_d: 'Finish 20 cases or procedures',
+  ach_excellent: 'Excellent', ach_excellent_d: 'Score 90% or more',
+  ach_resus80: 'Life saver', ach_resus80_d: 'Score 80% or more in a resuscitation case',
+  ach_allskills: 'All skills', ach_allskills_d: 'Complete every guided procedure with at least 60%',
+  ach_allchal: 'Every challenge', ach_allchal_d: 'Attempt every clinical challenge',
+  ach_verified: 'Verified', ach_verified_d: 'A score replayed and confirmed by the server',
+  ach_bodies: 'Every body', ach_bodies_d: 'Treat 4 different patient types (sex and body shape)',
+  inst_text: 'Run any case or free play with the hidden physiology shown. Choose the patient on the right, then start.',
+  inst_pick: 'Pick a case below (or none for free play).',
+  inst_sessions: 'Learner sessions on this server', inst_token: 'Needs the server started with API_TOKEN; paste the token here (kept for this page only).',
+  inst_load: 'Load', inst_disabled: 'The server has no API_TOKEN: the session list is disabled.', inst_badtoken: 'Wrong token.', inst_none: 'No sessions yet.',
+});
+Object.assign(FR, {
+  sec_skills_sub: 'Un geste clinique à la fois', sec_resus: 'Réanimation', sec_resus_sub: "Arrêt cardiaque : la cause compte",
+  sec_chal: 'Défis cliniques', sec_chal_sub: 'Stabiliser et diagnostiquer des patients complets',
+  sec_inf: 'Infectiologie', sec_inf_sub: 'Patients de service sur plusieurs jours : prélèvements, antibiogrammes, bon usage',
+  sec_echo: 'Échocardiographie ciblée', sec_echo_sub: "Coupes, mesures et l'écho de réanimation, pas à pas",
+  sec_prog: 'Ma progression', sec_prog_sub: 'Niveau, profil de compétences, historique et succès',
+  sec_inst: 'Mode formateur', sec_inst_sub: 'Enseignement libre avec toutes les commandes du formateur',
+  soon: 'Bientôt', soon_sources: "Données sur lesquelles il s'appuiera",
+  resus_text: "Cas notés d'arrêt cardiaque. Choisissez le patient à droite : sexe, morphologie, âge et taille modifient la physiologie.",
+  chal_text: 'Cas notés sur des patients complets : voies aériennes, trauma, anesthésie. Le patient à droite est celui du cas ; vous pouvez le modifier.',
+  inf_plan: "Patients suivis sur plusieurs jours simulés : prélèvements, lecture du Gram et de l'antibiogramme, traitement probabiliste, puis désescalade, relais oral ou arrêt.",
+  inf_items: ['Prélèvements et Gram au bon moment, avant les antibiotiques quand c\'est possible', 'Antibiogrammes lus avec les concentrations critiques (S / I / R)', 'Choix probabiliste, désescalade, durée et score de bon usage'],
+  inf_sources: ['Tables de concentrations critiques EUCAST v16.1 (2026) et leur feuille de posologies', 'Recommandations Surviving Sepsis Campaign 2021 (Evans et al., Crit Care Med 2021)', 'Recommandation IDSA/SHEA sur les programmes de bon usage (Barlam et al., Clin Infect Dis 2016)', 'Recommandation ATS/IDSA 2019 sur la pneumonie communautaire (Metlay et al.)', 'Consensus IDSA/ESCMID 2026 sur la bactériémie à S. aureus ; recommandations IDSA 2026 sur les Gram négatif résistants', 'Essai BALANCE (7 contre 14 jours pour les bactériémies, N Engl J Med 2025)', "Non utilisé : le livre AWaRe de l'OMS (2022), dont le texte intégral n'a pas pu être consulté ; aucune catégorie AWaRe n'est affichée ni notée"],
+  echo_plan: "Échographie cardiaque ciblée sur le patient simulé : trouver chaque coupe, mesurer et répondre à la question clinique (pompe, remplissage, péricarde, cœur droit).",
+  echo_items: ['Coupes parasternales grand et petit axe, apicale 4 cavités, sous-costale et VCI', 'Mesures : FEVG estimée, TAPSE, diamètre et collapsus de la VCI, épanchement péricardique', "Protocole d'écho de réanimation pas à pas, relié à l'hémodynamique en direct"],
+  echo_sources: ['Recommandations internationales fondées sur les preuves pour l\'échographie cardiaque ciblée (Via et al., J Am Soc Echocardiogr 2014)', 'Recommandations ASE/EACVI de quantification des cavités (Lang et al., 2015)', 'Recommandations ASE sur l\'évaluation du cœur droit (Rudski et al., 2010)', 'Recommandations ASE/EACVI sur la fonction diastolique du VG (Nagueh et al., 2016)'],
+  who_patient: 'Qui est le patient ?', body_shape: 'Morphologie',
+  shape_under: 'Maigreur', shape_normal: 'Normale', shape_over: 'Surpoids', shape_obese: 'Obésité', shape_morbid: 'Obésité sévère',
+  area_resus: 'Réanimation', area_chal: 'Défis', area_skills: 'Gestes', area_lab: 'Labo de physiologie',
+  prog_level: 'Niveau {n}', prog_xp: '{xp} XP · {next} avant le niveau suivant', prog_profile: 'Profil de compétences', prog_cases: '{n} faits',
+  prog_meanbest: 'moyenne {m} · meilleur {b}', prog_ach: 'Succès', prog_hist: 'Historique', prog_empty: 'Rien pour l\'instant : terminez un cas ou un geste guidé.',
+  prog_local: 'Conservé dans ce navigateur uniquement. Les scores viennent du débriefing (vérifié par le serveur en ligne) et des gestes guidés.',
+  prog_export: 'Exporter (JSON)', prog_clear: 'Effacer l\'historique', prog_clear_q: 'Supprimer tout votre historique de progression dans ce navigateur ? Action irréversible.',
+  ach_first: 'Premier cas', ach_first_d: 'Terminer un cas ou un geste guidé',
+  ach_five: 'C\'est parti', ach_five_d: 'Terminer 5 cas ou gestes',
+  ach_twenty: 'Habitué', ach_twenty_d: 'Terminer 20 cas ou gestes',
+  ach_excellent: 'Excellent', ach_excellent_d: 'Obtenir 90 % ou plus',
+  ach_resus80: 'Sauveteur', ach_resus80_d: 'Obtenir 80 % ou plus en réanimation',
+  ach_allskills: 'Tous les gestes', ach_allskills_d: 'Réussir chaque geste guidé avec au moins 60 %',
+  ach_allchal: 'Tous les défis', ach_allchal_d: 'Tenter chaque défi clinique',
+  ach_verified: 'Vérifié', ach_verified_d: 'Un score rejoué et confirmé par le serveur',
+  ach_bodies: 'Tous les patients', ach_bodies_d: 'Soigner 4 types de patients différents (sexe et morphologie)',
+  inst_text: 'Lancez n\'importe quel cas ou le mode libre avec la physiologie cachée visible. Choisissez le patient à droite, puis démarrez.',
+  inst_pick: 'Choisissez un cas ci-dessous (ou aucun pour le mode libre).',
+  inst_sessions: 'Sessions des apprenants sur ce serveur', inst_token: 'Nécessite un serveur lancé avec API_TOKEN ; collez le jeton ici (gardé pour cette page uniquement).',
+  inst_load: 'Charger', inst_disabled: "Le serveur n'a pas d'API_TOKEN : la liste des sessions est désactivée.", inst_badtoken: 'Jeton incorrect.', inst_none: 'Aucune session pour l\'instant.',
+});
+
+// Focused echocardiography (echo.js): the exercise window, report choices, guideline reminders
+Object.assign(EN, {
+  echo_text: 'A patient, a probe and five views. Place the probe on the chest, find PLAX, PSAX, apical four-chamber, subcostal and IVC, measure, then report what limits the circulation.',
+  soon_sources_echo: 'Evidence (normal values and cut-offs)', area_echo: 'Echo',
+  ec_title: 'Focused echocardiography', ec_close: 'Close the echo', ec_open: 'Focused echo (probe)', ec_image: 'Ultrasound image',
+  ec_hint: 'Drag on the chest to move the probe · Q / E turn · W / S tilt · arrows slide · F freeze · Enter saves the clip',
+  ec_freeze: 'Freeze', ec_live: 'Live', ec_cine: 'Cine loop', ec_mmode: 'M-mode', ec_sniff: 'Sniff', ec_sniff_t: 'Ask the patient to sniff (IVC collapse)', ec_save: 'Save clip',
+  ec_rotate: 'Marker', ec_rot_l: 'Turn anticlockwise', ec_rot_r: 'Turn clockwise', ec_tilt: 'Tilt', ec_windows: 'Windows', ec_w_para: 'Parasternal', ec_w_apex: 'Apical', ec_w_sub: 'Subcostal',
+  ec_place: 'Place the probe on the chest', ec_adjust: 'Partial view ({q} %): slide, turn or tilt', ec_no_window: 'No acoustic window: ribs and lung', ec_no_image: 'No usable image to save',
+  ec_saved: 'Clip saved: {v} ({q} %)', ec_saved_poor: 'Clip saved but not diagnostic ({q} %): improve the view', ec_sniff_no: 'Not possible: the patient cannot sniff (ventilated or unconscious)', ec_sniff_go: 'The patient sniffs',
+  ec_cal: 'Caliper', ec_cal_first: 'Freeze, then click the first point', ec_cal_second: 'Click the second point', ec_cal_help: 'Freeze the image (or the M-mode trace), click two points, then record the distance as a measurement. Use the cine slider to pick end-diastole (just after the R wave).',
+  ec_ef_eye: 'Eyeball EF', ec_ef_rec: 'Record EF estimate', ec_recorded: 'Recorded', ec_none: 'nothing yet', ec_norms: 'Reference values',
+  ec_m_lvef: 'LVEF', ec_m_lvedd: 'LV end-diastolic diameter', ec_m_tapse: 'TAPSE', ec_m_rv_basal: 'RV basal diameter', ec_m_effusion: 'Effusion (diastole)', ec_m_ivc_max: 'IVC maximum', ec_m_ivc_min: 'IVC minimum (sniff)',
+  ec_n_ef: 'LVEF (Lang 2015): men 52-72 %, women 54-74 %; mildly reduced 41-51 % (men) / 41-53 % (women), moderately 30-40 %, severely < 30 %.',
+  ec_n_tapse: 'TAPSE < 17 mm: RV systolic dysfunction (Lang 2015; Rudski 2010 used < 16 mm).',
+  ec_n_rv: 'RV basal diameter > 41 mm or mid diameter > 35 mm: dilated RV (Lang 2015; Rudski 2010: > 42 mm basal).',
+  ec_n_ivc: 'IVC <= 21 mm collapsing > 50 % with a sniff: RA about 3 mmHg; > 21 mm collapsing < 50 %: about 15 mmHg; otherwise 8 mmHg (Rudski 2010).',
+  ec_n_vent: 'Under positive-pressure ventilation IVC collapse cannot estimate RA pressure; an IVC <= 12 mm suggests RA < 10 mmHg (Rudski 2010).',
+  ec_tab_proto: 'Protocol', ec_tab_meas: 'Measure', ec_tab_rep: 'Report',
+  ec_proto_note: 'Systematic FoCUS protocol (Via 2014): five views, each target seen in at least two views when possible. Probe positions are teaching guides.',
+  ec_v_plax: 'Parasternal long axis', ec_v_psax: 'Parasternal short axis', ec_v_a4c: 'Apical four-chamber', ec_v_subcostal: 'Subcostal four-chamber', ec_v_ivc: 'Subcostal IVC',
+  ec_how_plax: 'Left of the sternum, 3rd-4th intercostal space; marker toward the right shoulder (about 315°), beam almost perpendicular.',
+  ec_how_psax: 'Same window; turn 90° clockwise so the marker points to the left shoulder (about 45°).',
+  ec_how_a4c: 'Apex: 5th intercostal space between the mid-clavicular and anterior axillary lines; marker to the patient\'s left (90°), aim toward the right shoulder (tilt about 35°).',
+  ec_how_subcostal: 'Just below the xiphoid; marker to the patient\'s left (90°), probe flattened under the ribs (tilt about 65°).',
+  ec_how_ivc: 'From the subcostal view turn the marker toward the head (0°) and follow the IVC into the right atrium (tilt about 45°).',
+  ec_how_rep: 'Grade LV function, RV size, RA pressure from the IVC and the pericardium, then name the mechanism.',
+  ec_look_plax: 'Look: LV size and function (eyeball the EF), effusion behind the posterior wall.',
+  ec_look_psax: 'Look: a round LV contracting evenly; a D-shaped septum means RV pressure overload.',
+  ec_look_a4c: 'Look: RV versus LV size, RV basal diameter; M-mode through the lateral tricuspid annulus for TAPSE.',
+  ec_look_subcostal: 'Look: effusion between liver and RV; right atrial collapse in systole, RV collapse in diastole.',
+  ec_look_ivc: 'Look: IVC diameter just before the right atrium at end-expiration, and its collapse with a sniff (M-mode).',
+  ec_r_lv: 'LV systolic function', ec_r_rv: 'Right ventricle', ec_r_rap: 'RA pressure from the IVC', ec_r_peri: 'Pericardium', ec_r_dx: 'Mechanism',
+  ec_r_lv_hyperkinetic: 'Hyperkinetic', ec_r_lv_normokinetic: 'Normokinetic', ec_r_lv_hypokinetic: 'Hypokinetic', ec_r_lv_severely_hypokinetic: 'Severely hypokinetic',
+  ec_r_rv_normal: 'Normal size and function', ec_r_rv_dilated: 'Dilated / dysfunctional',
+  ec_r_rap_3: 'About 3 mmHg (0-5)', ec_r_rap_8: 'About 8 mmHg (5-10)', ec_r_rap_15: 'About 15 mmHg (10-20)', ec_r_rap_na: 'Not assessable (ventilated)',
+  ec_r_peri_none: 'No effusion', ec_r_peri_effusion: 'Effusion, no tamponade signs', ec_r_peri_tamponade: 'Effusion with tamponade signs',
+  ec_r_dx_normal: 'No shock pattern', ec_r_dx_hypovolaemia: 'Hypovolaemia', ec_r_dx_lv_failure: 'LV systolic failure', ec_r_dx_tamponade: 'Cardiac tamponade', ec_r_dx_rv_failure: 'RV failure (pressure overload)',
+  ec_r_submit: 'Save the report', ec_r_incomplete: 'Answer every line first.', ec_r_saved: 'Echo report saved', ec_r_done: 'Report saved.', ec_finish: 'Finish and see the score', ec_bp: 'BP',
+});
+Object.assign(FR, {
+  echo_text: "Un patient, une sonde et cinq coupes. Posez la sonde sur le thorax, trouvez la parasternale grand axe et petit axe, l'apicale 4 cavités, la sous-costale et la VCI, mesurez, puis concluez sur ce qui limite la circulation.",
+  soon_sources_echo: 'Sources (valeurs normales et seuils)', area_echo: 'Écho',
+  ec_title: 'Échocardiographie ciblée', ec_close: "Fermer l'écho", ec_open: 'Écho ciblée (sonde)', ec_image: 'Image échographique',
+  ec_hint: 'Glissez sur le thorax pour déplacer la sonde · Q / E tourner · W / S incliner · flèches glisser · F figer · Entrée enregistre la boucle',
+  ec_freeze: 'Figer', ec_live: 'Direct', ec_cine: 'Boucle ciné', ec_mmode: 'Mode TM', ec_sniff: 'Sniff', ec_sniff_t: 'Demander au patient de renifler (collapsus de la VCI)', ec_save: 'Enregistrer',
+  ec_rotate: 'Repère', ec_rot_l: 'Tourner (anti-horaire)', ec_rot_r: 'Tourner (horaire)', ec_tilt: 'Inclinaison', ec_windows: 'Fenêtres', ec_w_para: 'Parasternale', ec_w_apex: 'Apicale', ec_w_sub: 'Sous-costale',
+  ec_place: 'Posez la sonde sur le thorax', ec_adjust: 'Coupe partielle ({q} %) : glissez, tournez ou inclinez', ec_no_window: "Pas de fenêtre acoustique : côtes et poumon", ec_no_image: "Pas d'image exploitable à enregistrer",
+  ec_saved: 'Boucle enregistrée : {v} ({q} %)', ec_saved_poor: 'Boucle enregistrée mais non diagnostique ({q} %) : améliorez la coupe', ec_sniff_no: 'Impossible : le patient ne peut pas renifler (ventilé ou inconscient)', ec_sniff_go: 'Le patient renifle',
+  ec_cal: 'Compas', ec_cal_first: 'Figez, puis cliquez le premier point', ec_cal_second: 'Cliquez le second point', ec_cal_help: "Figez l'image (ou le tracé TM), cliquez deux points, puis enregistrez la distance comme mesure. Le curseur ciné permet de choisir la télédiastole (juste après l'onde R).",
+  ec_ef_eye: 'FEVG visuelle', ec_ef_rec: "Enregistrer l'estimation", ec_recorded: 'Mesures enregistrées', ec_none: 'rien pour l\'instant', ec_norms: 'Valeurs de référence',
+  ec_m_lvef: 'FEVG', ec_m_lvedd: 'Diamètre télédiastolique du VG', ec_m_tapse: 'TAPSE', ec_m_rv_basal: 'Diamètre basal du VD', ec_m_effusion: 'Épanchement (diastole)', ec_m_ivc_max: 'VCI maximale', ec_m_ivc_min: 'VCI minimale (sniff)',
+  ec_n_ef: 'FEVG (Lang 2015) : hommes 52-72 %, femmes 54-74 % ; légèrement altérée 41-51 % (hommes) / 41-53 % (femmes), modérément 30-40 %, sévèrement < 30 %.',
+  ec_n_tapse: 'TAPSE < 17 mm : dysfonction systolique du VD (Lang 2015 ; Rudski 2010 retenait < 16 mm).',
+  ec_n_rv: 'Diamètre basal du VD > 41 mm ou médian > 35 mm : VD dilaté (Lang 2015 ; Rudski 2010 : > 42 mm en basal).',
+  ec_n_ivc: 'VCI <= 21 mm avec collapsus > 50 % au sniff : POD environ 3 mmHg ; > 21 mm avec collapsus < 50 % : environ 15 mmHg ; sinon 8 mmHg (Rudski 2010).',
+  ec_n_vent: 'En ventilation en pression positive, le collapsus de la VCI ne permet pas d\'estimer la POD ; une VCI <= 12 mm évoque une POD < 10 mmHg (Rudski 2010).',
+  ec_tab_proto: 'Protocole', ec_tab_meas: 'Mesures', ec_tab_rep: 'Compte rendu',
+  ec_proto_note: "Protocole FoCUS systématique (Via 2014) : cinq coupes, chaque cible vue dans au moins deux coupes si possible. Les positions de sonde sont des repères pédagogiques.",
+  ec_v_plax: 'Parasternale grand axe', ec_v_psax: 'Parasternale petit axe', ec_v_a4c: 'Apicale 4 cavités', ec_v_subcostal: 'Sous-costale 4 cavités', ec_v_ivc: 'Sous-costale VCI',
+  ec_how_plax: 'À gauche du sternum, 3e-4e espace intercostal ; repère vers l\'épaule droite (environ 315°), faisceau presque perpendiculaire.',
+  ec_how_psax: 'Même fenêtre ; tournez de 90° dans le sens horaire, repère vers l\'épaule gauche (environ 45°).',
+  ec_how_a4c: "Apex : 5e espace intercostal entre ligne médioclaviculaire et axillaire antérieure ; repère vers la gauche du patient (90°), visez l'épaule droite (inclinaison environ 35°).",
+  ec_how_subcostal: "Juste sous l'appendice xiphoïde ; repère vers la gauche du patient (90°), sonde à plat sous les côtes (inclinaison environ 65°).",
+  ec_how_ivc: "Depuis la sous-costale, tournez le repère vers la tête (0°) et suivez la VCI jusqu'à l'oreillette droite (inclinaison environ 45°).",
+  ec_how_rep: 'Gradez la fonction du VG, la taille du VD, la POD par la VCI et le péricarde, puis nommez le mécanisme.',
+  ec_look_plax: "À voir : taille et fonction du VG (FEVG visuelle), épanchement en arrière de la paroi postérieure.",
+  ec_look_psax: 'À voir : VG rond se contractant de façon homogène ; un septum en D signe une surcharge de pression du VD.',
+  ec_look_a4c: "À voir : taille du VD par rapport au VG, diamètre basal du VD ; mode TM sur l'anneau tricuspide latéral pour le TAPSE.",
+  ec_look_subcostal: "À voir : épanchement entre foie et VD ; collapsus de l'oreillette droite en systole, du VD en diastole.",
+  ec_look_ivc: "À voir : diamètre de la VCI juste avant l'oreillette droite en fin d'expiration, et son collapsus au sniff (mode TM).",
+  ec_r_lv: 'Fonction systolique du VG', ec_r_rv: 'Ventricule droit', ec_r_rap: 'POD estimée par la VCI', ec_r_peri: 'Péricarde', ec_r_dx: 'Mécanisme',
+  ec_r_lv_hyperkinetic: 'Hyperkinétique', ec_r_lv_normokinetic: 'Normokinétique', ec_r_lv_hypokinetic: 'Hypokinétique', ec_r_lv_severely_hypokinetic: 'Sévèrement hypokinétique',
+  ec_r_rv_normal: 'Taille et fonction normales', ec_r_rv_dilated: 'Dilaté / dysfonctionnel',
+  ec_r_rap_3: 'Environ 3 mmHg (0-5)', ec_r_rap_8: 'Environ 8 mmHg (5-10)', ec_r_rap_15: 'Environ 15 mmHg (10-20)', ec_r_rap_na: 'Non évaluable (ventilé)',
+  ec_r_peri_none: "Pas d'épanchement", ec_r_peri_effusion: 'Épanchement sans signe de tamponnade', ec_r_peri_tamponade: 'Épanchement avec signes de tamponnade',
+  ec_r_dx_normal: 'Pas de profil de choc', ec_r_dx_hypovolaemia: 'Hypovolémie', ec_r_dx_lv_failure: 'Défaillance systolique du VG', ec_r_dx_tamponade: 'Tamponnade', ec_r_dx_rv_failure: 'Défaillance du VD (surcharge de pression)',
+  ec_r_submit: 'Enregistrer le compte rendu', ec_r_incomplete: "Répondez d'abord à chaque ligne.", ec_r_saved: "Compte rendu d'écho enregistré", ec_r_done: 'Compte rendu enregistré.', ec_finish: 'Terminer et voir le score', ec_bp: 'PA',
+});
+Object.assign(SCEN_FR, {
+  echo_hypovolaemia: { title: 'Écho ciblée : hypotension après une hémorragie digestive', summary: "Homme de 46 ans, deux hématémèses ce matin. Pâle, tachycarde, en ventilation spontanée. Faites une écho ciblée : cinq coupes, des mesures, et dites pourquoi il est en choc.", learning: ["Profil hypovolémique : ventricules petits et hyperkinétiques, VCI petite (< 10 mm) et compliante chez un patient en ventilation spontanée (Via 2014).", "L'écho ciblée est qualitative ou semi-quantitative : VG hyperkinétique, normokinétique, hypokinétique ou sévèrement hypokinétique ; chaque cible dans au moins deux coupes (Via 2014).", "VCI (ventilation spontanée) : <= 21 mm et collapsus > 50 % au sniff = POD environ 3 mmHg ; > 21 mm et < 50 % = environ 15 mmHg ; sinon 8 mmHg (Rudski 2010). En pression positive, le collapsus ne permet pas d'estimer la POD."] },
+  echo_lv_failure: { title: 'Écho ciblée : essoufflée, mains froides', summary: "Femme de 68 ans aux antécédents d'infarctus antérieur, essoufflée et froide. Trouvez les cinq coupes, estimez la fraction d'éjection et dites ce qui limite sa circulation.", learning: ["FEVG selon Lang 2015 : normale 54-74 % chez la femme (52-72 % chez l'homme), légèrement altérée 41-53 (41-51), modérément 30-40, sévèrement < 30 %.", "L'écho ciblée est qualitative ou semi-quantitative : chaque cible dans au moins deux coupes (Via 2014).", "VCI (ventilation spontanée) : <= 21 mm et collapsus > 50 % = environ 3 mmHg ; > 21 mm et < 50 % = environ 15 mmHg ; sinon 8 mmHg (Rudski 2010)."] },
+  echo_tamponade: { title: 'Écho ciblée : tachycardie et turgescence jugulaire', summary: "Homme de 55 ans suivi pour un cancer du poumon, de plus en plus essoufflé depuis une semaine, tachycarde avec turgescence jugulaire. Regardez le péricarde et le cœur droit, mesurez et décidez.", learning: ["Tamponnade en 2D : collapsus systolique de l'oreillette droite et collapsus diastolique du ventricule droit (Via 2014).", "Le traitement est le drainage (péricardiocentèse), pas davantage de remplissage.", "VCI (ventilation spontanée) : <= 21 mm et collapsus > 50 % = environ 3 mmHg ; > 21 mm et < 50 % = environ 15 mmHg ; sinon 8 mmHg (Rudski 2010)."] },
+  echo_rv: { title: 'Écho ciblée : dyspnée brutale après une chirurgie', summary: "Homme de 61 ans, J6 d'une prothèse de hanche, brutalement essoufflé et tachycarde. Regardez le ventricule droit aussi attentivement que le gauche, mesurez le TAPSE et décidez.", learning: ["Surcharge de pression aiguë du VD : diamètre basal > 41 mm (Lang 2015 ; > 42 mm pour Rudski 2010), TAPSE < 17 mm, septum aplati (VG en D) et VG sous-rempli, hyperkinétique.", "VCI (ventilation spontanée) : <= 21 mm et collapsus > 50 % = environ 3 mmHg ; > 21 mm et < 50 % = environ 15 mmHg ; sinon 8 mmHg (Rudski 2010)."] },
+});
+
+// ---------------------------------------------------------------- infectiology ward (src/web/ward.js)
+const ABX_EN = { amoxicillin: 'Amoxicillin', amoxiclav: 'Amoxicillin-clavulanate', flucloxacillin: 'Flucloxacillin', piptazo: 'Piperacillin-tazobactam', cefazolin: 'Cefazolin', cefuroxime: 'Cefuroxime', ceftriaxone: 'Ceftriaxone', cefotaxime: 'Cefotaxime', ceftazidime: 'Ceftazidime', cefepime: 'Cefepime', ertapenem: 'Ertapenem', meropenem: 'Meropenem', ciprofloxacin: 'Ciprofloxacin', levofloxacin: 'Levofloxacin', moxifloxacin: 'Moxifloxacin', gentamicin: 'Gentamicin', amikacin: 'Amikacin', tmpsmx: 'Trimethoprim-sulfamethoxazole', vancomycin: 'Vancomycin', clarithromycin: 'Clarithromycin', ampicillin: 'Ampicillin', benzylpenicillin: 'Benzylpenicillin', cefoxitin: 'Cefoxitin', clindamycin: 'Clindamycin', linezolid: 'Linezolid', daptomycin: 'Daptomycin', rifampicin: 'Rifampicin' };
+const ABX_FR = { amoxicillin: 'Amoxicilline', amoxiclav: 'Amoxicilline-acide clavulanique', flucloxacillin: 'Flucloxacilline', piptazo: 'Pipéracilline-tazobactam', cefazolin: 'Céfazoline', cefuroxime: 'Céfuroxime', ceftriaxone: 'Ceftriaxone', cefotaxime: 'Céfotaxime', ceftazidime: 'Ceftazidime', cefepime: 'Céfépime', ertapenem: 'Ertapénem', meropenem: 'Méropénem', ciprofloxacin: 'Ciprofloxacine', levofloxacin: 'Lévofloxacine', moxifloxacin: 'Moxifloxacine', gentamicin: 'Gentamicine', amikacin: 'Amikacine', tmpsmx: 'Triméthoprime-sulfaméthoxazole', vancomycin: 'Vancomycine', clarithromycin: 'Clarithromycine', ampicillin: 'Ampicilline', benzylpenicillin: 'Benzylpénicilline', cefoxitin: 'Céfoxitine', clindamycin: 'Clindamycine', linezolid: 'Linézolide', daptomycin: 'Daptomycine', rifampicin: 'Rifampicine' };
+const INF_EN = {
+  ...Object.fromEntries(Object.entries(ABX_EN).map(([k, v]) => ['abx_' + k, v])),
+  bp_amoxiclav_iv: 'Amoxicillin-clavulanate iv', bp_amoxiclav_po: 'Amoxicillin-clavulanate oral', bp_amoxicillin_po: 'Amoxicillin oral', bp_cefuroxime_iv: 'Cefuroxime iv', bp_cefoxitin: 'Cefoxitin (methicillin screen)',
+  tab_ward: 'Ward', area_inf: 'Infectiology', inf_text: 'Ward patients followed over several simulated days. Take cultures, start treatment, read the Gram stain and the antibiogram against the EUCAST breakpoints, then narrow, switch to oral and stop on time. Each case is scored on stewardship. The patient chooser sets the body: weight-based doses and fluid volumes follow it.',
+  wd_none: 'This case has no ward course.', wd_clock: 'Day {d}, {hh}:00', wd_hours: 'hour {h} since admission', wd_advance: 'Advance time', wd_morning: 'Next morning 08:00',
+  wd_patient: '{sex}, {age} y, {h} cm, {w} kg (BMI {bmi}, ideal body weight {ibw} kg)',
+  wd_obs: 'Observations', wd_temp: 'Temperature', wd_hr: 'Heart rate', wd_rr: 'Resp. rate', wd_bp: 'Blood pressure', wd_spo2: 'SpO2 (air)', wd_mental: 'Mental status', wd_alert: 'alert', wd_confused: 'confused', wd_eating: 'Eating', wd_yes: 'yes', wd_no: 'no', wd_when: 'When',
+  wd_stab_hint: 'Green = within the clinical stability criteria (T <= 37.8 C, HR <= 100, RR <= 24, SBP >= 90, SpO2 >= 90 %, alert, eating; ATS/IDSA 2019).',
+  wd_labs_at: 'Labs ({when}):', wd_labs_line: 'WBC {wbc} G/L · CRP {crp} mg/L · procalcitonin {pct} ng/mL · lactate {lac} mmol/L · creatinine {cr} umol/L · CrCl {crcl} mL/min',
+  wd_micro: 'Microbiology', wd_s_blood: 'Blood culture set', wd_s_urine: 'Urine culture', wd_s_sputum: 'Sputum culture', wd_s_uag: 'Urinary antigens (pneumococcus, Legionella)', wd_no_samples: 'No sample taken yet.', wd_on_abx: 'taken on antibiotics',
+  wd_r_pending: 'pending', wd_r_bc_pos: 'positive: {gram}', wd_r_id: 'identified: {org}', wd_r_ast: 'antibiogram available', wd_r_bc_neg_prelim: 'no growth so far', wd_r_bc_neg_final: 'no growth at 5 days',
+  wd_r_uag_pos: 'pneumococcal antigen POSITIVE, Legionella antigen negative', wd_r_uag_neg: 'pneumococcal and Legionella antigens negative', wd_r_stain: 'Gram stain: {gram}', wd_r_stain_neg: 'Gram stain: no organisms seen', wd_r_cult_neg: 'culture negative',
+  wd_g_gnr: 'Gram-negative rods', wd_g_gpc_clusters: 'Gram-positive cocci in clusters', wd_g_gpdc: 'Gram-positive diplococci',
+  wd_ast_title: 'Antibiogram: {org} (EUCAST v{v} breakpoints, mg/L)', wd_quiz: 'Read it myself (hide S/I/R)', wd_agent: 'Agent', wd_cat: 'Category', wd_inferred: 'inferred', wd_screen: 'screen',
+  wd_sir_def: 'S: susceptible at the standard dose. I: susceptible at increased exposure (high dose). R: resistant. "(I)" in the S column: never S, only I at the high dose. Brackets (): use only with other active therapy. Inferred rows follow the EUCAST notes (cefoxitin for staphylococci, the penicillin screen for pneumococci).',
+  wd_quiz_score: 'Your reading: {ok}/{n} correct.',
+  wd_rx: 'Prescriptions', wd_iv: 'IV', wd_po: 'oral', wd_std: 'standard dose', wd_high: 'high dose', wd_prescribe: 'Prescribe', wd_eucast_dose: 'EUCAST dosing', wd_mg_range: '{a}-{b} mg for {w} kg', wd_loading: 'loading dose {mg} mg (25 mg/kg of {w} kg, max 3 g)',
+  wd_crcl: 'Creatinine clearance (Cockcroft-Gault, actual weight): {v} mL/min. Adjust renally cleared agents to the product label.', wd_crcl_none: 'Order labs to see the renal function.',
+  wd_no_rx: 'No antibiotic prescribed.', wd_since: 'since {when} ({d} days)', wd_stop: 'Stop', wd_past: 'Stopped', wd_days: 'days', wd_active_days: 'Days of active therapy so far: {d}',
+  wd_orders: 'Orders', wd_o_labs: 'Blood tests (FBC, CRP, PCT, creatinine)', wd_o_lactate: 'Lactate', wd_o_fluids: 'Crystalloid 30 mL/kg = {ml} mL', wd_o_cxr: 'Chest X-ray', wd_o_renal_us: 'Renal ultrasound', wd_o_tte: 'Echocardiogram (TTE)', wd_o_remove_line: 'Remove the central line',
+  wd_f_tte_normal: 'no vegetation, normal valves', wd_f_us_normal: 'no obstruction, no abscess', wd_f_us_catheter: 'no obstruction; catheter in the bladder', wd_f_cxr_normal: 'no consolidation', wd_f_cxr_rll: 'right lower lobe consolidation', wd_given: 'given',
+  wd_end_hint: 'End the case once the course is finished (antibiotics stopped): duration and outcome are scored then.', wd_end: 'End the case and see the score',
+  wd_log_adv: 'Ward: +{h} h ({when})', wd_log_sample: 'Sample: {k}', wd_log_rx: 'Prescribed {d} {r}', wd_log_stop: 'Stopped {d}',
+};
+const INF_FR = {
+  ...Object.fromEntries(Object.entries(ABX_FR).map(([k, v]) => ['abx_' + k, v])),
+  bp_amoxiclav_iv: 'Amoxicilline-acide clavulanique IV', bp_amoxiclav_po: 'Amoxicilline-acide clavulanique orale', bp_amoxicillin_po: 'Amoxicilline orale', bp_cefuroxime_iv: 'Céfuroxime IV', bp_cefoxitin: 'Céfoxitine (dépistage méticilline)',
+  tab_ward: 'Service', area_inf: 'Infectiologie', inf_text: "Patients de service suivis sur plusieurs jours simulés. Prélevez, traitez, lisez le Gram et l'antibiogramme avec les concentrations critiques EUCAST, puis désescaladez, passez à la voie orale et arrêtez à temps. Chaque cas est noté sur le bon usage. Le choix du patient fixe le corps : les doses au poids et les volumes de remplissage en dépendent.",
+  wd_none: "Ce cas n'a pas de suivi en service.", wd_clock: 'Jour {d}, {hh} h', wd_hours: "heure {h} depuis l'admission", wd_advance: 'Avancer le temps', wd_morning: 'Lendemain 8 h',
+  wd_patient: '{sex}, {age} ans, {h} cm, {w} kg (IMC {bmi}, poids idéal {ibw} kg)',
+  wd_obs: 'Surveillance', wd_temp: 'Température', wd_hr: 'Fréquence cardiaque', wd_rr: 'Fréq. respiratoire', wd_bp: 'Pression artérielle', wd_spo2: 'SpO2 (air)', wd_mental: 'Conscience', wd_alert: 'normale', wd_confused: 'confus', wd_eating: "S'alimente", wd_yes: 'oui', wd_no: 'non', wd_when: 'Heure',
+  wd_stab_hint: 'Vert = dans les critères de stabilité clinique (T <= 37,8 °C, FC <= 100, FR <= 24, PAS >= 90, SpO2 >= 90 %, conscience normale, alimentation ; ATS/IDSA 2019).',
+  wd_labs_at: 'Biologie ({when}) :', wd_labs_line: 'Leucocytes {wbc} G/L · CRP {crp} mg/L · procalcitonine {pct} ng/mL · lactate {lac} mmol/L · créatinine {cr} µmol/L · clairance {crcl} mL/min',
+  wd_micro: 'Microbiologie', wd_s_blood: "Paire d'hémocultures", wd_s_urine: 'ECBU', wd_s_sputum: 'Examen des crachats', wd_s_uag: 'Antigénuries (pneumocoque, Legionella)', wd_no_samples: 'Aucun prélèvement.', wd_on_abx: 'prélevé sous antibiotique',
+  wd_r_pending: 'en cours', wd_r_bc_pos: 'positive : {gram}', wd_r_id: 'identification : {org}', wd_r_ast: 'antibiogramme disponible', wd_r_bc_neg_prelim: 'stérile à ce jour', wd_r_bc_neg_final: 'stérile à 5 jours',
+  wd_r_uag_pos: 'antigène pneumococcique POSITIF, antigène Legionella négatif', wd_r_uag_neg: 'antigènes pneumococcique et Legionella négatifs', wd_r_stain: 'Gram : {gram}', wd_r_stain_neg: 'Gram : pas de germe', wd_r_cult_neg: 'culture négative',
+  wd_g_gnr: 'bacilles à Gram négatif', wd_g_gpc_clusters: 'cocci à Gram positif en amas', wd_g_gpdc: 'diplocoques à Gram positif',
+  wd_ast_title: 'Antibiogramme : {org} (concentrations critiques EUCAST v{v}, mg/L)', wd_quiz: 'Lire moi-même (masquer S/I/R)', wd_agent: 'Antibiotique', wd_cat: 'Catégorie', wd_inferred: 'déduit', wd_screen: 'dépistage',
+  wd_sir_def: "S : sensible à dose standard. I : sensible à forte exposition (forte dose). R : résistant. « (I) » dans la colonne S : jamais S, seulement I à forte dose. Parenthèses () : seulement associé à un autre traitement actif. Les lignes déduites suivent les notes EUCAST (céfoxitine pour les staphylocoques, dépistage pénicilline pour le pneumocoque).",
+  wd_quiz_score: 'Votre lecture : {ok}/{n} justes.',
+  wd_rx: 'Prescriptions', wd_iv: 'IV', wd_po: 'orale', wd_std: 'dose standard', wd_high: 'forte dose', wd_prescribe: 'Prescrire', wd_eucast_dose: 'Posologie EUCAST', wd_mg_range: '{a}-{b} mg pour {w} kg', wd_loading: 'dose de charge {mg} mg (25 mg/kg de {w} kg, max 3 g)',
+  wd_crcl: 'Clairance de la créatinine (Cockcroft-Gault, poids réel) : {v} mL/min. Adapter les molécules à élimination rénale selon le RCP.', wd_crcl_none: 'Demandez une biologie pour voir la fonction rénale.',
+  wd_no_rx: 'Aucun antibiotique prescrit.', wd_since: 'depuis {when} ({d} jours)', wd_stop: 'Arrêter', wd_past: 'Arrêtés', wd_days: 'jours', wd_active_days: 'Jours de traitement actif : {d}',
+  wd_orders: 'Examens et gestes', wd_o_labs: 'Bilan sanguin (NFS, CRP, PCT, créatinine)', wd_o_lactate: 'Lactate', wd_o_fluids: 'Cristalloïde 30 mL/kg = {ml} mL', wd_o_cxr: 'Radiographie thoracique', wd_o_renal_us: 'Échographie rénale', wd_o_tte: 'Échocardiographie (ETT)', wd_o_remove_line: 'Retirer le cathéter central',
+  wd_f_tte_normal: 'pas de végétation, valves normales', wd_f_us_normal: "pas d'obstacle, pas d'abcès", wd_f_us_catheter: "pas d'obstacle ; sonde dans la vessie", wd_f_cxr_normal: 'pas de condensation', wd_f_cxr_rll: 'condensation lobaire inférieure droite', wd_given: 'administré',
+  wd_end_hint: "Terminez le cas une fois le traitement fini (antibiotiques arrêtés) : la durée et l'évolution sont notées à ce moment.", wd_end: 'Terminer le cas et voir le score',
+  wd_log_adv: 'Service : +{h} h ({when})', wd_log_sample: 'Prélèvement : {k}', wd_log_rx: 'Prescrit : {d} {r}', wd_log_stop: 'Arrêté : {d}',
+};
+Object.assign(EN, INF_EN); Object.assign(FR, INF_FR);
+Object.assign(SCEN_FR, {
+  inf_pyelo: { title: 'Pyélonéphrite avec bactériémie', summary: "Femme de 46 ans, brûlures mictionnelles depuis deux jours, maintenant 39 °C, frissons et douleur lombaire droite. Tachycarde, pression artérielle limite. Prélevez, traitez, lisez l'antibiogramme et décidez de la durée.",
+    learning: ["Hémocultures et ECBU avant la première dose, puis antibiotique dans l'heure si le sepsis est probable (Surviving Sepsis 2021).", "Lisez l'antibiogramme avec les concentrations critiques EUCAST : S = dose standard, I = sensible à forte exposition, R = résistant. Les E. coli résistants à l'amoxicilline (pénicillinase) sont fréquents.", "Une fois stable et alimentée, relais oral par une molécule active sur la souche (ici une fluoroquinolone ; le cotrimoxazole est R).", "Sept jours de traitement actif suffisent pour la plupart des bactériémies à Gram négatif qui s'améliorent (essai BALANCE)."] },
+  inf_cap: { title: 'Pneumonie communautaire grave', summary: 'Homme de 72 ans, toux et fièvre depuis trois jours, maintenant dyspnéique (FR 30, SpO2 88 % en air), un peu confus. Radiographie en attente. Traitez une pneumonie grave, trouvez le germe et désescaladez.',
+    learning: ['PAC grave : hémocultures et crachats avant traitement ; bêta-lactamine plus macrolide (ou plus fluoroquinolone respiratoire) pour le pneumocoque et les germes atypiques (ATS/IDSA 2019).', "CMI de la pénicilline <= 0,06 mg/L = dépistage EUCAST négatif : toutes les bêta-lactamines ayant une concentration critique sont S, l'amoxicilline seule suffit.", "La lévofloxacine n'est que I sur le pneumocoque (S <= 0,001) : il faut la forte dose. Le macrolide est R et l'antigène Legionella négatif : arrêtez-le.", "Au moins 5 jours et jusqu'à la stabilité clinique ; relais oral dès que stable et alimenté."] },
+  inf_sab: { title: 'Bactériémie à Staphylococcus aureus sur cathéter central', summary: "Homme de 61 ans, J5 d'une chirurgie colique, nutrition par cathéter central : frissons, 38,9 °C, orifice rouge. Prélevez, couvrez, trouvez la porte d'entrée et prenez en charge la bactériémie correctement.",
+    learning: ["Bactériémie nosocomiale sur cathéter central : couverture du SARM (vancomycine, dose de charge au poids réel) jusqu'à l'antibiogramme, le risque de SARM étant élevé (Surviving Sepsis 2021).", 'CMI de la céfoxitine <= 4 mg/L : sensible à la méticilline. EUCAST rend alors la flucloxacilline S et la céfazoline I (forte dose seulement pour S. aureus). Remplacez la vancomycine par la bêta-lactamine.', 'Retirez le cathéter infecté, refaites des hémocultures 48 h après la première positive et faites une échocardiographie (IDSA/ESCMID 2026).', 'Comptez les 14 jours à partir de la première hémoculture négative ; la bactériémie persiste tant que le cathéter reste en place.'] },
+  inf_esbl: { title: 'Choc septique urinaire : E. coli BLSE', summary: 'Femme de 78 ans (52 kg), en EHPAD, sonde urinaire à demeure, E. coli BLSE dans un ECBU il y a quatre mois. Fièvre, confusion, PA 75/45, extrémités froides. Réanimez, couvrez la souche résistante, puis ciblez.',
+    learning: ["Choc septique : antibiotique dans l'heure, lactate et au moins 30 mL/kg de cristalloïde dans les 3 premières heures (Surviving Sepsis 2021) ; le volume dépend de son poids.", 'Risque élevé de bactérie multirésistante (portage BLSE connu) : un probabiliste actif, par exemple un carbapénème ; deux molécules anti-Gram négatif ne sont suggérées que tant que la sensibilité est inconnue.', "BLSE : céphalosporines de 3e génération R. Carbapénème pour la bactériémie ; la pipéracilline-tazobactam n'est pas un choix préférentiel même si la CMI est S (recommandations IDSA BMR). Arrêtez la seconde molécule une fois l'antibiogramme connu.", "Aucune molécule orale active (fluoroquinolone et cotrimoxazole R) : restez IV ; 7 jours suffisent si elle s'améliore (BALANCE)."] },
+});
+Object.assign(EN, { dr_running: 'running', dr_start: 'Start' });
+Object.assign(FR, { dr_running: 'en cours', dr_start: 'Démarrer' });
+
+Object.assign(EN, {
+  eff_title: 'Effects observed', eff_empty: 'Give a drug or an intervention: what the monitor shows changing appears here at +30 s, +1, +3 and +5 min.',
+  eff_none: 'no measurable change on the monitor', eff_unmon: 'monitor not connected: connect it to see the effect',
+  eff_apnoea: 'apnoea (RR {from} → 0)', eff_rhythm: 'rhythm',
+  vl_hr: 'HR', vl_map: 'MAP', vl_spo2: 'SpO₂', vl_etco2: 'EtCO₂', vl_rr: 'RR',
+  mon_attach: 'Connect the monitor', mon_attach_sub: 'ECG · SpO₂ · BP cuff (every 2.5 min) · capnography', mon_attached: 'Monitor connected',
+});
+Object.assign(FR, {
+  eff_title: 'Effets observés', eff_empty: "Donnez un médicament ou faites un geste : ce que le scope montre changer s'affiche ici à +30 s, +1, +3 et +5 min.",
+  eff_none: 'aucun changement mesurable au scope', eff_unmon: "scope non branché : branchez-le pour voir l'effet",
+  eff_apnoea: 'apnée (FR {from} → 0)', eff_rhythm: 'rythme',
+  vl_hr: 'FC', vl_map: 'PAM', vl_spo2: 'SpO₂', vl_etco2: 'EtCO₂', vl_rr: 'FR',
+  mon_attach: 'Brancher le scope', mon_attach_sub: 'ECG · SpO₂ · PNI (toutes les 2,5 min) · capnographie', mon_attached: 'Scope branché',
+});
+
+Object.assign(EN, { log_btn: 'Log' });
+Object.assign(FR, { log_btn: 'Journal' });
+
+Object.assign(EN, { dt_computing: 'timing for this patient…', dt_monitor: 'On the monitor', dt_none: 'no visible change within 5 min in this stable patient', dt_peak: 'peak at the site of action', dt_model: 'model:', dt_design: 'simplified model, unverified' });
+Object.assign(FR, { dt_computing: 'délai pour ce patient…', dt_monitor: 'Au scope', dt_none: 'pas de changement visible en 5 min chez ce patient stable', dt_peak: "pic au site d'action", dt_model: 'modèle :', dt_design: 'modèle simplifié, non vérifié' });
+
+Object.assign(EN, { cd_onset: 'visible on the monitor in', cd_visible: 'effect visible', cd_novisible: 'no visible change expected', cd_peak: 'peak in', cd_peak_now: 'peak effect reached' });
+Object.assign(FR, { cd_onset: 'effet au scope dans', cd_visible: 'effet visible', cd_novisible: 'pas de changement visible attendu', cd_peak: 'pic dans', cd_peak_now: 'effet maximal atteint' });
+
 export function t(key, vars) {
   const dict = lang === 'fr' ? FR : EN;
   let v = dict[key] ?? EN[key] ?? key;
@@ -153,3 +404,13 @@ export const CRITERION_FR = {
   fio2_first: 'FiO2 portée à 1,0 dans les 60 s suivant la désaturation', bronch_look: 'Position de la sonde vérifiée au fibroscope en moins de 4 min', tube_reposition: 'Sonde endobronchique ramenée dans la trachée en moins de 5 min', tube_depth_final: 'Extrémité finale 2 à 6 cm au-dessus de la carène', secretions: 'Sécrétions obstructives aspirées au fibroscope (arbre bronchique droit)', demarche_bronch: 'Démarche de bronchoscopie : FiO2 1,0 avant, capnographie, regarder puis agir, passage court',
   demarche_chest: 'Démarche de décompression : examiner, préparer, décomprimer, réévaluer, analgésie avant le drain', demarche_fona: "Démarche de l'abord du cou : déclarer la CICO, extension du cou, repérer la membrane, EtCO2 et ventilation", early_vent: 'Ventilation assistée précoce', cause_hypoxia: 'Traiter la cause réversible : hypoxie',
 };
+Object.assign(CRITERION_FR, {
+  echo_views: 'Les cinq coupes FoCUS obtenues avec une qualité diagnostique (PSGA, PSPA, A4C, sous-costale, VCI)', echo_order: "Séquence systématique : coupes prises dans l'ordre du protocole",
+  echo_measures: 'Mesures dans la tolérance : FEVG (+-10 points), TAPSE (+-3 mm), VCI max et min (+-3 mm)', echo_interp: 'Compte rendu : VG, VD, POD par la VCI et péricarde gradés selon les seuils des recommandations', echo_dx: 'Mécanisme du choc identifié par le profil FoCUS',
+});
+Object.assign(CRITERION_FR, {
+  inf_cultures: "Hémocultures (2 paires) et prélèvement du foyer suspect avant le premier antibiotique", inf_abx_time: 'Premier antibiotique dans le délai recommandé', inf_empiric: 'Probabiliste actif sur le germe, sans couverture inutile (SARM, double anti-Gram négatif)',
+  inf_deesc: "Désescalade vers une molécule ciblée active dans les 24 h suivant l'antibiogramme", inf_oral: 'Relais oral actif une fois cliniquement stable', inf_duration: 'Durée de traitement actif aussi courte que les preuves le permettent',
+  inf_outcome: 'Guérison sans rechute ni transfert en réanimation', inf_line: 'Retrait rapide du cathéter central infecté', inf_fubc: 'Hémocultures de contrôle vers 48 h', inf_tte: 'Échocardiographie transthoracique',
+  inf_fluids: 'Au moins 30 mL/kg de cristalloïde en 3 h', inf_lactate: 'Lactate mesuré', inf_esbl_agent: 'BLSE dans le sang : carbapénème en traitement définitif',
+});

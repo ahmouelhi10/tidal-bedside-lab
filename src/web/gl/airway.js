@@ -43,7 +43,7 @@ const TREE = [
 ];
 /** engine secretion region of a branch */
 export const regionOf = (id) => (id === 'T' ? 'trachea' : id === 'RMB' || id.startsWith('R') || id === 'BI' ? 'R' : 'L');
-const RINGED = new Set(['T', 'RMB', 'LMB', 'BI']);
+const RINGED = new Set(['T', 'RMB', 'LMB']);                                   // horseshoe rings on the trachea and main bronchi only; lobar bronchi have plates, not visible rings
 
 /** Branch list scaled to the patient (lengths with height, calibre with height and sex). */
 export function buildTree({ heightCm = 170, sex = 'M' } = {}) {
@@ -72,12 +72,12 @@ function branchDist(b, x, y, z) {
   return d;
 }
 export function lumenSdf(tree) {
-  const L = tree.list, k = 0.22;
+  const L = tree.list, k = 0.09;                                                    // small blend radius: sharp carinal spurs between the orifices
   return (x, y, z) => { let d = 1e9; for (const b of L) { const e = branchDist(b, x, y, z); d = d === 1e9 ? e : smin(d, e, k); } return d; };
 }
 
 /** Mesh of the airway wall (seen from inside). tint.r = cartilage, tint.g = depth into the tree (0 trachea .. 1 segments). */
-export function buildAirwayMesh(tree, h = 0.13) {
+export function buildAirwayMesh(tree, h = 0.1) {
   const f = lumenSdf(tree), L = tree.list;
   let mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
   for (const b of L) for (const p of [b.a, b.b]) for (let i = 0; i < 3; i++) { mn[i] = Math.min(mn[i], p[i] - b.r1 - 0.4); mx[i] = Math.max(mx[i], p[i] + b.r1 + 0.4); }

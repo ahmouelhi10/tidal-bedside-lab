@@ -30,6 +30,12 @@ const P = {
   flask: '<path d="M9 3h6M10 3v6L4.5 18.5A2 2 0 006.2 21.5h11.6a2 2 0 001.7-3L14 9V3"/><path d="M7 15h10"/>',
   hand: '<path d="M8 13V6a1.5 1.5 0 013 0v5M11 11V4.5a1.5 1.5 0 013 0V11M14 11V6a1.5 1.5 0 013 0v7c0 4-2.5 7-6 7-2.5 0-4-1-5.5-3L3.8 13.6a1.6 1.6 0 012.5-2L8 13"/>',
   heart: '<path d="M12 20s-7-4.4-7-10a4 4 0 017-2.6A4 4 0 0119 10c0 5.6-7 10-7 10z"/><path d="M7 12h3l1.5-3 2 6 1.5-3H17"/>',
+  target: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r=".8"/>',
+  clipboard: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4h6v3H9z"/><path d="M12 10v6M9 13h6"/>',
+  microbe: '<circle cx="12" cy="12" r="5"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.9 2.9M15.5 15.5l2.9 2.9M5.6 18.4l2.9-2.9M15.5 8.5l2.9-2.9"/><circle cx="10.5" cy="11" r=".8"/><circle cx="13.5" cy="13.5" r=".8"/>',
+  probe: '<path d="M9 3h6l1 7H8z"/><path d="M10 10v4a2 2 0 004 0v-4"/><path d="M7 21c1.5-2 3-3 5-3s3.5 1 5 3"/>',
+  chart: '<path d="M4 20V4M4 20h16"/><path d="M8 16v-4M12 16V8M16 16v-6"/>',
+  board: '<rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M12 16v3M8 21h8M6.5 12l3-3 2.5 2 4.5-4.5"/>',
   back: '<path d="M14 6l-6 6 6 6"/>',
   chevron: '<path d="M9 6l6 6-6 6"/>',
 };

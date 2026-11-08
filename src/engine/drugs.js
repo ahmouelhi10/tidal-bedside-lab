@@ -76,6 +76,14 @@ const succinylcholineEmpirical = (b, act = 1) => ({ V1: 0.065 * b.weightKg, k10:
 const dexmedetomidineHannivoort = b => { const w = b.weightKg / 70, s = Math.pow(w, 0.75), V1 = 1.78 * w, V2 = 30.3 * w, V3 = 52 * w; return fromClear(V1, V2, V3, 0.686 * s, 2.98 * s, 0.602 * s, 0.0428); }; // REF opentiva
 // single-compartment ACLS / vasoactive drugs (design values; REF design). Concentration in ng/mL when dose in mcg.
 const oneComp = (V1, tHalfMin, ke0 = 5) => ({ V1, k10: Math.LN2 / tHalfMin, k12: 0, k13: 0, k21: 0.1, k31: 0, ke0 });
+/**
+ * Peripheral IV bolus to central circulation transit (s). A drug that acts on first pass with a < 10 s half-life (adenosine)
+ * blocks the AV node 17.5 +/- 1.0 s (mean +/- SEM, n = 10) after antecubital injection and 21.9 s after a hand vein (REF ng1999);
+ * in healthy volunteers its heart-rate fall appears about 20 s after injection (REF watt1986). 15 s is the injection-to-central
+ * plasma dead time, the rest being the response itself. Applied only to the single-compartment (design) drugs below: the published
+ * PK-PD models (propofol, opioids, relaxants...) fitted their ke0 to the effect after a bolus, so their lag already contains it.
+ */
+export const IV_TRANSIT_S = 15;
 
 /**
  * DRUGS: unit = dose unit; pk(b, ctx) -> params; pd = pharmacodynamic parameters (c50 in the concentration unit of the model).
@@ -92,17 +100,17 @@ export const DRUGS = {
   rocuronium:     { name: 'Rocuronium', unit: 'mg', concUnit: 'ug/mL', ref: 'opentiva', kind: 'nmb', c50: 1.2, gamma: 3.5 },
   succinylcholine:{ name: 'Succinylcholine', unit: 'mg', concUnit: 'ug/mL', ref: 'label_succ', kind: 'nmb', c50: 1.2, gamma: 3.0, fasc: true },
   sugammadex:     { name: 'Sugammadex', unit: 'mg', concUnit: 'ug/mL', ref: 'label_sugammadex', kind: 'reversal' },
-  naloxone:       { name: 'Naloxone', unit: 'mcg', concUnit: 'ng/mL', ref: 'design', kind: 'antagonist', kn: 1.0 },
-  epinephrine:    { name: 'Epinephrine', unit: 'mcg', concUnit: 'ng/mL', ref: 'aha2025_part9', kind: 'pressor', tHalf: 2.5, vPerKg: 0.15, a1C50: 6, b1C50: 1.5, chronoC50: 1.0, hrAdd: 60, svrEmax: 0.70, inotEmax: 0.9, venEmax: 0.15 },
-  norepinephrine: { name: 'Norepinephrine', unit: 'mcg', concUnit: 'ng/mL', ref: 'design', kind: 'pressor', tHalf: 2.5, vPerKg: 0.15, a1C50: 3, b1C50: 6, chronoC50: 8, hrAdd: 8, svrEmax: 1.2, inotEmax: 0.35, venEmax: 0.2 },
-  phenylephrine:  { name: 'Phenylephrine', unit: 'mcg', concUnit: 'ng/mL', ref: 'design', kind: 'pressor', tHalf: 5, vPerKg: 0.15, a1C50: 8, b1C50: 1e9, chronoC50: 1e9, hrAdd: 0, svrEmax: 0.9, inotEmax: 0, venEmax: 0.1 },
-  vasopressin:    { name: 'Vasopressin', unit: 'units', concUnit: 'units/L', ref: 'aha2025_part9', kind: 'pressor', tHalf: 14, vPerKg: 0.14, a1C50: 0.10, b1C50: 1e9, chronoC50: 1e9, hrAdd: 0, svrEmax: 0.7, inotEmax: 0, venEmax: 0, ineffectiveInArrest: true },
-  atropine:       { name: 'Atropine', unit: 'mcg', concUnit: 'ng/mL', ref: 'design', kind: 'vagolytic', tHalf: 150, vPerKg: 1.0, c50: 3.0, hrAdd: 55 },
-  nitroglycerin:  { name: 'Nitroglycerin', unit: 'mcg', concUnit: 'ng/mL', ref: 'design', kind: 'vasodilator', tHalf: 3, vPerKg: 0.5, c50: 2.0, venEmax: 0.35, svrEmax: 0.30 },
-  amiodarone:     { name: 'Amiodarone', unit: 'mg', concUnit: 'ug/mL', ref: 'aha2025_part9', kind: 'antiarrhythmic', tHalf: 600, vPerKg: 1.0, c50: 2.0, hypoSvr: 0.12 },
-  lidocaine:      { name: 'Lidocaine', unit: 'mg', concUnit: 'ug/mL', ref: 'aha2025_part9', kind: 'antiarrhythmic', tHalf: 100, vPerKg: 1.0, c50: 2.5, hypoSvr: 0 },
-  adenosine:      { name: 'Adenosine', unit: 'mg', concUnit: 'ug/mL', ref: 'design', kind: 'av_block', tHalf: 0.17, vPerKg: 0.2 },
-  calciumChloride:{ name: 'Calcium chloride', unit: 'mg', concUnit: 'mg/L', ref: 'aha2025_part9', kind: 'inotrope', tHalf: 6, vPerKg: 0.2, c50: 25, inotEmax: 0.3, svrEmax: 0.15 },
+  naloxone:       { name: 'Naloxone', transit: true, unit: 'mcg', concUnit: 'ng/mL', ref: 'design', kind: 'antagonist', kn: 1.0 },
+  epinephrine:    { name: 'Epinephrine', transit: true, unit: 'mcg', concUnit: 'ng/mL', ref: 'aha2025_part9', kind: 'pressor', tHalf: 2.5, vPerKg: 0.15, a1C50: 6, b1C50: 1.5, chronoC50: 1.0, hrAdd: 60, svrEmax: 0.70, inotEmax: 0.9, venEmax: 0.15 },
+  norepinephrine: { name: 'Norepinephrine', transit: true, unit: 'mcg', concUnit: 'ng/mL', ref: 'design', kind: 'pressor', tHalf: 2.5, vPerKg: 0.15, a1C50: 3, b1C50: 6, chronoC50: 8, hrAdd: 8, svrEmax: 1.2, inotEmax: 0.35, venEmax: 0.2 },
+  phenylephrine:  { name: 'Phenylephrine', transit: true, unit: 'mcg', concUnit: 'ng/mL', ref: 'design', kind: 'pressor', tHalf: 5, vPerKg: 0.15, a1C50: 3.5, b1C50: 1e9, chronoC50: 1e9, hrAdd: 0, svrEmax: 0.9, inotEmax: 0, venEmax: 0.1 },
+  vasopressin:    { name: 'Vasopressin', transit: true, unit: 'units', concUnit: 'units/L', ref: 'aha2025_part9', kind: 'pressor', tHalf: 14, vPerKg: 0.14, a1C50: 0.10, b1C50: 1e9, chronoC50: 1e9, hrAdd: 0, svrEmax: 0.7, inotEmax: 0, venEmax: 0, ineffectiveInArrest: true },
+  atropine:       { name: 'Atropine', transit: true, unit: 'mcg', concUnit: 'ng/mL', ref: 'design', kind: 'vagolytic', tHalf: 150, vPerKg: 1.0, c50: 3.0, hrAdd: 55, ke0: 0.65 },   // ke0 REF label_atropine: maximum heart rate 7-8 min after IV dosing (t_peak of Ce 7.7 min)
+  nitroglycerin:  { name: 'Nitroglycerin', transit: true, unit: 'mcg', concUnit: 'ng/mL', ref: 'design', kind: 'vasodilator', tHalf: 3, vPerKg: 0.5, c50: 2.0, venEmax: 0.35, svrEmax: 0.30 },
+  amiodarone:     { name: 'Amiodarone', transit: true, unit: 'mg', concUnit: 'ug/mL', ref: 'aha2025_part9', kind: 'antiarrhythmic', tHalf: 600, vPerKg: 1.0, c50: 2.0, hypoSvr: 0.12 },
+  lidocaine:      { name: 'Lidocaine', transit: true, unit: 'mg', concUnit: 'ug/mL', ref: 'aha2025_part9', kind: 'antiarrhythmic', tHalf: 100, vPerKg: 1.0, c50: 2.5, hypoSvr: 0 },
+  adenosine:      { name: 'Adenosine', transit: true, unit: 'mg', concUnit: 'ug/mL', ref: 'label_adenosine', kind: 'av_block', tHalf: 0.17, vPerKg: 0.2 },   // t1/2 < 10 s in whole blood (REF label_adenosine); rhythm effect in Patient._adenosine
+  calciumChloride:{ name: 'Calcium chloride', transit: true, unit: 'mg', concUnit: 'mg/L', ref: 'aha2025_part9', kind: 'inotrope', tHalf: 6, vPerKg: 0.2, c50: 25, inotEmax: 0.3, svrEmax: 0.15 },
 };
 
 const PD = (c, c50, g = 1) => hill(c, c50, g);
@@ -112,6 +120,7 @@ export class DrugSystem {
     this.body = body; this.dtSec = dtSec;
     this.propofolModel = propofolModel; this.remiModel = remiModel; this.pchE = pseudocholinesterase;
     this.pk = {}; this.hemo = {}; this.sug = { capacity: 0 };
+    this.transit = [];                                      // IV boluses still on their way from the arm vein: { key, amount, steps left }
     this.log = [];
   }
   _opioidOn() { return ['remifentanil', 'fentanyl'].some(k => this.pk[k] && this.pk[k].c1 > 0.2); }
@@ -129,7 +138,7 @@ export class DrugSystem {
       case 'succinylcholine': return succinylcholineEmpirical(b, this.pchE);
       case 'naloxone': return { ...oneComp(0.5 * b.weightKg, 64), ke0: 0.35 };
       case 'amiodarone': case 'lidocaine': case 'calciumChloride': case 'adenosine': case 'atropine': case 'nitroglycerin':
-      case 'epinephrine': case 'norepinephrine': case 'phenylephrine': case 'vasopressin': return { ...oneComp(d.vPerKg * b.weightKg, d.tHalf), ke0: key === 'atropine' ? 0.3 : 2.0 };
+      case 'epinephrine': case 'norepinephrine': case 'phenylephrine': case 'vasopressin': return { ...oneComp(d.vPerKg * b.weightKg, d.tHalf), ke0: d.ke0 ?? 4 };   // ke0 4/min (t1/2 10 s) vascular / myocardial response lag (REF design)
       default: return null;
     }
   }
@@ -140,8 +149,14 @@ export class DrugSystem {
   bolus(key, amount, t = 0) {
     if (key === 'sugammadex') { this.sug.capacity += amount * 0.28; this.log.push({ t, key, amount }); return; } // 1 mg sugammadex (MW 2178) binds 0.28 mg rocuronium (MW 609), 1:1 molar
     const m = this.model(key); if (!m) throw new Error('unknown drug ' + key);
-    m.bolus(amount); this.log.push({ t, key, amount });
+    if (DRUGS[key].transit) this.transit.push({ key, amount, n: Math.round(IV_TRANSIT_S / this.dtSec) });
+    else m.bolus(amount);
+    this.log.push({ t, key, amount });
   }
+  /** amount (dose units) of `key` injected but not yet in the central circulation */
+  inTransit(key) { return this.transit.reduce((s, x) => s + (x.key === key ? x.amount : 0), 0); }
+  /** quantised state of the transit queue for Patient.stateHash() */
+  hashVec() { return this.transit.flatMap(x => [Object.keys(DRUGS).indexOf(x.key), x.amount, x.n]); }
   infusion(key, ratePerMin) { const m = this.model(key); if (!m) throw new Error('unknown drug ' + key); m.setInfusion(ratePerMin); }
   stop(key) { if (this.pk[key]) this.pk[key].setInfusion(0); }
   /** effect-site (or plasma for single-compartment drugs) concentration used for PD */
@@ -149,6 +164,10 @@ export class DrugSystem {
   cp(key) { const m = this.pk[key]; return m ? m.c1 : 0; }
   step() {
     const dtMin = this.dtSec / 60;
+    if (this.transit.length) {                               // arrivals in injection order, before the step integrates them
+      for (const x of this.transit) if (--x.n <= 0) this.pk[x.key].bolus(x.amount);
+      this.transit = this.transit.filter(x => x.n > 0);
+    }
     for (const [k, m] of Object.entries(this.pk)) {
       m.step();
       const kh = 0.5;                                        // extra hemodynamic equilibration on top of the effect-site (BP nadir 2-4 min after an induction bolus; REF sahinovic2018)
@@ -195,18 +214,18 @@ export class DrugSystem {
         const hh = PD(this.hemo[k] * opShift, d.c50, 1.5);
         chrono *= 1 - d.brady * hh; svr *= 1 - d.svrDrop * hh; baro *= 1 - 0.1 * hh;
       } else if (d.kind === 'pressor') {
-        const cc = this.hemo[k] * 0 + m.c1;            // plasma (rapid equilibration)
+        const cc = c;                                  // effect site (ke0 4/min, REF design); the arrest model still reads plasma epinephrine
         const a1 = PD(cc, d.a1C50, 1.3), b1 = PD(cc, d.b1C50, 1.3), ch = PD(cc, d.chronoC50, 1.2);
         if (!(d.ineffectiveInArrest && ctx.inArrest)) svr *= 1 + d.svrEmax * a1;
         inot *= 1 + d.inotEmax * b1; hrAdd += d.hrAdd * ch; ven += d.venEmax * a1;
       } else if (d.kind === 'vagolytic') {
         hrAdd += d.hrAdd * PD(c, d.c50, 1.5);
       } else if (d.kind === 'vasodilator') {
-        const e = PD(m.c1, d.c50, 1.3); ven -= d.venEmax * e; svr *= 1 - d.svrEmax * e;
+        const e = PD(c, d.c50, 1.3); ven -= d.venEmax * e; svr *= 1 - d.svrEmax * e;
       } else if (d.kind === 'antiarrhythmic') {
-        svr *= 1 - d.hypoSvr * PD(m.c1, d.c50, 1.5);
+        svr *= 1 - d.hypoSvr * PD(c, d.c50, 1.5);
       } else if (d.kind === 'inotrope') {
-        const e = PD(m.c1, d.c50, 1.3); inot *= 1 + d.inotEmax * e; svr *= 1 + d.svrEmax * e;
+        const e = PD(c, d.c50, 1.3); inot *= 1 + d.inotEmax * e; svr *= 1 + d.svrEmax * e;
       }
     }
     // --- hypnosis index: H = I^g/(1+I^g) mapped with g=1 on the already-powered additive potency

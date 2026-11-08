@@ -6,6 +6,7 @@ import { UI } from './ui.js';
 import { initLang, t } from './i18n.js';
 import { Bronchoscope } from './bronchoscope.js';
 import { HandsOn } from './handson.js';
+import { EchoLab } from './echo.js';
 
 initLang();
 const root = document.getElementById('app');
@@ -25,6 +26,7 @@ try { scene = new Scene(glCanvas, monCanvas); } catch (e) {
 }
 const ui = new UI(root, { sim, scene, monitor, sound, glCanvas, monCanvas });
 ui.bronch = new Bronchoscope({ sim, scene, ui });
+ui.echoLab = new EchoLab({ sim, scene, ui });
 scene.loadPatientAsset?.(); scene.loadInstruments?.();
 if (!noGl) ui.handsOn = new HandsOn({ scene, ui });
 scene.onAsset = () => { if (ui.panelOpen && ui.tab === 'tab_guide') ui.buildTabs(); };                          // realistic patient (assets/patient.glb); the procedural body stays until it is ready
@@ -56,7 +58,7 @@ ui.onPreview = (setup) => {
 };
 ui.onResume = () => { scene.setPatient(sim.session.spec, ui.liveTone); scene.setCamera('default'); ui.syncPins(); };
 ui.onStart = async (setup) => {
-  ui.bronch.stop();
+  ui.bronch.stop(); ui.echoLab.stop();
   await sim.start({ scenarioId: setup.scenarioId, spec: setup.spec, learner: setup.learner });
   ui.liveTone = setup.tone;
   scene.setPatient(sim.session.spec, setup.tone);
@@ -67,7 +69,7 @@ ui.onStart = async (setup) => {
 };
 ui.onFinish = async () => {
   if (!sim.patient || sim.finished) return;
-  ui.bronch.stop();
+  ui.bronch.stop(); ui.echoLab.stop();
   sim.setSpeed(0);
   const out = await sim.finish();
   ui.showDebrief(out);

@@ -6,6 +6,8 @@
 // criteria whose numeric target is a design choice say so (ref 'design') and are listed in docs/VALIDATION.md.
 import { clamp } from './util.js';
 import { DEMARCHE, scoreDemarche } from './demarche.js';
+import { Ward, ABX, categorize } from './infection.js';
+import { ECHO_VIEWS, reportTruth } from './echo.js';
 
 // ----------------------------------------------------------------------------- helpers over the log
 const ev = (p, type, pred = () => true) => p.log.filter(e => e.type === type && pred(e));
@@ -233,6 +235,49 @@ export const criteria = {
   }),
 };
 
+
+// ----------------------------------------------------------------------------- focused echocardiography
+/** Tolerance of a recorded measurement against the true value (design: about the spread a trainee should reach). REF design */
+const ECHO_TOL = { lvef: 10, lvedd: 5, tapse: 3, rv_basal: 4, ivc_max: 3, ivc_min: 3, effusion: 4 };
+const lastOf = (arr, pred) => { for (let i = arr.length - 1; i >= 0; i--) if (pred(arr[i])) return arr[i]; return null; };
+export const echoCriteria = {
+  views: () => C('echo_views', 'All five FoCUS views acquired with diagnostic quality (PLAX, PSAX, A4C, subcostal, IVC)', 25, 'via2014', p => {
+    const ok = ECHO_VIEWS.filter(v => p.echo.views.some(x => x.view === v && x.quality >= 0.7));
+    return { frac: ok.length / ECHO_VIEWS.length, detail: ok.length ? `${ok.length}/5: ${ok.join(', ')}` : 'no view saved' };
+  }),
+  order: () => C('echo_order', 'Systematic sequence: the views taken in the protocol order', 5, 'design', p => {
+    const seq = []; for (const x of p.echo.views) if (x.quality >= 0.7 && !seq.includes(x.view)) seq.push(x.view);
+    if (seq.length < 2) return { frac: 0, detail: 'fewer than two views' };
+    let inOrder = 0; for (let i = 1; i < seq.length; i++) if (ECHO_VIEWS.indexOf(seq[i]) > ECHO_VIEWS.indexOf(seq[i - 1])) inOrder++;
+    return { frac: (inOrder / (seq.length - 1)) * (seq.length / ECHO_VIEWS.length), detail: seq.join(' > ') };
+  }),
+  measures: (extra = []) => C('echo_measures', 'Measurements within tolerance: LVEF (+-10 points), TAPSE (+-3 mm), IVC maximum and minimum (+-3 mm)' + (extra.includes('effusion') ? ', effusion (+-4 mm)' : ''), 25, 'design', p => {
+    const need = ['lvef', 'tapse', 'ivc_max', 'ivc_min', ...extra];
+    let sum = 0; const det = [];
+    for (const w of need) {
+      const m = lastOf(p.echo.measures, x => x.what === w);
+      if (!m) { det.push(`${w} -`); continue; }
+      const err = Math.abs(m.value - m.truth), tol = ECHO_TOL[w];
+      sum += err <= tol ? 1 : err >= 2 * tol ? 0 : 1 - (err - tol) / tol;
+      det.push(`${w} ${m.value} (${m.truth})`);
+    }
+    return { frac: sum / need.length, detail: det.join(', ') };
+  }),
+  interpretation: () => C('echo_interp', 'Report: LV function, RV size, RA pressure from the IVC and pericardium graded with the guideline cut-offs', 25, 'lang2015', p => {
+    const r = lastOf(p.echo.reports, () => true); if (!r) return { frac: 0, detail: 'no report' };
+    const key = reportTruth(r.state), f = ['lv', 'rv', 'rap', 'peri'], ok = f.filter(k => r[k] === key[k]);
+    return { frac: ok.length / f.length, detail: f.map(k => `${k} ${r[k] ?? '-'}${r[k] === key[k] ? '' : ` (expected ${key[k]})`}`).join(', ') };
+  }),
+  diagnosis: () => C('echo_dx', 'Mechanism of shock identified from the FoCUS pattern', 20, 'via2014', p => {
+    const r = lastOf(p.echo.reports, () => true); if (!r) return { frac: 0, detail: 'no report' };
+    const want = reportTruth(r.state).dx; return { frac: r.dx === want ? 1 : 0, detail: r.dx === want ? want : `${r.dx ?? '-'} (expected ${want})` };
+  }),
+};
+const echoScore = (extra) => () => [echoCriteria.views(), echoCriteria.order(), echoCriteria.measures(extra), echoCriteria.interpretation(), echoCriteria.diagnosis()];
+const ECHO_LEARN = ['FoCUS is qualitative or semiquantitative: grade the LV as hyperkinetic, normokinetic, hypokinetic or severely hypokinetic, and look at each target in at least two views (Via 2014).',
+  'IVC (spontaneous breathing): <= 21 mm collapsing > 50 % with a sniff = RA pressure about 3 mmHg; > 21 mm collapsing < 50 % = about 15 mmHg; otherwise 8 mmHg (Rudski 2010). Under positive-pressure ventilation collapse cannot estimate RA pressure.'];
+const echoInit = (p) => { p.flags.ecgLeads = p.flags.spo2Probe = p.flags.nibp = true; p.nibp = { sbp: p.circ.sbp, dbp: p.circ.dbp, t: 0, valid: true }; };
+
 // ----------------------------------------------------------------------------- scenarios
 const hardStopAt = (t) => ({ t, run: p => { p.ended = true; } });
 
@@ -361,6 +406,202 @@ SCENARIOS.tube_desat = {
     'A tube that is too deep goes into the right main bronchus: the left chest barely moves and the SpO2 falls. The bronchoscope shows the carina missing or the right upper lobe opening at the tube tip.',
     'Pull the tube back until the tip sits 2-6 cm above the carina (the optimal depth at the teeth is about 0.1 x height + 4 cm), and note the new depth.',
     'Aspirate the secretions through the scope, keep each look short and keep FiO2 high while the scope is in the tube.'],
+};
+
+
+// ----------------------------------------------------------------------------- focused echocardiography cases (kind 'Echo'): a shocked or breathless patient, a probe, five views
+SCENARIOS.echo_hypovolaemia = {
+  id: 'echo_hypovolaemia', title: 'Focused echo: hypotension after a GI bleed', difficulty: 'beginner', durationS: 900, kind: 'Echo',
+  summary: 'A 46-year-old man vomited blood twice this morning. He is pale, tachycardic and breathing spontaneously. Do a focused echo: five views, measure, and say why he is shocked.',
+  spec: { sex: 'M', age: 46, heightCm: 178, weightKg: 76, causes: [] },
+  preRunS: 560,
+  init(p) { echoInit(p); p.vol.setBleed(p.body.bloodVolume * 1000 * 0.27 / (590 / 60)); },   // about 27 % of the blood volume lost before arrival (REF design)
+  timeline: [{ t: 0, run: p => { p.vol.setBleed(0); p.nibp = { sbp: p.circ.sbp, dbp: p.circ.dbp, t: 0, valid: true }; } }],
+  score: echoScore([]),
+  learning: ['Hypovolaemic pattern: small, hyperdynamic ventricles and a small IVC (< 10 mm, collapsing) in a spontaneously breathing patient (Via 2014).', ...ECHO_LEARN],
+};
+SCENARIOS.echo_lv_failure = {
+  id: 'echo_lv_failure', title: 'Focused echo: breathless with cold hands', difficulty: 'intermediate', durationS: 900, kind: 'Echo',
+  summary: 'A 68-year-old woman with a previous anterior infarction, breathless and cold. Find the five views, estimate the ejection fraction and decide what limits her circulation.',
+  spec: { sex: 'F', age: 68, heightCm: 162, weightKg: 70, lvFunction: 0.3, causes: [] },
+  init(p) { echoInit(p); },
+  timeline: [],
+  score: echoScore([]),
+  learning: ['LVEF graded with Lang 2015: normal 54-74 % in women (52-72 % in men), mildly reduced 41-53 (41-51), moderately 30-40, severely < 30 %.', ...ECHO_LEARN],
+};
+SCENARIOS.echo_tamponade = {
+  id: 'echo_tamponade', title: 'Focused echo: tachycardia and distended neck veins', difficulty: 'intermediate', durationS: 900, kind: 'Echo',
+  summary: 'A 55-year-old man with lung cancer, increasingly breathless over a week, now tachycardic with distended neck veins. Look at the pericardium and the right heart, measure, and decide.',
+  spec: { sex: 'M', age: 55, heightCm: 175, weightKg: 72, effusionMl: 440, causes: [] },
+  init(p) { echoInit(p); p.vol.startInfusion(0.015 * p.body.weightKg, 10, 'crystalloid'); },   // 15 mL/kg of fluid given in the ambulance (REF design)
+  timeline: [],
+  score: echoScore(['effusion']),
+  learning: ['Tamponade physiology on 2D: systolic collapse of the right atrium and diastolic collapse of the right ventricle (Via 2014).', 'The treatment is drainage (pericardiocentesis), not more fluid.', ...ECHO_LEARN],
+};
+SCENARIOS.echo_rv = {
+  id: 'echo_rv', title: 'Focused echo: sudden breathlessness after surgery', difficulty: 'advanced', durationS: 900, kind: 'Echo',
+  summary: 'A 61-year-old man, 6 days after hip surgery, suddenly breathless and tachycardic. Look at the right ventricle as carefully as the left, measure TAPSE, and decide.',
+  spec: { sex: 'M', age: 61, heightCm: 176, weightKg: 88, rvLoad: 0.7, causes: [] },
+  init(p) { echoInit(p); },
+  timeline: [],
+  score: echoScore([]),
+  learning: ['Acute RV pressure overload: RV basal diameter > 41 mm (Lang 2015; > 42 mm in Rudski 2010), TAPSE < 17 mm, a flattened septum (D-shaped LV) and an underfilled, hyperdynamic LV.', ...ECHO_LEARN],
+};
+
+// ----------------------------------------------------------------------------- infectiology (kind 'Infectiology'): ward patients over several simulated days
+/** an antibiotic course is fully active against the case isolate (S, or I at the high dose: REF eucast_sir) */
+const fullyActive = (w, r) => { const c = categorize(w.iso, r.drug, r.route).cat; return c === 'S' || (c === 'I' && r.dose === 'high'); };
+const regimenAt = (w, h) => w.courses.filter(r => r.startH <= h && (r.stopH === null || r.stopH > h));
+const daysTxt = d => `${d.toFixed(1)} days`;
+export const infCriteria = {
+  cultures: () => C('inf_cultures', 'Blood cultures (2 sets) and a sample of the suspected source before the first antibiotic', 12, 'ssc2021', p => {
+    const w = p.ward, pre = w.samples.filter(x => x.preAbx), nb = Math.min(2, pre.filter(x => x.kind === 'blood').length), src = w.def.source ? pre.some(x => x.kind === w.def.source) : null;
+    if (!w.samples.length) return { frac: 0, detail: 'no sample taken' };
+    const frac = src === null ? nb / 2 : 0.7 * nb / 2 + (src ? 0.3 : 0);
+    return { frac, detail: `${nb} blood culture set(s) before antibiotics` + (src === null ? '' : `, ${w.def.source} ${src ? 'sampled first' : 'not sampled before antibiotics'}`) };
+  }),
+  timing: (targetH) => C('inf_abx_time', `First antibiotic dose within ${targetH} h of recognition`, 12, 'ssc2021', p => {
+    const h = p.ward.firstAbxH; if (h === null) return { frac: 0, detail: 'no antibiotic given' };
+    return { frac: lerpScore(h, targetH, targetH * 4), detail: `at ${h} h` };
+  }),
+  empiric: () => C('inf_empiric', 'Empirical regimen active against the pathogen, without cover the risk profile does not call for (MRSA, double Gram-negative)', 14, 'ssc2021', p => {
+    const w = p.ward, d = w.def; if (w.firstAbxH === null) return { frac: 0, detail: 'no antibiotic given' };
+    const reg = w.courses.filter(r => r.startH <= w.firstAbxH + 2);
+    const active = reg.some(r => fullyActive(w, r)), atyp = d.need !== 'atyp' || reg.some(r => ABX[r.drug].atyp);
+    const mrsa = !d.mrsaRisk && reg.some(r => ABX[r.drug].mrsa), dbl = !d.mdrRisk && reg.filter(r => ABX[r.drug].gn).length >= 2;
+    const broad = !d.mdrRisk && reg.some(r => ABX[r.drug].broad);                                     // broad Gram-negative agents without MDR risk (REF design weight)
+    const frac = (active ? 0.6 : 0) + (atyp ? 0.2 : 0) + 0.2 - (mrsa ? 0.3 : 0) - (dbl ? 0.3 : 0) - (broad ? 0.15 : 0);
+    const why = [active ? 'active' : 'NOT active on the isolate', d.need === 'atyp' ? (atyp ? 'atypical cover' : 'no atypical cover') : null, mrsa ? 'unneeded MRSA cover' : null, dbl ? 'unneeded double Gram-negative cover' : null, broad ? 'broader than the risk profile needs' : null].filter(Boolean);
+    return { frac, detail: `${reg.map(r => r.drug + ' ' + r.route).join(' + ')}: ${why.join(', ')}` };
+  }),
+  deescalate: () => C('inf_deesc', 'Regimen narrowed to a targeted active agent within 24 h of the antibiogram', 16, 'ssc2021', p => {
+    const w = p.ward, ast = w.milestones().ast; if (ast === null) return null;
+    for (let h = ast; h <= w.h; h++) {
+      const reg = regimenAt(w, h);
+      if (reg.length && reg.every(r => w.def.targeted.includes(r.drug) && fullyActive(w, r))) return { frac: lerpScore(h - ast, 24, 72), detail: `${reg.map(r => r.drug).join(' + ')} ${h - ast} h after the antibiogram` };
+    }
+    return { frac: 0, detail: 'not narrowed to a targeted active agent' };
+  }),
+  oralSwitch: () => C('inf_oral', 'Switch to an active oral agent once clinically stable (afebrile, haemodynamically stable, eating)', 10, 'barlam2016', p => {
+    const w = p.ward; if (!w.def.oral) return null;
+    const po = w.courses.find(r => r.route === 'po');
+    if (!po) return w.stableH !== null && w.h - w.stableH > 72 ? { frac: 0, detail: 'still intravenous 3 days after stability' } : null;
+    if (!fullyActive(w, po)) return { frac: 0.1, detail: `${po.drug} po is not active on the isolate` };
+    if (w.stableH === null || po.startH < w.stableH) return { frac: 0.3, detail: `switched at ${po.startH} h, before clinical stability` };
+    const ref = Math.max(w.stableH, w.milestones().ast ?? 0);
+    return { frac: lerpScore(po.startH - ref, 24, 96), detail: `${po.drug} po at ${po.startH} h (stable from ${w.stableH} h)` };
+  }),
+  duration: (ref) => C('inf_duration', 'Total duration of active therapy as short as the evidence supports', 14, ref, p => {
+    const w = p.ward, d = w.def.duration;
+    if (w.firstActiveH === null) return { frac: 0, detail: 'never on active therapy' };
+    if (w.rx.length) return { frac: 0, detail: 'antibiotics still running at the end of the case' };
+    let start = w.firstActiveH;
+    if (d.from === 'clearance') { start = w.milestones().clearH; if (start === null) return { frac: 0, detail: 'clearance of the bacteraemia not documented (no negative follow-up culture)' }; }
+    const days = (w.lastActiveH - start) / 24;
+    const frac = days < d.lo ? lerpScore(d.lo - days, 0, 2) : days > d.hi ? lerpScore(days - d.hi, 0, d.zeroAfter) : 1;
+    return { frac, detail: `${daysTxt(days)} (${d.lo}-${d.hi} days${d.from === 'clearance' ? ' from the first negative blood culture' : ''})` };
+  }),
+  outcome: () => C('inf_outcome', 'Cured without relapse or transfer to intensive care', 10, 'design', p => {
+    const s = p.ward.summary();
+    if (s.icu) return { frac: 0, detail: 'deteriorated: transferred to intensive care' };
+    if (s.relapse) return { frac: 0.2, detail: 'relapse after stopping therapy' };
+    if (s.cured && !s.onTherapy) return { frac: 1, detail: 'cured' };
+    return p.ward.b < 0.05 ? { frac: 0.6, detail: 'improving, still on treatment' } : { frac: 0, detail: 'infection not controlled' };
+  }),
+  lineRemoval: () => C('inf_line', 'Infected central line removed promptly once the blood grows Gram-positive cocci', 10, 'idsa_sab2026', p => {
+    const w = p.ward; if (!w.def.line) return null;
+    if (w.lineOutH === null) return { frac: 0, detail: 'line left in place' };
+    const g = w.milestones().gram; return { frac: g === null ? 1 : lerpScore(w.lineOutH - g, 24, 72), detail: `removed at ${w.lineOutH} h` };
+  }),
+  followUpCultures: () => C('inf_fubc', 'Follow-up blood cultures about 48 h after the first positive set', 8, 'idsa_sab2026', p => {
+    const w = p.ward, fp = w.milestones().firstPosSampleH; if (fp === null) return null;
+    const later = w.samples.filter(x => x.kind === 'blood' && x.h > fp);
+    if (!later.length) return { frac: 0, detail: 'none taken' };
+    const ok = later.some(x => x.h >= fp + 36 && x.h <= fp + 96);                                  // tolerance around 48 h (REF design)
+    return { frac: ok ? 1 : 0.5, detail: later.map(x => `${x.h - fp} h`).join(', ') + ' after the first positive set' };
+  }),
+  echo: () => C('inf_tte', 'Transthoracic echocardiography for S. aureus bacteraemia', 6, 'idsa_sab2026', p => (p.ward.orders.some(o => o.what === 'tte') ? { frac: 1, detail: 'done' } : { frac: 0, detail: 'not done' })),
+  fluids: () => C('inf_fluids', 'At least 30 mL/kg crystalloid within 3 h for sepsis-induced hypoperfusion', 8, 'ssc2021', p => {
+    const o = p.ward.orders.find(x => x.what === 'fluids30'); return o ? { frac: lerpScore(o.h, 3, 9), detail: `at ${o.h} h` } : { frac: 0, detail: 'not given' };
+  }),
+  lactate: () => C('inf_lactate', 'Lactate measured', 4, 'ssc2021', p => (p.ward.orders.some(x => x.what === 'lactate' || x.what === 'labs') ? { frac: 1, detail: 'measured' } : { frac: 0, detail: 'not measured' })),
+  esblAgent: () => C('inf_esbl_agent', 'ESBL-producing isolate in the blood: a carbapenem as definitive therapy (piperacillin-tazobactam is not a preferred agent)', 8, 'idsa_amr2026', p => {
+    const w = p.ward, ast = w.milestones().ast; if (ast === null) return null;
+    const reg = regimenAt(w, Math.min(w.h, ast + 24)).concat(w.rx);
+    const carb = reg.some(r => ABX[r.drug].cls === 'carbapenem'), pt = reg.some(r => r.drug === 'piptazo');
+    return { frac: carb && !pt ? 1 : carb ? 0.6 : 0, detail: carb ? 'carbapenem' : pt ? 'piperacillin-tazobactam' : 'no carbapenem' };
+  }),
+};
+const wardInit = (p) => { p.ward = new Ward(p.scenario.ward, { body: p.body, spec: p.spec, seed: p.seed }); };
+const infScore = (timingH, durRef, extra = []) => () => [infCriteria.cultures(), infCriteria.timing(timingH), infCriteria.empiric(), infCriteria.deescalate(), infCriteria.oralSwitch(), infCriteria.duration(durRef), infCriteria.outcome(), ...extra.map(k => infCriteria[k]())];
+
+SCENARIOS.inf_pyelo = {
+  id: 'inf_pyelo', title: 'Pyelonephritis with bacteraemia', difficulty: 'beginner', durationS: 3600, kind: 'Infectiology',
+  summary: 'A 46-year-old woman with two days of burning micturition, now 39 C, rigors and right flank pain. Tachycardic, blood pressure low-normal. Sample, treat, read the antibiogram and decide how long.',
+  spec: { sex: 'F', age: 46, heightCm: 165, weightKg: 68, causes: [] },
+  ward: {
+    source: 'urine', bacteraemic: true, ttpH: 10, b0: 1, s0: 0.7, sbp0: 124, creat0: 70, mrsaRisk: false, mdrRisk: false, oral: true,
+    targeted: ['ceftriaxone', 'cefotaxime', 'ciprofloxacin', 'levofloxacin', 'amoxiclav'],
+    duration: { lo: 6.5, hi: 8, zeroAfter: 6 }, renalUs: 'us_normal',
+    isolate: { name: 'Escherichia coli', group: 'Enterobacterales', mic: { ampicillin: 32, amoxicillin_po: 32, amoxiclav_iv: 8, amoxiclav_po: 8, piptazo: 2, cefuroxime_iv: 4, cefazolin: 2, cefotaxime: 0.125, ceftriaxone: 0.125, ceftazidime: 0.25, cefepime: 0.125, ertapenem: 0.016, meropenem: 0.03, ciprofloxacin: 0.03, levofloxacin: 0.06, gentamicin: 1, amikacin: 2, tmpsmx: 8 } },
+  },
+  init: wardInit, timeline: [],
+  score: infScore(1, 'balance2025'),
+  learning: ['Blood cultures and a urine culture before the first dose, then antibiotics within the hour when sepsis is likely (Surviving Sepsis 2021).',
+    'Read the antibiogram with the EUCAST breakpoints: S = standard dose, I = susceptible at increased exposure (higher dose), R = resistant. Amoxicillin-resistant (penicillinase) E. coli is common.',
+    'Once stable and eating, step down to an oral agent the isolate is susceptible to (here a fluoroquinolone; trimethoprim-sulfamethoxazole is R).',
+    'Seven days of active therapy are enough for most Gram-negative bloodstream infections in patients who improve (BALANCE trial).'],
+};
+SCENARIOS.inf_cap = {
+  id: 'inf_cap', title: 'Severe community-acquired pneumonia', difficulty: 'intermediate', durationS: 3600, kind: 'Infectiology',
+  summary: 'A 72-year-old man, three days of cough and fever, now breathless (RR 30, SpO2 88 % on air), slightly confused. Chest X-ray pending. Treat as severe pneumonia, find the organism and narrow.',
+  spec: { sex: 'M', age: 72, heightCm: 170, weightKg: 74, causes: [] },
+  ward: {
+    source: 'sputum', bacteraemic: false, ttpH: 14, b0: 1, s0: 0.74, sbp0: 132, lung: true, creat0: 95, need: 'atyp', mrsaRisk: false, mdrRisk: false, oral: true,
+    targeted: ['amoxicillin', 'ceftriaxone', 'cefotaxime'],
+    duration: { lo: 5, hi: 7, zeroAfter: 5 }, cxr: 'cxr_rll',
+    isolate: { name: 'Streptococcus pneumoniae', group: 'S_pneumoniae', mic: { benzylpenicillin: 0.03, ampicillin: 0.03, amoxicillin_po: 0.03, cefuroxime_iv: 0.06, cefotaxime: 0.03, ceftriaxone: 0.03, cefepime: 0.06, ertapenem: 0.03, meropenem: 0.016, levofloxacin: 1, moxifloxacin: 0.125, clarithromycin: 8, vancomycin: 0.25 } },
+  },
+  init: wardInit, timeline: [],
+  score: infScore(1, 'metlay2019'),
+  learning: ['Severe CAP: blood and sputum cultures before treatment; a beta-lactam plus a macrolide (or plus a respiratory fluoroquinolone) covers the pneumococcus and atypical organisms (ATS/IDSA 2019).',
+    'Penicillin MIC <= 0.06 mg/L is the EUCAST screen: every beta-lactam with a breakpoint is then reported S, so plain amoxicillin is enough.',
+    'Levofloxacin is only I against the pneumococcus (S <= 0.001): it needs the high dose. The macrolide is R here and the Legionella antigen is negative: stop it.',
+    'Treat for at least 5 days and until clinically stable; switch to oral once stable and eating.'],
+};
+SCENARIOS.inf_sab = {
+  id: 'inf_sab', title: 'Central-line Staphylococcus aureus bacteraemia', difficulty: 'advanced', durationS: 3600, kind: 'Infectiology',
+  summary: 'A 61-year-old man on day 5 after bowel surgery, fed through a central line, has rigors and 38.9 C; the line exit site is red. Sample, cover, find the source and manage the bacteraemia properly.',
+  spec: { sex: 'M', age: 61, heightCm: 178, weightKg: 95, causes: [] },
+  ward: {
+    source: null, bacteraemic: true, line: true, lineFloor: 0.4, ttpH: 12, b0: 0.9, s0: 0.62, sbp0: 134, creat0: 85, mrsaRisk: true, mdrRisk: false, oral: false,
+    targeted: ['flucloxacillin', 'cefazolin'],
+    duration: { lo: 14, hi: 16, zeroAfter: 6, from: 'clearance' }, tte: 'tte_normal',
+    isolate: { name: 'Staphylococcus aureus (methicillin-susceptible)', group: 'S_aureus', mic: { benzylpenicillin: 1, cefoxitin: 2, vancomycin: 1, clindamycin: 0.125, linezolid: 2, daptomycin: 0.5, rifampicin: 0.016, tmpsmx: 0.125, gentamicin: 0.5, levofloxacin: 0.25, moxifloxacin: 0.06 } },
+  },
+  init: wardInit, timeline: [],
+  score: infScore(3, 'idsa_sab2026', ['lineRemoval', 'followUpCultures', 'echo']),
+  learning: ['Hospital-onset bacteraemia with a central line: MRSA cover (vancomycin, loading dose by actual body weight) until the antibiogram, as the MRSA risk is high (Surviving Sepsis 2021).',
+    'Cefoxitin MIC <= 4 mg/L: methicillin-susceptible. EUCAST then reports flucloxacillin S and cefazolin I (high dose only for S. aureus). Switch from vancomycin to the beta-lactam.',
+    'Remove the infected central line, take follow-up blood cultures 48 h after the first positive set, and do an echocardiogram (IDSA/ESCMID 2026).',
+    'Count the 14 days from the first negative blood culture, not from the first dose; the bacteraemia persists while the line stays in.'],
+};
+SCENARIOS.inf_esbl = {
+  id: 'inf_esbl', title: 'Urosepsis with shock: ESBL-producing E. coli', difficulty: 'advanced', durationS: 3600, kind: 'Infectiology',
+  summary: 'A 78-year-old woman (52 kg) from a nursing home, long-term urinary catheter, ESBL E. coli in a urine culture four months ago. Fever, confusion, BP 75/45, cold peripheries. Resuscitate, cover the resistant organism, then target.',
+  spec: { sex: 'F', age: 78, heightCm: 158, weightKg: 52, causes: [] },
+  ward: {
+    source: 'urine', bacteraemic: true, ttpH: 9, b0: 1.05, s0: 0.9, sbp0: 122, creat0: 130, mrsaRisk: false, mdrRisk: true, oral: false,
+    targeted: ['ertapenem', 'meropenem', 'piptazo'],
+    duration: { lo: 6.5, hi: 8, zeroAfter: 6 }, renalUs: 'us_catheter',
+    isolate: { name: 'Escherichia coli (ESBL producer)', group: 'Enterobacterales', mic: { ampicillin: 64, amoxicillin_po: 64, amoxiclav_iv: 16, amoxiclav_po: 16, piptazo: 4, cefuroxime_iv: 32, cefazolin: 32, cefotaxime: 16, ceftriaxone: 16, ceftazidime: 8, cefepime: 8, ertapenem: 0.03, meropenem: 0.03, ciprofloxacin: 4, levofloxacin: 8, gentamicin: 1, amikacin: 4, tmpsmx: 8 } },
+  },
+  init: wardInit, timeline: [],
+  score: infScore(1, 'balance2025', ['fluids', 'lactate', 'esblAgent']),
+  learning: ['Septic shock: antibiotics within the hour, lactate, and at least 30 mL/kg crystalloid in the first 3 h (Surviving Sepsis 2021); the volume depends on her weight.',
+    'High risk of a multidrug-resistant organism (known ESBL carriage): an empirical agent active against it, e.g. a carbapenem; two Gram-negative agents are only suggested while susceptibilities are unknown.',
+    'ESBL producer: third-generation cephalosporins R. Use a carbapenem for the bloodstream infection; piperacillin-tazobactam is not a preferred agent even when the MIC reads S (IDSA AMR guidance). Stop the second Gram-negative agent once the antibiogram is known.',
+    'No oral agent is active here (fluoroquinolone and trimethoprim-sulfamethoxazole R): stay intravenous; 7 days are enough once she improves (BALANCE).'],
 };
 
 export const scenarioList = () => Object.values(SCENARIOS).map(({ id, title, difficulty, durationS, kind, summary, spec, learning }) => ({ id, title, difficulty, durationS, kind, summary, spec, learning }));

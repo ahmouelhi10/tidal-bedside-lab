@@ -75,14 +75,16 @@ export class Circulation {
     const svrFx = (fx.svr ?? 1);
     if (perf) {
       const contr = clamp((1 + this.g.con * this.x.con) * (fx.inotropy ?? 1) * (c.lvFunction ?? 1), 0.05, 3);
+      this.contr = contr;                              // effective contractility (read by the echo image model; no effect on the trajectory)
       const after = clamp(1 - 0.45 * (this.mapArt - this.MAP0) / this.MAP0, 0.55, 1.25);
       const svMax = (this.SV0 / this.fn0) * contr * this._hrFill(hr) * after;
       const itp = c.itp ?? 0;                          // intrapleural pressure transmitted to the vena cavae (tension pneumothorax): lowers the gradient for venous return, cardiac filling follows the transmural pressure
-      const F = rap => (hr * svMax * this._f(rap)) / 1000 - (this.pms - itp - rap) / this.Rvr;
+      const rvShift = c.rvShift ?? 0;                  // a pressure-overloaded RV needs a higher RA pressure to deliver the same flow to the LV (REF design)
+      const F = rap => (hr * svMax * this._f(rap - rvShift)) / 1000 - (this.pms - itp - rap) / this.Rvr;
       let lo = -6, hi = 30;
       for (let i = 0; i < 40; i++) { const mid = (lo + hi) / 2; if (F(mid) < 0) lo = mid; else hi = mid; }
       const rapTm = (lo + hi) / 2;
-      this.co = (hr * svMax * this._f(rapTm)) / 1000;
+      this.co = (hr * svMax * this._f(rapTm - rvShift)) / 1000;
       this.rap = rapTm + itp;                          // the CVP trace reads the absolute pressure
       this.hr = hr; this.sv = hr > 0 ? (this.co * 1000) / hr : 0;
       const svr = this.SVR0 * (1 + this.g.svr * this.x.svr) * svrFx * (c.svrTone ?? 1) * (1 - 0.02 * (temp - 37));
@@ -98,6 +100,7 @@ export class Circulation {
       // arrest: flow only from compressions; venous return still limits it
       const flow = (c.cprFlow ?? 0) * this.CO0 * clamp(vs / this.Vs0, 0, 1);
       this.co = flow; this.hr = 0; this.sv = 0;
+      this.contr = 0;
       const itp = c.itp ?? 0;
       this.rap = Math.max(-2, this.pms - itp - flow * this.Rvr) + itp;
       this.svr = this.SVR0 * (c.arrestTone ?? 1) * svrFx;

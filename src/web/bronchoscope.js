@@ -24,21 +24,23 @@ void main(){
   vec3 n = normalize(vN); vec3 V = uEye - vP; float d = length(V); V /= d;
   if (dot(n, V) < 0.0) n = -n;                                   // we look at every surface from inside the airway
   vec3 base; float shin, ks;
-  if (uMat == 0) {                                               // mucosa: pink, paler over cartilage, fine vessels, deeper red distally
+  float wet = 0.0;
+  if (uMat == 0) {                                               // mucosa: salmon pink, paler over cartilage, fine vessels, a little deeper red distally
     float cart = vT.x, gen = vT.y;
-    base = mix(vec3(0.84, 0.40, 0.36), vec3(0.74, 0.28, 0.26), gen);
-    base = mix(base, vec3(0.95, 0.78, 0.70), cart * 0.8);
+    base = mix(vec3(0.96, 0.60, 0.52), vec3(0.88, 0.47, 0.42), gen);
+    base = mix(base, vec3(0.99, 0.84, 0.76), cart * 0.75);
     float v1 = abs(vn(vP * 2.6) * 2.0 - 1.0), v2 = abs(vn(vP * 6.5 + 3.1) * 2.0 - 1.0);
     float vessel = (smoothstep(0.022, 0.0, v1) * 0.7 + 0.45 * smoothstep(0.016, 0.0, v2)) * (1.0 - cart) * smoothstep(0.25, 0.7, vn(vP * 0.9 + 7.0));   // sparse, fine submucosal vessels
-    base = mix(base, vec3(0.62, 0.12, 0.13), clamp(vessel, 0.0, 1.0) * 0.45) * (0.92 + 0.1 * vn(vP * 14.0));
-    n = normalize(n + (vec3(vn(vP * 9.0), vn(vP * 9.0 + 5.0), vn(vP * 9.0 + 9.0)) - 0.5) * 0.18);
-    shin = 70.0; ks = 0.55;
+    base = mix(base, vec3(0.70, 0.16, 0.16), clamp(vessel, 0.0, 1.0) * 0.4) * (0.94 + 0.08 * vn(vP * 14.0));
+    n = normalize(n + (vec3(vn(vP * 9.0), vn(vP * 9.0 + 5.0), vn(vP * 9.0 + 9.0)) - 0.5) * 0.12);
+    wet = smoothstep(0.35, 0.75, vn(vP * 4.0 + 11.0));            // patches of mucus film give the sharp wet glints
+    shin = 24.0; ks = 0.22;
   } else if (uMat == 1) { base = vec3(0.86, 0.78, 0.55); shin = 200.0; ks = 1.3; }   // secretions: glistening, yellowish
   else { base = mix(vec3(0.82, 0.88, 0.9), vec3(0.12, 0.13, 0.15), vT.x); base = mix(base, vec3(0.18, 0.38, 0.85), vT.y); shin = 50.0; ks = 0.5; }   // tube: depth marks, blue line
   float spot = smoothstep(0.15, 0.85, dot(-V, uDir));
   float fall = 1.25 * (0.12 + uGain * uGain * uFog) / (0.12 + d * d * uFog);   // auto-gain: the wall around the tip is always well exposed, depth falls off
-  float dif = max(dot(n, V), 0.0), spec = pow(max(dot(n, V), 0.0), shin) * ks;
-  vec3 col = base * base * dif * fall * (0.3 + 0.7 * spot) + vec3(1.0, 0.96, 0.9) * spec * fall * spot + base * 0.01;
+  float dif = max(dot(n, V), 0.0), spec = pow(dif, shin) * ks + pow(dif, 220.0) * 1.4 * wet;   // broad sheen + tight wet highlight (head-light at the lens)
+  vec3 col = mix(base, base * base, 0.7) * vec3(1.08, 0.98, 0.94) * dif * fall * (0.25 + 0.75 * spot) + vec3(1.0, 0.97, 0.93) * spec * fall * spot + base * 0.006;
   vec2 q = gl_FragCoord.xy / uRes - 0.5; col *= 1.0 - smoothstep(0.32, 0.5, length(q)) * 0.85;   // optical vignette
   col = col / (1.0 + col); o = vec4(pow(col, vec3(1.0 / 2.2)), 1.0);
 }`;
@@ -78,7 +80,7 @@ class ScopeView {
     this.vp = mat4.multiply(proj, mat4.lookAt(cam.eye, V.add(cam.eye, cam.dir), cam.up));
     gl.useProgram(this.p);
     gl.uniformMatrix4fv(this.u.uVP, false, this.vp); gl.uniform3fv(this.u.uEye, cam.eye); gl.uniform3fv(this.u.uDir, cam.dir);
-    gl.uniform2f(this.u.uRes, this.canvas.width, this.canvas.height); gl.uniform1f(this.u.uFog, 0.32); gl.uniform1f(this.u.uGain, cam.gain ?? 0.8);
+    gl.uniform2f(this.u.uRes, this.canvas.width, this.canvas.height); gl.uniform1f(this.u.uFog, 0.5); gl.uniform1f(this.u.uGain, cam.gain ?? 0.8);
     for (const it of items) {
       if (!it.g) continue;
       gl.uniformMatrix4fv(this.u.uM, false, it.M || mat4.identity()); gl.uniform1i(this.u.uMat, it.mat);
@@ -225,19 +227,30 @@ export class Bronchoscope {
   }
   _labels(eye, view) {
     const L = this.dom.labels; L.replaceChildren(); if (!this.names) return;
-    const s = this.scope, cand = new Set(s.b.children), placed = [];
-    for (const c of s.b.children) if (s.s > s.b.len - 1.2) for (const g of c.children) if (g.at < 0.3 || c.len < 3) cand.add(g);   // the next generation only once close to the fork
-    if (s.b.id === 'T' && s.s > s.b.len - 2.5) cand.add({ label: t('br_carina'), a: s.b.b, d: [0, -1, 0] });
+    const s = this.scope, cand = [...s.b.children], placed = [];
+    // carinal spurs: main carina, then the right/left secondary carinae (RC1 RUL/BI, RC2 RML/RLL, LC1 LUL/LLL, LC2 lingula)
+    const SPUR = { T: t('br_carina'), RMB: 'RC1', BI: 'RC2', LMB: 'LC1', LUL: 'LC2' };
+    if (SPUR[s.b.id] && s.b.children.length > 1 && s.s > s.b.len - 2.5) {
+      const ds = s.b.children.reduce((acc, c) => V.add(acc, c.d), [0, 0, 0]);
+      cand.push({ label: SPUR[s.b.id], a: s.b.b, d: V.norm(ds), spur: true, off: 0.15 });
+    }
+    // the next generation appears as the scope nears the fork (an early side branch such as B6 sooner)
+    for (const c of s.b.children) if (s.s > s.b.len - 2.5) for (const g of c.children) if (g.at < 0.3 || (c.len < 3 && s.s > s.b.len - 1.2)) cand.push(g);
+    // in priority order (orifices of this branch, the spur, then the next generation): a label that would cover one
+    // already placed waits until the scope is close enough for the orifices to separate, as on a real screen
     for (const c of cand) {
-      const pt = V.add(c.a, c.d, 0.45), rel = V.sub(pt, eye), dist = V.len(rel); if (dist > 5 || V.dot(rel, view) < 0.15) continue;
-      const q = this.view.project(pt); if (!q || q.r > 0.85) continue;
-      if (placed.some(o => Math.hypot(o.x - q.x, o.y - q.y) < 34)) continue; placed.push(q);   // never stack labels
-      L.append(el('span', { class: 'br-lbl', style: `left:${q.x.toFixed(0)}px;top:${q.y.toFixed(0)}px`, text: c.label }));
+      const pt = V.add(c.a, c.d, c.off ?? 0.45), rel = V.sub(pt, eye), dist = V.len(rel); if (dist > 6 || V.dot(rel, view) < 0.15) continue;
+      const q = this.view.project(pt); if (!q || q.r > 0.88) continue;
+      if (placed.some(o => Math.hypot(o.x - q.x, o.y - q.y) < 28)) continue;
+      placed.push(q);
+      L.append(el('span', { class: 'br-lbl' + (c.spur ? ' spur' : ''), style: `left:${q.x.toFixed(0)}px;top:${q.y.toFixed(0)}px`, text: c.label }));
     }
   }
   _hud(p) {
     const m = p.monitor, f = (v, u = '') => (v == null ? '--' : v + u);
-    const chips = [['HR', f(m.hr), 'hr'], ['SpO₂', f(m.spo2, '%'), 'sp'], ['EtCO₂', f(m.etco2), 'co'], [t('br_rr'), f(m.rr), 'rr']];
+    const ctrl = p.vent?.mode === 'ctrl', vt = ctrl ? p.vent.vt : p.resp?.vt;
+    const chips = [['HR', f(m.hr), 'hr'], ['SpO₂', f(m.spo2, '%'), 'sp'], ['EtCO₂', f(m.etco2), 'co'], [t('br_rr'), f(m.rr), 'rr'],
+      ['VT', f(Number.isFinite(vt) ? Math.round(vt) : null, ' mL'), 'vt'], ['FiO₂', f(ctrl && Number.isFinite(p.vent.fio2) ? Math.round(p.vent.fio2 * 100) : null, '%'), 'fi']];
     if (!this.dom.vitEls) { this.dom.vitEls = chips.map(([k, , c]) => { const v = el('b'); this.dom.vit.append(el('span', { class: 'br-v ' + c }, el('i', { text: k }), v)); return v; }); }
     chips.forEach(([, v], i) => { this.dom.vitEls[i].textContent = v; });
     this.dom.depth.textContent = `${p.tube.depth} cm`;

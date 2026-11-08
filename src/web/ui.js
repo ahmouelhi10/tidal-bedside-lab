@@ -8,11 +8,20 @@ import { CAMERAS } from './scene.js';
 import { PROCEDURES, PARAMS, Guide } from './procedures.js';
 import { icon, stepIcon } from './icons.js';
 import { TOOLS } from './handson.js';
+import { WardView, wardClock, abxName } from './ward.js';
+import { EffectWatcher } from './effects.js';
+import { monitorOnset } from './onset.js';
+import { REFERENCES } from '/engine/references.js';
+import { AREAS, loadProgress, recordProgress, clearProgress, levelOf, profileOf, achievementsOf } from './progress.js';
 
 /** Skills training: the case each procedure is practised on (the condition that makes the procedure meaningful). */
 const SKILL_CASE = { iv: '', rsi: 'obese_rsi', defib: 'witnessed_vf', needle: 'tension_ptx', drain: 'tension_ptx', fona: 'cico' };
 /** Instruments on the table besides the ones the procedure needs: choosing the right one is part of the skill. */
 const DISTRACTORS = ['scalpel', 'syringe', 'tourniquet', 'bougie', 'forcepsGauze'];
+/** Start-screen views that start a case, so the patient chooser is shown beside them. */
+const PLAYABLE = new Set(['lab', 'skills', 'resus', 'chal', 'echo', 'infect', 'instructor']);
+/** Body-shape presets: a BMI inside each WHO class (WHO_BMI_CLASSES in /engine/anthropometrics.js); weight = BMI x height^2. */
+const SHAPES = [['shape_under', 17.5], ['shape_normal', 22], ['shape_over', 27.5], ['shape_obese', 33], ['shape_morbid', 45]];
 
 const L = (o) => (o ? (getLang() === 'fr' ? o.fr : o.en) ?? o.en : '');
 /** Event types that already play their own hand gesture and frame the camera (see Gestures.start). */
@@ -94,6 +103,17 @@ export class UI {
   constructor(root, ctx) {
     this.root = root; this.glCanvas = ctx.glCanvas; this.monCanvas = ctx.monCanvas; this.sim = ctx.sim; this.scene = ctx.scene; this.monitor = ctx.monitor; this.sound = ctx.sound;
     this.tab = 'tab_drugs'; this.logLines = []; this.teach = false; this.toastT = 0; this.scenarios = []; this.inputs = {};
+    this.effects = new EffectWatcher((r) => this.effectReport(r)); this.effLines = [];
+    // every action, wherever it comes from (panels, guided steps, instruments), is watched for its measured effect
+    this.sim.addEventListener('action', (e) => this.effects.watch(e.detail.event, e.detail.result, this.sim.patient, this.describe(e.detail.event) || e.detail.event.type));
+    // drug countdown: each bolus starts a timer to its visible effect and to its peak (simulated time, see onset.js)
+    this.drugClock = {};
+    this.sim.addEventListener('action', (e) => {
+      const ev = e.detail.event, p = this.sim.patient;
+      if (ev.type !== 'drug.bolus' || (e.detail.result && e.detail.result.ok === false) || !p) return;
+      let r = null; try { r = monitorOnset(p.spec, ev.drug, ev.amount); } catch { /* timing unavailable */ }
+      if (r) this.drugClock[ev.drug] = { t0: p.t, onsetS: r.onsetS, peakS: r.peakS, sign: r.sign };
+    });
   }
 
   // ---------------------------------------------------------------- chrome: full-screen 3D stage with a game-style HUD
@@ -109,6 +129,7 @@ export class UI {
       this.dom.clock = el('div', { class: 'clock', 'aria-live': 'off' }),
       el('div', { class: 'spacer' }),
       this.dom.speed = this.speedBar(),
+      this.dom.btnLog = el('button', { id: 'btnLog', class: 'ghost', 'aria-expanded': 'false', title: t('log'), onclick: () => this.toggleLog() }, t('log_btn'), this.dom.logBadge = el('span', { class: 'cnt', hidden: true })),
       this.dom.btnBrief = el('button', { id: 'btnBrief', class: 'ghost', onclick: () => { this.dom.card.hidden = !this.dom.card.hidden; }, text: t('briefing') }),
       this.dom.btnNew = el('button', { id: 'btnNew', class: 'ghost', onclick: () => this.openMenu(), text: t('new_case') }),
       this.dom.btnFinish = el('button', { id: 'btnFinish', class: 'primary', onclick: () => this.onFinish?.(), text: t('finish') }),
@@ -123,7 +144,7 @@ export class UI {
     this._alarmMode = null;
     this.buildLeft(); this.buildRight();
     r.append(el('div', { class: 'stage' }, this.glCanvas, this.dom.pins, this.dom.alarm), top, this.dom.left, this.dom.right, this.buildDock(),
-      this.dom.hint = el('div', { class: 'hint', text: t('shortcuts') }), el('footer', { class: 'foot', text: t('disclaimer') }), this.buildMenu(), this.dom.noGl, this.dom.tip, this.dom.toast);
+      this.dom.hint = el('div', { class: 'hint', text: t('shortcuts') }), this.dom.logBox, el('footer', { class: 'foot', text: t('disclaimer') }), this.buildMenu(), this.dom.noGl, this.dom.tip, this.dom.toast);
     if (this.sim.patient) { this.refreshCard(); this.buildTabs(); this.syncSetupFromSession(); }
     this.syncPins(); this.syncChrome();
   }
@@ -142,7 +163,8 @@ export class UI {
   /** What is visible when: the case menu hides the in-game HUD, the bare start screen has no clock or controls. */
   syncChrome() {
     const d = this.dom, play = !!this.sim.patient && !this.menuOpen;
-    for (const e of [d.clock, d.speed, d.cam, d.btnNew, d.btnFinish, d.left, d.right, d.dock, d.hint]) if (e) e.hidden = !play;
+    for (const e of [d.clock, d.speed, d.cam, d.btnNew, d.btnFinish, d.btnLog, d.left, d.right, d.dock, d.hint]) if (e) e.hidden = !play;
+    if (!play && d.logBox) this.toggleLog(false);
     d.btnBrief.hidden = !play || !this.scenarios.find(x => x.id === this.sim.scenarioId);
     if (!play && d.alarm) d.alarm.hidden = true; else this._alarmMode = null;
   }
@@ -157,10 +179,10 @@ export class UI {
     return w;
   }
   buildDock() {
-    const items = [['tab_guide', 'guide'], ['tab_drugs', 'drugs'], ['tab_fluids', 'fluids'], ['tab_airway', 'airway'], ['tab_circ', 'cpr'], ['tab_proc', 'proc'], ['tab_orders', 'orders']];
+    const items = [['tab_guide', 'guide'], ['tab_drugs', 'drugs'], ['tab_fluids', 'fluids'], ['tab_airway', 'airway'], ['tab_circ', 'cpr'], ['tab_proc', 'proc'], ['tab_orders', 'orders'], ['tab_ward', 'microbe']];
     this.dom.dockBtns = items.map(([k, ic]) => {
       const b = el('button', { class: 'dockbtn', id: 'dock-' + k, dataset: { tab: k }, 'aria-pressed': 'false', title: t(k), onclick: () => this.toggleTab(k) });
-      b.insertAdjacentHTML('afterbegin', ICON[ic]); b.append(el('span', { text: t(k) })); return b;
+      b.insertAdjacentHTML('afterbegin', ICON[ic] ?? icon(ic, 22)); b.append(el('span', { text: t(k) })); return b;
     });
     return (this.dom.dock = el('nav', { class: 'hud-dock', 'aria-label': t('dock_label'), hidden: !this.sim.patient }, ...this.dom.dockBtns));
   }
@@ -177,25 +199,48 @@ export class UI {
     this.buildSetup(); this.menuView(this._view || 'home');
     return m;
   }
-  /** Start screen: home (three sections), physiology lab, skills training, resuscitation and clinical challenges. */
+  /** Start screen: home (eight sections); every playable mode shows the patient chooser on the right. */
   menuView(view) {
-    this._view = view; const B = this.dom.menuBody; B.replaceChildren(); this.dom.menuR.hidden = view === 'home';
+    if (view === 'scen') view = 'resus';
+    this._view = view; const B = this.dom.menuBody; B.replaceChildren();
+    this.dom.menuR.hidden = !PLAYABLE.has(view);
     if (view !== 'skills') this.pendingSkill = null;
     const back = () => el('button', { class: 'ghost menu-back', onclick: () => this.menuView('home') }, el('span', { class: 'ic' }), t('menu_back'));
-    const sec = (id, ic, col, title, sub) => { const b = el('button', { class: 'sect', style: `--sc:${col}`, onclick: () => this.menuView(id) }); b.innerHTML = `<span class="sect-ic">${icon(ic, 26)}</span>`; b.append(el('span', { class: 'sect-t' }, el('b', { text: title }), el('span', { text: sub })), el('span', { class: 'sect-go' })); b.lastChild.innerHTML = icon('chevron', 18); return b; };
+    const sec = (id, ic, col, title, sub, soon) => { const b = el('button', { class: 'sect' + (soon ? ' soon' : ''), style: `--sc:${col}`, dataset: { view: id }, onclick: () => this.menuView(id) }); b.innerHTML = `<span class="sect-ic">${icon(ic, 24)}</span>`; b.append(el('span', { class: 'sect-t' }, el('b', { text: title }), el('span', { text: sub })), el('span', { class: 'sect-go' })); b.lastChild.innerHTML = soon ? `<span class="badge">${t('soon')}</span>` : icon('chevron', 18); return b; };
+    const pickScenario = (id) => { this.inputs.scenario.value = id; this.inputs.scenario.dispatchEvent(new Event('change')); };
     if (view === 'home') {
       B.append(el('h3', { text: t('home_q') }), el('div', { class: 'sects' },
         sec('lab', 'flask', '#4cc3ff', t('sec_lab'), t('sec_lab_sub')),
-        sec('skills', 'hand', '#3ee08f', t('sec_skills'), t('sec_skills_sub')),
-        sec('scen', 'heart', '#ff5d6c', t('sec_resus'), t('sec_resus_sub'))));
+        sec('skills', 'target', '#ffb23d', t('sec_skills'), t('sec_skills_sub')),
+        sec('resus', 'heart', '#ff5d6c', t('sec_resus'), t('sec_resus_sub')),
+        sec('chal', 'clipboard', '#3ee08f', t('sec_chal'), t('sec_chal_sub')),
+        sec('infect', 'microbe', '#ffc23d', t('sec_inf'), t('sec_inf_sub')),
+        sec('echo', 'probe', '#2fd3c4', t('sec_echo'), t('sec_echo_sub')),
+        sec('progress', 'chart', '#b07cff', t('sec_prog'), t('sec_prog_sub')),
+        sec('instructor', 'board', '#3d9bff', t('sec_inst'), t('sec_inst_sub'))));
       return;
     }
     if (view === 'lab') {
-      this.inputs.scenario.value = ''; this.inputs.scenario.dispatchEvent(new Event('change'));
+      pickScenario('');
       B.append(back(), el('h3', { text: t('sec_lab') }), el('div', { class: 'card lab-note' }, el('p', { text: t('lab_text') }), el('ul', { class: 'muted small' }, [t('lab_1'), t('lab_2'), t('lab_3')].map(x => el('li', { text: x })))));
-    } else if (view === 'scen') {
-      B.append(back(), this.dom.cards); this.buildCards(true);
-      if (!this.inputs.scenario.value) { const first = this.scenarios[0]; if (first) { this.inputs.scenario.value = first.id; this.inputs.scenario.dispatchEvent(new Event('change')); } }
+    } else if (view === 'resus' || view === 'chal' || view === 'echo' || view === 'infect') {
+      const pick = view === 'resus' ? (s => s.kind === 'ACLS') : view === 'echo' ? (s => s.kind === 'Echo') : view === 'infect' ? (s => s.kind === 'Infectiology') : (s => s.kind !== 'ACLS' && s.kind !== 'Echo' && s.kind !== 'Infectiology');
+      B.append(back(), el('h3', { text: t({ resus: 'sec_resus', chal: 'sec_chal', echo: 'sec_echo', infect: 'sec_inf' }[view]) }), el('p', { class: 'muted small', text: t({ resus: 'resus_text', chal: 'chal_text', echo: 'echo_text', infect: 'inf_text' }[view]) }), this.dom.cards);
+      if (view === 'echo') B.append(el('details', { class: 'card lab-note small' }, el('summary', { text: t('soon_sources_echo') }), el('ul', { class: 'muted' }, t('echo_sources').map(x => el('li', { text: x })))));
+      if (view === 'infect') B.append(el('details', { class: 'card lab-note small' }, el('summary', { text: t('soon_sources') }), el('ul', { class: 'muted' }, t('inf_sources').map(x => el('li', { text: x })))));
+      this.buildCards(false, pick);
+      const cur = this.scenarios.find(s => s.id === this.inputs.scenario.value);
+      if (!cur || !pick(cur)) { const first = this.scenarios.find(pick); if (first) pickScenario(first.id); }
+    } else if (view === 'infect' || view === 'echo') {
+      const k = view === 'infect' ? 'inf' : 'echo';
+      B.append(back(), el('h3', { text: t('sec_' + k) }), el('div', { class: 'card lab-note' }, el('p', { class: 'badge', text: t('soon') }), el('p', { text: t(k + '_plan') }),
+        el('ul', { class: 'muted small' }, t(k + '_items').map(x => el('li', { text: x }))), el('h4', { text: t('soon_sources') }), el('ul', { class: 'muted small' }, t(k + '_sources').map(x => el('li', { text: x })))));
+    } else if (view === 'progress') {
+      B.append(back(), el('h3', { text: t('sec_prog') }), this.progressView());
+    } else if (view === 'instructor') {
+      pickScenario('');
+      B.append(back(), el('h3', { text: t('sec_inst') }), this.instructorView(), this.dom.cards);
+      this.buildCards(false);
     } else if (view === 'skills') {
       const list = el('div', { class: 'cards' });
       for (const pr of PROCEDURES) {
@@ -225,8 +270,9 @@ export class UI {
     if (!this.menuOpen) return;
     clearTimeout(this._pv); this._pv = setTimeout(() => this.onPreview?.(this.readSetup()), now ? 0 : 120);
   }
-  buildCards(grouped = false) {
+  buildCards(grouped = false, only = null) {
     const cards = this.dom.cards; cards.replaceChildren();
+    if (only) { for (const s of this.scenarios.filter(only)) { const x = scenarioText(s); cards.append(el('button', { class: 'scard', dataset: { id: s.id, kind: s.kind }, 'aria-pressed': 'false', onclick: () => { this.inputs.scenario.value = s.id; this.inputs.scenario.dispatchEvent(new Event('change')); } }, el('b', { text: x.title }), el('span', { class: 'sum', text: x.summary }), this._badges(s))); } this.markCards(); return; }
     const lvl = { beginner: 1, intermediate: 2, advanced: 3 };
     const badges = (s) => !s ? el('div', { class: 'badges' }, el('span', { class: 'badge kind', text: t('free_badge') })) : el('div', { class: 'badges' },
       el('span', { class: 'badge kind', text: s.kind }),
@@ -235,11 +281,66 @@ export class UI {
     const mk = (id, title, summary, s) => el('button', { class: 'scard', dataset: { id, kind: s ? s.kind : 'free' }, 'aria-pressed': 'false', onclick: () => { this.inputs.scenario.value = id; this.inputs.scenario.dispatchEvent(new Event('change')); } },
       el('b', { text: title }), el('span', { class: 'sum', text: summary }), badges(s));
     if (!grouped) { cards.append(mk('', t('free_play'), t('free_sub'), null)); for (const s of this.scenarios) { const x = scenarioText(s); cards.append(mk(s.id, x.title, x.summary, s)); } }
-    else for (const [title, pick] of [[t('grp_resus'), s => s.kind === 'ACLS'], [t('grp_chal'), s => s.kind !== 'ACLS']]) {
+    else for (const [title, pick] of [[t('grp_resus'), s => s.kind === 'ACLS'], [t('grp_chal'), s => s.kind !== 'ACLS' && s.kind !== 'Infectiology']]) {
       cards.append(el('h3', { class: 'grp', text: title }));
       for (const s of this.scenarios.filter(pick)) { const x = scenarioText(s); cards.append(mk(s.id, x.title, x.summary, s)); }
     }
     this.markCards();
+  }
+  _badges(s) {
+    const lvl = { beginner: 1, intermediate: 2, advanced: 3 };
+    return el('div', { class: 'badges' }, el('span', { class: 'badge kind', text: s.kind }),
+      el('span', { class: 'badge', title: s.difficulty }, el('span', { class: 'lvl' }, [1, 2, 3].map(i => el('i', { class: i <= (lvl[s.difficulty] || 1) ? 'on' : '' }))), ' ', s.difficulty),
+      el('span', { class: 'badge', text: `${Math.round(s.durationS / 60)} min` }));
+  }
+  /** My progress: level, skill profile, achievements and history (this browser only). */
+  progressView() {
+    const list = loadProgress(), lv = levelOf(list), prof = profileOf(list);
+    const ach = achievementsOf(list, { skillIds: PROCEDURES.map(p => p.id), challengeIds: this.scenarios.filter(s => s.kind !== 'ACLS' && s.kind !== 'Echo' && s.kind !== 'Infectiology').map(s => s.id) });
+    const pct = (x) => (x == null ? '-' : `${Math.round(x)}%`);
+    const box = el('div', { class: 'prog' });
+    box.append(el('div', { class: 'card prog-level' }, el('div', { class: 'prog-lv', text: t('prog_level', { n: lv.level }) }),
+      el('div', { class: 'pw-bar' }, el('i', { style: `width:${(100 * lv.into / lv.need).toFixed(0)}%` })), el('span', { class: 'small muted', text: t('prog_xp', { xp: lv.xp, next: lv.need - lv.into }) })));
+    box.append(el('h4', { text: t('prog_profile') }), el('div', { class: 'card prog-prof' }, AREAS.map(a => el('div', { class: 'crit' },
+      el('span', { class: 'cl', text: t('area_' + a) }), el('span', { class: 'cp', text: t('prog_cases', { n: prof[a].n }) }),
+      el('span', { class: 'bar' }, el('i', { class: (prof[a].mean ?? 0) >= 80 ? '' : (prof[a].mean ?? 0) >= 60 ? 'mid' : 'low', style: `width:${(prof[a].mean ?? 0).toFixed(0)}%` })),
+      el('span', { class: 'cd', text: t('prog_meanbest', { m: pct(prof[a].mean), b: pct(prof[a].best) }) })))));
+    box.append(el('h4', { text: t('prog_ach') }), el('div', { class: 'achs' }, ach.map(a => el('div', { class: 'ach' + (a.ok ? ' ok' : ''), title: t('ach_' + a.id + '_d') }, el('b', { text: (a.ok ? '★ ' : '☆ ') + t('ach_' + a.id) }), el('span', { class: 'small muted', text: t('ach_' + a.id + '_d') })))));
+    const hist = list.slice(-25).reverse();
+    box.append(el('h4', { text: t('prog_hist') }), hist.length ? el('ol', { class: 'hist' }, hist.map(r => el('li', {},
+      el('span', { class: 'small muted', text: new Date(r.at).toLocaleString(getLang() === 'fr' ? 'fr-FR' : 'en-GB', { dateStyle: 'short', timeStyle: 'short' }) }),
+      el('span', { class: 'badge', text: t('area_' + r.area) }), el('b', { text: r.title || r.id || '' }), el('span', { text: pct(r.pct) + (r.grade ? ` · ${r.grade}` : '') })))) : el('p', { class: 'muted small', text: t('prog_empty') }));
+    box.append(el('p', { class: 'muted small', text: t('prog_local') }), el('div', { class: 'row2' },
+      el('button', { class: 'ghost', onclick: () => { const a = el('a', { href: URL.createObjectURL(new Blob([JSON.stringify(loadProgress(), null, 1)], { type: 'application/json' })), download: 'tidal-progress.json' }); a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }, text: t('prog_export') }),
+      el('button', { class: 'ghost danger', onclick: () => { if (confirm(t('prog_clear_q'))) { clearProgress(); this.menuView('progress'); } }, text: t('prog_clear') })));
+    return box;
+  }
+  /** Instructor mode: free play or any case, with the teaching overlay and markers on, plus the server's session list. */
+  instructorView() {
+    const box = el('div', { class: 'card lab-note inst' });
+    const chk = (key, label, get, set) => el('label', { class: 'chk' }, el('input', { type: 'checkbox', checked: get(), onchange: e => set(e.target.checked) }), ' ', t(label));
+    if (!this.instructor) { this.instructor = true; this.teach = true; if (this.dom.teach) this.dom.teach.hidden = false; }   // instructor mode shows the hidden physiology by default
+    box.append(el('p', { text: t('inst_text') }),
+      chk('teach', 'teaching', () => this.teach, v => { this.teach = v; if (this.dom.teach) this.dom.teach.hidden = !v; }),
+      chk('hints', 'hints', () => this.hints, v => { this.hints = v; }),
+      el('p', { class: 'muted small', text: t('inst_pick') }));
+    const tok = el('input', { type: 'password', autocomplete: 'off', placeholder: 'API_TOKEN', value: this._apiToken || '', oninput: e => { this._apiToken = e.target.value; } });
+    const out = el('div', { class: 'small' });
+    const load = async () => {
+      out.replaceChildren(el('span', { class: 'muted', text: '…' }));
+      try {
+        const r = await fetch('/api/sessions', { headers: tok.value ? { Authorization: 'Bearer ' + tok.value } : {} });
+        if (!r.ok) { out.replaceChildren(el('span', { class: 'bad', text: r.status === 403 ? t('inst_disabled') : r.status === 401 ? t('inst_badtoken') : `HTTP ${r.status}` })); return; }
+        const rows = await r.json();
+        out.replaceChildren(rows.length ? el('ol', { class: 'hist' }, rows.slice(0, 50).map(s => el('li', {},
+          el('span', { class: 'small muted', text: (s.createdAt || '').replace('T', ' ').slice(0, 16) }), el('b', { text: s.learner || '-' }),
+          el('span', { text: s.scenario ? (this.scenarios.find(x => x.id === s.scenario) ? scenarioText(this.scenarios.find(x => x.id === s.scenario)).title : s.scenario) : t('free_play') }),
+          el('span', { class: 'badge', text: s.result?.score ? `${Math.round(s.result.score.pct)}% ${s.result.score.grade}` : s.status })))) : el('span', { class: 'muted', text: t('inst_none') }));
+      } catch { out.replaceChildren(el('span', { class: 'bad', text: t('offline') })); }
+    };
+    box.append(el('details', { class: 'inst-srv' }, el('summary', { text: t('inst_sessions') }), el('p', { class: 'muted small', text: t('inst_token') }),
+      el('div', { class: 'row2' }, tok, el('button', { class: 'ghost', onclick: load, text: t('inst_load') })), out));
+    return box;
   }
   markCards() { for (const c of this.dom.cards.querySelectorAll('.scard')) { const on = c.dataset.id === (this.inputs.scenario.value || ''); c.classList.toggle('on', on); c.setAttribute('aria-pressed', String(on)); } }
 
@@ -262,11 +363,20 @@ export class UI {
     const tone = el('select', { id: 'selTone', onchange: () => { this.scene.tone = Number(tone.value); this.queuePreview(); } }, ...SKIN_TONES.map((c, i) => el('option', { value: i, text: String(i + 1), selected: i === 2, style: `background:rgb(${c.map(x => Math.round(x * 255)).join(',')})` }))); this.inputs.tone = tone;
     this.dom.bmi = el('div', { class: 'bmi' });
     this.dom.info = el('div', { class: 'info' });
+    // who is the patient: sex buttons and body-shape presets first, exact values below
+    sex.hidden = true;
+    this.dom.sexBtns = [['M', 'male', '♂'], ['F', 'female', '♀']].map(([v, k, g]) => el('button', { type: 'button', dataset: { sex: v }, onclick: () => { sex.value = v; sex.dispatchEvent(new Event('change')); } }, el('span', { class: 'g', text: g }), t(k)));
+    this.dom.shapeBtns = SHAPES.map(([k, b]) => el('button', { type: 'button', dataset: { bmi: b }, title: `${t('bmi')} ${b}`, onclick: () => {
+      const h = Number(this.inputs.inH.value) || 175, w = Math.round(b * (h / 100) ** 2);
+      this.inputs.inW.value = Math.max(35, Math.min(250, w)); this.updateBmi(); this.queuePreview();
+    } }, el('i', { class: 'shape', style: `--fat:${((b - 17.5) / 27.5).toFixed(2)}` }), t(k)));
     S.append(sel,
-      el('div', { class: 'row4' }, el('label', { class: 'f' }, el('span', { text: t('sex') }), sex), num('inAge', t('age'), 18, 100, 1, 45), num('inH', t('height'), 140, 210, 1, 175), num('inW', t('weight'), 35, 250, 1, 80)),
+      el('div', { class: 'f wide' }, el('span', { text: t('who_patient') }), el('div', { class: 'seg sexseg', role: 'group', 'aria-label': t('sex') }, ...this.dom.sexBtns)),
+      el('div', { class: 'f wide' }, el('span', { text: t('body_shape') }), el('div', { class: 'shapes', role: 'group', 'aria-label': t('body_shape') }, ...this.dom.shapeBtns)),
+      el('div', { class: 'row4' }, sex, num('inAge', t('age'), 18, 100, 1, 45), num('inH', t('height'), 140, 210, 1, 175), num('inW', t('weight'), 35, 250, 1, 80)),
       el('div', { class: 'row2' }, el('label', { class: 'f' }, el('span', { text: t('skin') }), tone), this.dom.bmi),
       el('label', { class: 'f wide' }, el('span', { text: t('learner') }), this.inputs.learner = el('input', { type: 'text', id: 'inLearner', maxlength: 64, autocomplete: 'off', value: this._learner || '', oninput: e => { this._learner = e.target.value; } })),
-      el('button', { id: 'btnStart', class: 'primary big wide', onclick: () => this.onStart?.(this.readSetup()), text: this.sim.patient ? t('restart') : t('start_case') }), this.dom.info);
+      el('button', { id: 'btnStart', class: 'primary big wide', onclick: () => { this._mode = this._view; this.onStart?.(this.readSetup()); }, text: this.sim.patient ? t('restart') : t('start_case') }), this.dom.info);
     if (this.dom.menuR) this.dom.menuR.hidden = this._view === 'home';
     this.buildCards(); this.syncSpecInputs(); this.showScenarioInfo(); stepify(S);
   }
@@ -276,7 +386,10 @@ export class UI {
   }
   updateBmi() {
     const h = Number(this.inputs.inH.value), w = Number(this.inputs.inW.value);
+    for (const x of this.dom.sexBtns || []) x.classList.toggle('on', x.dataset.sex === this.inputs.sex.value);
     if (!(h > 0 && w > 0)) return; const b = bmiOf(w, h), ok = b >= 15 && b <= 65;
+    const near = SHAPES.reduce((best, [, v], i) => (Math.abs(v - b) < Math.abs(SHAPES[best][1] - b) ? i : best), 0);
+    (this.dom.shapeBtns || []).forEach((x, i) => x.classList.toggle('on', i === near && Math.abs(SHAPES[i][1] - b) < 4));
     this.dom.bmi.textContent = ok ? `${t('bmi')} ${b.toFixed(1)} - ${t('bmi_class')[bmiClass(b)]}` : `${t('bmi')} ${b.toFixed(1)} - ${t('bmi_range')}`;
     this.dom.bmi.classList.toggle('bad', !ok); const sb = document.getElementById('btnStart'); if (sb) sb.disabled = !ok;
   }
@@ -292,11 +405,19 @@ export class UI {
 
   buildRight() {
     const R = this.dom.right;
-    this.dom.monWrap = el('div', { class: 'monWrap' }, this.monCanvas);
+    // one click connects the standard monitoring while nothing is plugged in (attaching it stays the learner's action)
+    this.dom.monAttach = el('button', { class: 'mon-attach', hidden: true, onclick: () => { this.act({ type: 'monitor.attach', items: { ecgLeads: true, spo2Probe: true, nibp: true, capnography: true } }, t('mon_attached')); this.act({ type: 'nibp.cycle' }); } }, el('b', { text: t('mon_attach') }), el('span', { class: 'small', text: t('mon_attach_sub') }));
+    this.dom.monWrap = el('div', { class: 'monWrap' }, this.monCanvas, this.dom.monAttach);
+    this.dom.effList = el('ol', { class: 'eff-list', 'aria-live': 'polite' });
+    this.dom.effBox = el('section', { class: 'card effects' }, el('h3', { text: t('eff_title') }), this.dom.effList, el('p', { class: 'muted small eff-empty', text: t('eff_empty') }));
+    this.effLines.forEach(x => this.dom.effList.append(x));
     this.dom.teach = el('section', { class: 'card teach', hidden: !this.teach });
     this.dom.trend = el('canvas', { class: 'trend', width: 480, height: 150, 'aria-label': t('tr_title') });
-    this.dom.logBox = el('section', { class: 'card log' }, el('h3', { text: t('log') }), this.dom.logList = el('ol', { 'aria-live': 'polite' }));
-    R.append(this.dom.monWrap, this.dom.teach, el('section', { class: 'card trends' }, el('h3', { text: t('tr_title') }), this.dom.trend), this.dom.logBox);
+    // the action log lives behind the "Log" button of the top bar (pop-over), leaving the right column to monitor, effects and trends
+    this.dom.logBox = el('section', { class: 'card log logpop', hidden: true, role: 'dialog', 'aria-label': t('log') },
+      el('div', { class: 'phead' }, el('h3', { text: t('log') }), el('button', { class: 'x', 'aria-label': t('close'), title: t('close'), onclick: () => this.toggleLog(false), text: '×' })),
+      this.dom.logList = el('ol', { 'aria-live': 'polite' }));
+    R.append(this.dom.monWrap, this.dom.effBox, this.dom.teach, el('section', { class: 'card trends' }, el('h3', { text: t('tr_title') }), this.dom.trend));
     this.logLines.forEach(l => this.dom.logList.prepend(el('li', { text: l })));
   }
 
@@ -315,7 +436,7 @@ export class UI {
     this.dom.pins.hidden = !show; if (!show || !this.pinEls) return;
     for (const { b, pin } of this.pinEls) { const s = this.scene.project(pin.pos); if (!s || !s.visible) { b.hidden = true; continue; } b.hidden = false; b.style.transform = `translate(${Math.round(s.x)}px, ${Math.round(s.y)}px)`; }
   }
-  escape() { if (this.menuOpen && this.sim.patient) this.closeMenu(true); else if (this.panelOpen) this.closePanel(); }
+  escape() { if (this.dom.logBox && !this.dom.logBox.hidden) this.toggleLog(false); else if (this.menuOpen && this.sim.patient) this.closeMenu(true); else if (this.panelOpen) this.closePanel(); }
 
   // ---------------------------------------------------------------- patient-dependent panels
   refreshCard() {
@@ -327,13 +448,18 @@ export class UI {
   }
   onSessionStart() {
     this.closeMenu(false); this._speedBefore = 0;
-    this.logLines = []; this.dom.logList.replaceChildren(); this.guide = null;
+    this.logLines = []; this.dom.logList.replaceChildren(); this.guide = null; this._unseen = 0; this._logBadge(); this.toggleLog(false);
+    this.effects.reset(); this.effLines = []; this.dom.effList.replaceChildren(); this.drugClock = {};
+    // free play (physiology lab, instructor): standard monitoring connected from the start; in scored cases it is the learner's job
+    if (!this.sim.scenarioId && ['lab', 'instructor', undefined].includes(this._mode)) { this.sim.act({ type: 'monitor.attach', items: { ecgLeads: true, spo2Probe: true, nibp: true, capnography: true } }); this.sim.act({ type: 'nibp.cycle' }); }
     this.refreshCard(); this.dom.card.hidden = !this.scenarios.find(s => s.id === this.sim.scenarioId);
     this.panelOpen = false; this.dom.panelWrap.hidden = true; this._alarmMode = null; this.dom.alarm.hidden = true;
     this.buildTabs();
     this.syncSetupFromSession(); this.syncPins(); this.syncChrome();
     const skill = this.pendingSkill && PROCEDURES.find(pr => pr.id === this.pendingSkill);
     if (skill) setTimeout(() => this.startGuide(skill), 400);
+    if (this.sim.patient?.ward) { this.wardView = new WardView(this); this.tab = 'tab_ward'; this.panelOpen = true; this.dom.card.hidden = true; this.buildTabs(); }   // infectiology cases open the ward workspace
+    if (this.scenarios.find(s => s.id === this.sim.scenarioId)?.kind === 'Echo') setTimeout(() => this.echoLab?.start(), 400);   // focused echo cases open the echo window
     this.dom.pins.classList.add('learn'); clearTimeout(this._learnT); this._learnT = setTimeout(() => this.dom.pins.classList.remove('learn'), 8000);   // names of the markers show for 8 s, then only on hover
   }
   /** Re-open the case menu with the running case's values (so "restart" and a language change keep what was chosen). */
@@ -347,6 +473,9 @@ export class UI {
   openTab(k) { this.tab = k; this.panelOpen = true; { const f = { tab_airway: 'head', tab_circ: 'chest', tab_drugs: 'arm', tab_fluids: 'arm', tab_proc: 'chest' }[k]; if (f && this.sim.patient && !this.menuOpen) this.scene.setCamera(f); } this.dom.card.hidden = true; if (this.sim.patient) this.buildTabs(); }   // the briefing makes room for the action panel
   closePanel() { this.panelOpen = false; this.buildTabs(); if (this.sim.patient && !this.menuOpen) this.scene.setCamera('default'); }   // back to the overview of the patient
   buildTabs() {
+    const wardCase = !!this.sim.patient?.ward;                    // infectiology: only the ward workspace is relevant
+    this.dom.dockBtns.forEach(b => { b.hidden = wardCase !== (b.dataset.tab === 'tab_ward'); });
+    this.dom.left?.classList.toggle('ward-mode', wardCase && this.panelOpen && this.tab === 'tab_ward');
     this.dom.dockBtns.forEach(b => { const on = this.panelOpen && b.dataset.tab === this.tab; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
     this.dom.panelWrap.hidden = !this.panelOpen || !this.sim.patient;
     if (this.dom.hint) this.dom.hint.hidden = !this.dom.panelWrap.hidden || !this.sim.patient || this.menuOpen;   // the shortcut hint would sit under the open panel
@@ -355,7 +484,7 @@ export class UI {
     const P = this.dom.panel; P.replaceChildren();
     const b = this.sim.patient.body;
     queueMicrotask(() => stepify(P));
-    ({ tab_guide: () => this.panelGuide(P), tab_drugs: () => this.panelDrugs(P, b), tab_fluids: () => this.panelFluids(P), tab_airway: () => this.panelAirway(P, b), tab_circ: () => this.panelCirc(P), tab_proc: () => this.panelProc(P), tab_orders: () => this.panelOrders(P) })[this.tab]();
+    ({ tab_guide: () => this.panelGuide(P), tab_drugs: () => this.panelDrugs(P, b), tab_fluids: () => this.panelFluids(P), tab_airway: () => this.panelAirway(P, b), tab_circ: () => this.panelCirc(P), tab_proc: () => this.panelProc(P), tab_orders: () => this.panelOrders(P), tab_ward: () => (this.wardView ??= new WardView(this)).render(P) })[this.tab]();
   }
 
   act(ev, label) {
@@ -371,6 +500,45 @@ export class UI {
   }
   btn(label, fn, cls = '', attrs = {}) { return el('button', { class: cls, onclick: fn, text: label, ...attrs }); }
 
+  /** Live countdown in each drug card after a bolus: to the first sign on the monitor, then to the peak. */
+  _drugCountdowns(p) {
+    const mm = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+    for (const box of this.dom.panel.querySelectorAll('.dcount[data-drug]')) {
+      const c = this.drugClock?.[box.dataset.drug];
+      const el_ = (sel) => box.querySelector(sel);
+      if (!c) { box.hidden = true; continue; }
+      const e = p.t - c.t0, peak = c.peakS ?? 0, end = Math.max(peak, c.onsetS ?? 0) + 60;
+      if (e > end) { box.hidden = true; delete this.drugClock[box.dataset.drug]; continue; }
+      box.hidden = false;
+      let txt, frac, phase;
+      if (c.onsetS != null && e < c.onsetS) { phase = 'wait'; txt = `⏳ ${t('cd_onset')} ${mm(c.onsetS - e)}`; frac = e / c.onsetS; }
+      else if (e < peak) { phase = 'on'; txt = `${c.onsetS != null ? '✔ ' + t('cd_visible') : t('cd_novisible')} · ${t('cd_peak')} ${mm(peak - e)}`; frac = e / peak; }
+      else { phase = 'peak'; txt = '◎ ' + t('cd_peak_now'); frac = 1; }
+      box.dataset.phase = phase; el_('.dc-txt').textContent = txt; el_('.dc-bar i').style.width = `${Math.min(100, frac * 100).toFixed(0)}%`;
+    }
+  }
+  /** Time to a visible effect on the monitor and to the peak at the site of action, for this patient, drug by drug in the
+   *  background (see onset.js). The source of each drug model is shown; simplified "design" models are flagged. */
+  _fillTimings(P) {
+    const spec = this.sim.patient?.spec; if (!spec) return;
+    const rows = [...P.querySelectorAll('.dtime[data-drug]')], token = (this._timingToken = {});
+    const fmtS = (x) => (x == null ? '-' : x < 90 ? `${x} s` : `${(x / 60).toFixed(1).replace('.', getLang() === 'fr' ? ',' : '.')} min`);
+    const next = () => {
+      if (token !== this._timingToken || !rows.length) return;
+      const row = rows.shift(); if (!row.isConnected) return next();
+      const k = row.dataset.drug, ref = REFERENCES[DRUGS[k]?.ref], design = !ref || ref.status === 'UNVERIFIED' || DRUGS[k]?.ref === 'design' || DRUGS[k]?.tHalf != null;   // one-compartment drugs: the reference backs the dose, the timing is a simplified model
+      let r; try { r = monitorOnset(spec, k, Number(row.dataset.dose)); } catch { r = null; }
+      if (r) {
+        const sign = r.sign ? (r.sign.k === 'apnoea' ? t('eff_apnoea', { from: r.sign.from }) : r.sign.k === 'rhythm' ? t('eff_rhythm') : `${t('vl_' + r.sign.k)} ${r.sign.dir > 0 ? '↑' : '↓'}`) : null;
+        row.replaceChildren(...[
+          el('span', { class: 'dt-mon' }, el('b', { text: '⏱ ' + t('dt_monitor') }), ' ', r.onsetS != null ? el('span', {}, `≈ ${fmtS(r.onsetS)} · `, el('i', { text: sign })) : el('span', { class: 'muted', text: t('dt_none') })),
+          r.peakS != null ? el('span', { class: 'dt-peak small' }, `${t('dt_peak')} ≈ ${fmtS(r.peakS)}`) : null,
+          el('span', { class: 'dt-src small ' + (design ? 'warn' : 'muted'), title: ref?.cite || '', text: design ? t('dt_design') : `${t('dt_model')} ${(ref.cite || '').split(/[.(]/)[0].trim()}` })].filter(Boolean));
+      }
+      setTimeout(next, 0);
+    };
+    setTimeout(next, 30);
+  }
   panelDrugs(P, b) {
     const basisW = { lbm: b.lbm, ibw: b.ibw, tbw: b.weightKg };
     for (const grp of DRUG_UI) {
@@ -378,18 +546,27 @@ export class UI {
       for (const it of grp.items) {
         const d = DRUGS[it.k]; const def = it.fixed ?? Math.max(it.step, round(it.per * basisW[it.basis], it.step));
         const dose = el('input', { type: 'number', min: 0, step: it.step, value: def, 'aria-label': t('dose') + ' ' + drugName(it.k, d.name) });
+        const name = drugName(it.k, d.name);
+        // one card per drug: name and dosing rule, a bolus line, and for infusions a rate line with start / stop below
         const row = el('div', { class: 'drug', dataset: { drug: it.k } },
-          el('div', { class: 'dn' }, el('b', { text: drugName(it.k, d.name) }), el('span', { class: 'muted small', text: it.fixed ? t('basis_fixed') : `${it.per} ${d.unit}/kg · ${t('basis_' + it.basis)}` }), it.warn ? el('span', { class: 'warn small', title: t('not_in_arrest'), text: '⚠ ' + t('not_in_arrest') }) : null),
-          el('div', { class: 'dc' }, dose, el('span', { class: 'unit', text: d.unit }), this.btn(t('bolus'), () => this.act({ type: 'drug.bolus', drug: it.k, amount: Number(dose.value) }, `${drugName(it.k, d.name)} ${dose.value} ${d.unit}`), 'act')));
+          el('div', { class: 'dn' }, el('b', { text: name }), el('span', { class: 'drun', text: t('dr_running') }),
+            el('span', { class: 'muted small rule', text: it.fixed ? t('basis_fixed') : `${it.per} ${d.unit}/kg · ${t('basis_' + it.basis)}` }), it.warn ? el('span', { class: 'warn small', title: t('not_in_arrest'), text: '⚠ ' + t('not_in_arrest') }) : null),
+          el('div', { class: 'dcount', hidden: true, dataset: { drug: it.k } }, el('span', { class: 'dc-txt' }), el('span', { class: 'dc-bar' }, el('i'))),
+          el('div', { class: 'dtime', dataset: { drug: it.k, dose: def } }, el('span', { class: 'muted small', text: '⏱ ' + t('dt_computing') })),
+          el('div', { class: 'dline' }, el('span', { class: 'dl', text: t('bolus') }), dose, el('span', { class: 'unit', text: d.unit }),
+            this.btn(t('bolus'), () => this.act({ type: 'drug.bolus', drug: it.k, amount: Number(dose.value) }, `${name} ${dose.value} ${d.unit}`), 'act')));
         if (it.inf) {
-          const rate = el('input', { type: 'number', min: 0, step: it.inf.step, value: it.inf.def, 'aria-label': t('rate') });
-          row.append(el('div', { class: 'dc inf' }, el('span', { class: 'small', text: t('infusion') }), rate, el('span', { class: 'unit', text: it.inf.unit }),
-            this.btn('▶', () => this.act({ type: 'drug.infusion', drug: it.k, rate: it.inf.toEngine(Number(rate.value), b) }, `${drugName(it.k, d.name)} ${rate.value} ${it.inf.unit}`), 'act', { title: t('infusion') }), this.btn(t('stop'), () => this.act({ type: 'drug.stop', drug: it.k }, drugName(it.k, d.name) + ' - ' + t('stop')))));
+          const rate = el('input', { type: 'number', min: 0, step: it.inf.step, value: it.inf.def, 'aria-label': t('rate') + ' ' + name });
+          row.append(el('div', { class: 'dline' }, el('span', { class: 'dl', text: t('infusion') }), rate, el('span', { class: 'unit', text: it.inf.unit })),
+            el('div', { class: 'dbtns' },
+              this.btn('▶ ' + t('dr_start'), () => this.act({ type: 'drug.infusion', drug: it.k, rate: it.inf.toEngine(Number(rate.value), b) }, `${name} ${rate.value} ${it.inf.unit}`), 'act', { title: t('infusion') }),
+              this.btn('■ ' + t('stop'), () => this.act({ type: 'drug.stop', drug: it.k }, name + ' - ' + t('stop')), 'ghost')));
         }
         sec.append(row);
       }
       P.append(sec);
     }
+    this._fillTimings(P);
   }
   panelFluids(P) {
     const vol = el('input', { type: 'number', id: 'inFluidVol', value: 500, min: 50, max: 3000, step: 50 }), mins = el('input', { type: 'number', id: 'inFluidMin', value: 15, min: 1, max: 120, step: 1 });
@@ -433,6 +610,7 @@ export class UI {
   panelProc(P) {
     const sel = (id, opts, def) => el('select', { id }, opts.map(([v, l]) => el('option', { value: v, text: l, ...(v === def ? { selected: true } : {}) })));
     const p = this.sim.patient, startSide = p?.chest?.side || 'R';
+    if (this.echoLab) P.append(el('div', { class: 'row2' }, this.btn(t('ec_open'), () => this.echoLab.start(), 'act primary')));
     const side = sel('selSgSide', [['R', t('sg_R')], ['L', t('sg_L')]], startSide), site = sel('selSgSite', ['mcl2', 'mal5', 'aal5'].map(k => [k, t('site_' + k)]), 'mal5');
     const len = sel('selSgLen', [[50, '50 mm (14G)'], [70, '70 mm'], [80, '80 mm'], [100, '100 mm']], 50);
     const fr = sel('selSgFr', [[14, '14 Fr'], [20, '20 Fr'], [28, '28 Fr'], [32, '32 Fr'], [36, '36 Fr']], 28);
@@ -592,7 +770,11 @@ export class UI {
   _guideNext() {
     const g = this.guide; g.i++; this.prefocusStep(g.finished ? 0 : 2400);
     if (g.finished) setTimeout(() => this.scene.setCamera('default'), 2400);
-    if (g.finished) { const s = g.summary(); this.sim.act({ type: 'note', text: `guide ${g.proc.id}: end ${s.done}/${s.n} in order, ${s.early} early, ${s.warn} with a problem, ${s.skipped} skipped` }); }
+    if (g.finished) {
+      const s = g.summary(); this.sim.act({ type: 'note', text: `guide ${g.proc.id}: end ${s.done}/${s.n} in order, ${s.early} early, ${s.warn} with a problem, ${s.skipped} skipped` });
+      // progress: steps done in order count fully, early or problematic ones half, skipped ones nothing
+      recordProgress({ area: 'skills', id: g.proc.id, title: L(g.proc), pct: 100 * (s.done + 0.5 * (s.early + s.warn)) / Math.max(1, s.n), spec: this.sim.session?.spec });
+    }
     this.buildTabs();
   }
   /** Human-readable outcome of an engine event fired by a guided step (examination findings, needle, drain, airway). */
@@ -611,7 +793,32 @@ export class UI {
 
   // ---------------------------------------------------------------- feedback
   toast(msg, bad = false) { const e = this.dom.toast; e.textContent = msg; e.hidden = false; e.classList.toggle('bad', bad); clearTimeout(this._tt); this._tt = setTimeout(() => { e.hidden = true; }, 3200); }
-  log(line) { const p = this.sim.patient; const s = `[${mmss(p ? p.t : 0)}] ${line}`; this.logLines.push(s); if (this.logLines.length > 300) this.logLines.shift(); this.dom.logList?.prepend(el('li', { text: s })); while (this.dom.logList && this.dom.logList.children.length > 300) this.dom.logList.lastChild.remove(); }
+  /** One line of measured effect: "+1 min · Propofol 150 mg: apnoea (RR 12 → 0), EtCO₂ 38 → 0 ↓". */
+  effectReport(r) {
+    const when = r.at < 60 ? `+${r.at} s` : `+${r.at / 60} min`;
+    const name = (k) => t('vl_' + k);
+    let text, cls = 'eff';
+    if (r.unmonitored) { text = t('eff_unmon'); cls += ' warn'; }
+    else if (!r.changes.length) { text = t('eff_none'); cls += ' none'; }
+    else text = r.changes.map(c => c.k === 'apnoea' ? t('eff_apnoea', { from: c.from }) : c.k === 'rhythm' ? `${t('eff_rhythm')} ${c.from} → ${c.to}` : `${name(c.k)} ${c.from} → ${c.to} ${c.dir > 0 ? '↑' : '↓'}`).join(' · ');
+    const li = el('li', { class: cls }, el('span', { class: 'eff-t', text: when }), el('b', { text: r.label }), el('span', { class: 'eff-c', text }));
+    this.effLines.unshift(li); if (this.effLines.length > 8) this.effLines.pop();
+    this.dom.effList?.replaceChildren(...this.effLines);
+    this.log(`${t('eff_title')} ${when} · ${r.label}: ${text}`);
+    if (r.changes?.length) this.toast(`${r.label} ${when}: ${text}`);
+  }
+  log(line) {
+    const p = this.sim.patient; const s = `[${mmss(p ? p.t : 0)}] ${line}`; this.logLines.push(s); if (this.logLines.length > 300) this.logLines.shift();
+    this.dom.logList?.prepend(el('li', { text: s })); while (this.dom.logList && this.dom.logList.children.length > 300) this.dom.logList.lastChild.remove();
+    if (this.dom.logBox?.hidden) { this._unseen = (this._unseen || 0) + 1; this._logBadge(); }
+  }
+  /** Open / close the action log pop-over; opening clears the count of new entries. */
+  toggleLog(open = this.dom.logBox?.hidden) {
+    const b = this.dom.logBox; if (!b) return;
+    b.hidden = !open; this.dom.btnLog?.setAttribute('aria-expanded', String(!!open)); this.dom.btnLog?.classList.toggle('on', !!open);
+    if (open) { this._unseen = 0; this._logBadge(); }
+  }
+  _logBadge() { const c = this.dom.logBadge; if (!c) return; c.hidden = !this._unseen; c.textContent = this._unseen > 99 ? '99+' : String(this._unseen || ''); }
   describe(ev) {
     const d = ev.drug && DRUGS[ev.drug] ? drugName(ev.drug, DRUGS[ev.drug].name) : '';
     switch (ev.type) {
@@ -624,6 +831,11 @@ export class UI {
       case 'airway.intubate': return t('aw_intubate') + (ev.depthCm ? ` ${ev.depthCm} cm` : '');
       case 'airway.tube_adjust': return `${t('br_tube_depth')} ${ev.cm > 0 ? '+' : ''}${ev.cm} cm`;
       case 'bronch.insert': return t('br_title');
+      case 'ward.advance': return t('wd_log_adv', { h: ev.hours, when: this.sim.patient?.ward ? wardClock(this.sim.patient.ward.h) : '' });
+      case 'ward.sample': return t('wd_log_sample', { k: t('wd_s_' + ev.kind) });
+      case 'ward.rx.start': return t('wd_log_rx', { d: abxName(ev.drug), r: t('wd_' + ev.route) + (ev.dose === 'high' ? ' · ' + t('wd_high') : '') });
+      case 'ward.rx.stop': return t('wd_log_stop', { d: abxName(ev.drug) });
+      case 'ward.order': return t('wd_o_' + ev.what, { ml: '30 mL/kg', w: '' });
       case 'bronch.suction': return `${t('br_suction')} (${ev.where})`;
       case 'bronch.remove': return t('br_removed');
       case 'vent.set': { const v = ev.settings || {}; return `${t('aw_vent')}: ` + [v.mode, v.rate != null ? `${v.rate}/min` : '', v.vt != null ? `Vt ${Math.round(v.vt)} mL` : '', v.fio2 != null ? `FiO2 ${v.fio2}` : '', v.peep != null ? `PEEP ${v.peep}` : ''].filter(Boolean).join(' '); }   // only what was changed
@@ -661,6 +873,11 @@ export class UI {
   // ---------------------------------------------------------------- per-frame
   refresh() {
     const p = this.sim.patient; if (!p) return;
+    this.effects.tick(p);
+    // the cuff re-inflates every 2.5 min once connected, like a monitor set to automatic
+    if (p.flags.nibp && !this.sim.finished && this.sim.speed > 0 && p.t - (p.nibp?.t ?? -1e9) >= 150) this.sim.act({ type: 'nibp.cycle' });
+    if (this.dom.monAttach) this.dom.monAttach.hidden = !!(p.flags.ecgLeads || p.flags.spo2Probe || p.flags.capnography);
+    if (this.panelOpen && this.tab === 'tab_drugs') { for (const r of this.dom.panel.querySelectorAll('.drug[data-drug]')) r.classList.toggle('running', (p.drugs?.pk?.[r.dataset.drug]?.rate ?? 0) > 0); this._drugCountdowns(p); }   // running infusions stand out
     const sc = p.scenario, T = p.t;
     this.dom.clock.textContent = `${t('time')} ${mmss(T)}${sc ? ' / ' + mmss(sc.durationS) : ''}${this.sim.speed === 0 ? ' · ' + t('paused') : ''}`;
     this.dom.speedBtns.forEach(b => b.classList.toggle('on', Number(b.dataset.speed) === this.sim.speed));
@@ -720,6 +937,9 @@ export class UI {
     const ov = el('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': t('score_title') });
     const box = el('div', { class: 'box' }, el('div', { class: 'phead' }, el('h2', { text: t('score_title') + (x ? ' · ' + x.title : '') }), el('button', { class: 'x', 'aria-label': t('close'), onclick: () => ov.remove(), text: '×' })));
     const v = out.server ? (out.server.verified ? t('verified') : t('unverified')) : t('offline');
+    const scen = this.scenarios.find(s => s.id === this.sim.scenarioId);
+    recordProgress({ area: scen ? (scen.kind === 'ACLS' ? 'resus' : scen.kind === 'Echo' ? 'echo' : scen.kind === 'Infectiology' ? 'inf' : 'chal') : 'lab', id: scen ? scen.id : 'free', title: x ? x.title : t('free_play'),
+      pct: sc ? sc.pct : null, grade: sc?.grade, verified: !!out.server?.verified, spec: this.sim.session?.spec });
     if (sc) {
       const pct = Math.max(0, Math.min(100, sc.pct)), C = 2 * Math.PI * 54, col = pct >= 80 ? 'var(--good)' : pct >= 60 ? 'var(--warn)' : 'var(--bad)';
       const ring = el('div', { class: 'ring', style: `--ring:${col}` });
@@ -756,7 +976,7 @@ export class UI {
     const Wd = window.innerWidth, Hd = window.innerHeight, vis = (e) => e && !e.hidden && e.getClientRects().length > 0;
     let l = 0, r = 0;
     for (const e of [this.dom.panelWrap, this.dom.card, this.menuOpen ? this.dom.menu?.querySelector('.menuL') : null]) if (vis(e)) { const b = e.getBoundingClientRect(); if (b.left < Wd * 0.3 && b.height > Hd * 0.15) l = Math.max(l, b.right); }
-    for (const e of [this.menuOpen ? null : this.dom.right, this.menuOpen ? this.dom.menuR : null]) if (vis(e)) { const b = e.getBoundingClientRect(); if (b.right > Wd * 0.7 && b.height > Hd * 0.15) r = Math.max(r, Wd - b.left); }
+    for (const e of [this.menuOpen ? null : this.dom.right, this.menuOpen ? this.dom.menuR : null, this.menuOpen ? null : this.echoLab?.dom?.root]) if (vis(e)) { const b = e.getBoundingClientRect(); if (b.right > Wd * 0.7 && b.height > Hd * 0.15) r = Math.max(r, Wd - b.left); }
     if (Wd <= 600) { l = 0; r = 0; }                                             // phones: panels are bottom sheets
     this.scene.inset = { l, r };
   }

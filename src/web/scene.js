@@ -436,7 +436,7 @@ export class Scene {
       const T = this.asset.tex, tint = skin.map((v, i) => v / TONE_REF[i]), A = (k) => T['patient_' + k] || {};
       o.compDir = [0, 1, 0];                                   // the asset's anterior axis is +y (procedural body: +z)
       // the chest is exposed for anything done on it: pads, leads, CPR, chest procedures and examinations in progress
-      const exposed = p.flags.padsOn || p.flags.ecgLeads || arrested || !!(p.chest && (p.chest.needle || p.chest.tube)) || this.gest.list.some(g => ['needle', 'tube', 'steth', 'probe', 'step_pads'].includes(g.k));
+      const exposed = p.flags.padsOn || p.flags.ecgLeads || arrested || !!this.echoProbe || !!(p.chest && (p.chest.needle || p.chest.tube)) || this.gest.list.some(g => ['needle', 'tube', 'steth', 'probe', 'step_pads'].includes(g.k));
       r.draw(B.g.body, M, { color: tint, spec: 0.3, pattern: 7, albedo: A('body').albedo, normalMap: A('body').normal, ...o });
       r.draw(B.g.eyes, M, { color: [1, 1, 1], spec: 0.9, pattern: 6, albedo: A('eyes').albedo, ...o });
       r.draw(B.g.eyebrows, M, { color: [1, 1, 1], spec: 0.05, albedo: A('eyebrows').albedo, alphaCut: -1, cull: false, depthWrite: false, noShadow: true, ...o });
@@ -557,6 +557,14 @@ export class Scene {
       } else if (nk.fona?.kind === 'cannula') { inst('needle14G', vec3.add(f.p, vec3.scale(f.n, -0.03)), f.n, 0, { skip: ['steel', 'flash_orange'], noHand: true }); }
     }
     this.gest.draw({ r, fr, seg, blob, scene: this, inst, disc }, this.t);
+    // focused echo: the phased-array probe held on the skin (axis tilted by the operator), gel, orientation marker, cable
+    if (this.echoProbe) {
+      const e = this.echoProbe, a = e.axis, at = (k, v = a) => vec3.add(e.p, vec3.scale(v, k));
+      disc(vec3.add(e.p, vec3.scale(e.n, 0.0012)), e.n, e.m, 0.026, 0.018, [0.7, 0.85, 0.95], { alpha: 0.35, spec: 1, noShadow: true });
+      seg(at(0.003), at(0.03), 0.013, [0.2, 0.21, 0.24], { spec: 0.6 }); seg(at(0.03), at(0.11), 0.016, [0.14, 0.15, 0.18], { spec: 0.5 });
+      blob(vec3.add(at(0.026), vec3.scale(e.m, 0.014)), 0.0035, 0.0035, 0.0035, e.q >= 0.7 ? [0.25, 0.9, 0.55] : [1, 0.75, 0.2], { emissive: e.q >= 0.7 ? [0.1, 0.4, 0.2] : [0.4, 0.3, 0.05] });
+      seg(at(0.11), vec3.add(at(0.2), [0, 0.04, 0]), 0.004, [0.1, 0.1, 0.12]);
+    }
     // hands-on: the instrument in the hand, the incision being drawn
     const gh = this.ghost || (this.afterGhost && this.t < this.afterGhost.until ? this.afterGhost : null);
     if (gh) { const n = gh.n, q = [gh.p[0] + n[0] * ((gh.lift || 0) - (gh.depth || 0)), gh.p[1] + n[1] * ((gh.lift || 0) - (gh.depth || 0)), gh.p[2] + n[2] * ((gh.lift || 0) - (gh.depth || 0))]; this._instrument(gh.tool, q, n, gh.angle || 0); }

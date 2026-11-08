@@ -2,6 +2,8 @@
 // (a) the scoring rewards guideline-concordant care, (b) doing nothing is scored poorly, and (c) the physiology
 // responds to the interventions the scoring rewards (i.e. scoring is not decorative).
 import { aclsTeam, runScript } from './bots.js';
+import { wardExpert } from './ward.js';
+import { ECHO_VIEWS, echoState, measureTruth, reportTruth } from '../../src/engine/echo.js';
 
 const MON = { type: 'monitor.attach', items: { ecgLeads: true, spo2Probe: true, capnography: true } };
 
@@ -61,11 +63,26 @@ export function expertRun(p, id) {
       runScript(p, [[10, { type: 'vent.set', settings: { fio2: 1.0 } }], [30, { type: 'bronch.insert' }], [45, { type: 'airway.tube_adjust', cm: -3 }],
         [60, { type: 'bronch.suction', where: 'R' }], [70, { type: 'bronch.suction', where: 'trachea' }], [80, { type: 'bronch.remove' }], [300, { type: 'vent.set', settings: { fio2: 0.5 } }]], 900);
       return p;
+    case 'echo_hypovolaemia': case 'echo_lv_failure': case 'echo_tamponade': case 'echo_rv': return echoExpert(p);
+    case 'inf_pyelo': case 'inf_cap': case 'inf_sab': case 'inf_esbl': return wardExpert(p, id);
     default: throw new Error('no expert for ' + id);
   }
 }
 
 /** A learner who does nothing for the whole scenario. */
 export function idleRun(p, id, endT) {
+  return p.run((endT ?? p.scenario.durationS) - p.t);
+}
+
+/** A competent sonographer: the five views in order, the measurements as the image shows them, then the report. */
+export function echoExpert(p, endT) {
+  for (const view of ECHO_VIEWS) {
+    p.run(25);
+    p.dispatch({ type: 'echo.view', view, quality: 0.9 });
+    const s = echoState(p), what = { a4c: ['tapse'], plax: ['lvef'], ivc: ['ivc_max', 'ivc_min'], subcostal: s.effusionMm > 1 ? ['effusion'] : [] }[view] || [];
+    for (const w of what) p.dispatch({ type: 'echo.measure', what: w, value: Math.round(measureTruth(s, w)) });
+  }
+  p.run(20);
+  p.dispatch({ type: 'echo.report', ...reportTruth(echoState(p)) });
   return p.run((endT ?? p.scenario.durationS) - p.t);
 }

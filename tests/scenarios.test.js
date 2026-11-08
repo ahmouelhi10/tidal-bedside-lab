@@ -7,10 +7,10 @@ import { scen, mk, runScript, aclsTeam } from './helpers/bots.js';
 import { expertRun, idleRun } from './helpers/experts.js';
 
 const IDS = Object.keys(SCENARIOS);
-const KINDS = new Set(['ACLS', 'Anaesthesia', 'Trauma']);
+const KINDS = new Set(['ACLS', 'Anaesthesia', 'Trauma', 'Echo', 'Infectiology']);
 
 test('catalogue: every scenario is complete, serialisable and keyed consistently', () => {
-  assert.deepEqual(IDS.sort(), ['cico', 'hemorrhage', 'obese_rsi', 'opioid_pea', 'stemi_vf', 'tension_ptx', 'tube_desat', 'witnessed_vf']);
+  assert.deepEqual(IDS.sort(), ['cico', 'echo_hypovolaemia', 'echo_lv_failure', 'echo_rv', 'echo_tamponade', 'hemorrhage', 'inf_cap', 'inf_esbl', 'inf_pyelo', 'inf_sab', 'obese_rsi', 'opioid_pea', 'stemi_vf', 'tension_ptx', 'tube_desat', 'witnessed_vf']);
   for (const id of IDS) {
     const s = SCENARIOS[id];
     assert.equal(s.id, id);

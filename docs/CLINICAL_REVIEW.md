@@ -120,6 +120,17 @@ Items 24-28 are not yet signed off. Files are relative to `src/engine/`; every c
 | 27 | Front-of-neck access: scalpel-bougie-tube vs. cannula, palpation by BMI and sex, vertical incision, ultrasound marking | `surgical.js` (`pPalpable`, `fonaPlan`, `Neck`) | Do success rates and times match local experience (REF umek2020, rees2019, lavelle2021, das2015)? |
 | 28 | Scenarios `tension_ptx` and `cico` and their scoring weights/time limits | `scenarios.js` | Are the stories, thresholds (90 s relief, 60 s to neck access) and teaching points correct? |
 
+## 5b. Infectiology ward (added with the infectiology mode)
+
+Reviewer: an infectious-diseases physician or clinical microbiologist, ideally with an antimicrobial pharmacist.
+
+- **INF-1 Breakpoints**: compare `BREAKPOINTS` in `src/engine/infection.js` with EUCAST v16.1 (Enterobacterales, S. aureus, S. pneumoniae rows used) and the inference rules in `categorize()` (cefoxitin for staphylococcal beta-lactams with MSSA cephalosporins reported I, pneumococcal penicillin screen, "-" reported R).
+- **INF-2 Doses**: the `ABX` catalogue shows the EUCAST v16.1 standard/high dosages, gentamicin 6-7 mg/kg and amikacin 25-30 mg/kg of actual weight, vancomycin loading 25 mg/kg (max 3 g). Decide whether an adjusted body weight should be shown in obesity and whether renal dose adjustment must be modelled.
+- **INF-3 Cases**: the four isolates' MICs are invented. Check that each antibiogram is plausible and that the expected management is what you would teach (pyelonephritis with bacteraemia, severe CAP, line-related MSSA bacteraemia, ESBL urosepsis with shock).
+- **INF-4 Scoring**: criteria in `infCriteria` (`src/engine/scenarios.js`): cultures before antibiotics, time to first dose (1 h / 3 h), empirical activity and unneeded MRSA / double Gram-negative cover, narrowing within 24 h of the antibiogram, oral switch once stable, duration bands (7 days BALANCE, >= 5 days CAP, 14 days from clearance for SAB), line removal, follow-up cultures, TTE, 30 mL/kg fluids, lactate, carbapenem for ESBL bacteraemia.
+- **INF-5 Course model**: the host-course constants listed in VALIDATION section 2 (stability within 1-4 days on active therapy, ICU within 3 days untreated, relapse after 3 days of therapy).
+- **INF-6 Not covered**: AWaRe categories (source not retrievable), allergy, drug toxicity and levels, C. difficile, local resistance rates.
+
 ## 6. Beyond the items above
 
 - **Scenarios**: review the clinical story, the scripted events and the scoring criteria of the eight scenarios in `scenarios.js` (STEMI to VF, witnessed VF, opioid overdose to hypoxic PEA, rapid-sequence induction at BMI 45, haemorrhage, tension pneumothorax, can't intubate can't oxygenate, endobronchial tube with secretions), and the tube-depth and secretion model in `ett.js`. Weights and time thresholds are educational choices and have not been tested against learner outcomes.

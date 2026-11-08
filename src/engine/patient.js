@@ -6,20 +6,22 @@ import { Circulation } from './cardio.js';
 import { Volumes } from './fluids.js';
 import { Thermal } from './thermal.js';
 import { Respiratory } from './respiratory.js';
-import { DrugSystem, DRUGS } from './drugs.js';
+import { DrugSystem, DRUGS, IV_TRANSIT_S } from './drugs.js';
 import { CprMechanics, Defibrillator, ArrestState } from './cpr.js';
 import { RHYTHMS } from './rhythm.js';
 import { clamp, lag } from './util.js';
 import { Chest, Neck, SITES, fonaPlan } from './surgical.js';
 import { EtTube, SEGMENTS } from './ett.js';
+import { ABX, SAMPLE_KINDS, WARD_ORDERS } from './infection.js';
+import { Pericardium, ECHO_VIEWS, ECHO_MEASURES, ECHO_REPORT, echoState, measureTruth } from './echo.js';
 
 export const DT = 0.1;
 const AIRWAYS = { none: 1.0, chin_lift: 0.8, jaw_thrust: 0.9, opa: 0.9, sga: 0.95, ett: 1.0 };
 
 /** Every intervention accepted by Patient.dispatch(); the server validates replay logs against this list. */
-export const EVENT_TYPES = Object.freeze(['drug.bolus', 'bicarb.bolus', 'drug.infusion', 'drug.stop', 'fluid.bolus', 'blood.transfuse', 'bleed.set', 'bleed.control', 'order', 'airway.set', 'position.set', 'airway.intubate', 'vent.set', 'o2.mask', 'apox.set', 'monitor.attach', 'iv.access', 'nibp.cycle', 'cpr.start', 'cpr.stop', 'cpr.compress', 'cpr.switch', 'cpr.surface', 'defib.pads', 'defib.setEnergy', 'defib.mode', 'defib.charge', 'defib.shock', 'procedure.needle_decompression', 'procedure.chest_tube', 'procedure.cricothyroidotomy', 'exam.chest', 'exam.pocus', 'exam.neck', 'procedure.pericardiocentesis', 'procedure.pci', 'procedure.thrombolysis', 'procedure.treat_hyperkalemia', 'airway.tube_adjust', 'bronch.insert', 'bronch.suction', 'bronch.remove', 'thermal.device', 'thermal.cover', 'thermal.ambient', 'note']);
+export const EVENT_TYPES = Object.freeze(['drug.bolus', 'bicarb.bolus', 'drug.infusion', 'drug.stop', 'fluid.bolus', 'blood.transfuse', 'bleed.set', 'bleed.control', 'order', 'airway.set', 'position.set', 'airway.intubate', 'vent.set', 'o2.mask', 'apox.set', 'monitor.attach', 'iv.access', 'nibp.cycle', 'cpr.start', 'cpr.stop', 'cpr.compress', 'cpr.switch', 'cpr.surface', 'defib.pads', 'defib.setEnergy', 'defib.mode', 'defib.charge', 'defib.shock', 'procedure.needle_decompression', 'procedure.chest_tube', 'procedure.cricothyroidotomy', 'exam.chest', 'exam.pocus', 'exam.neck', 'procedure.pericardiocentesis', 'procedure.pci', 'procedure.thrombolysis', 'procedure.treat_hyperkalemia', 'airway.tube_adjust', 'bronch.insert', 'bronch.suction', 'bronch.remove', 'thermal.device', 'thermal.cover', 'thermal.ambient', 'echo.view', 'echo.measure', 'echo.report', 'ward.advance', 'ward.sample', 'ward.rx.start', 'ward.rx.stop', 'ward.order', 'note']);
 
-const NUMERIC_EVENT_PARAMS = ['amount', 'rate', 'volumeL', 'minutes', 'mlPerMin', 'c', 'factor', 'energy', 'mEq', 'target', 'maxWatts', 'fio2', 'seal', 'eff', 'depth', 'needleMm', 'fr', 'depthCm', 'cm'];
+const NUMERIC_EVENT_PARAMS = ['amount', 'rate', 'volumeL', 'minutes', 'mlPerMin', 'c', 'factor', 'energy', 'mEq', 'target', 'maxWatts', 'fio2', 'seal', 'eff', 'depth', 'needleMm', 'fr', 'depthCm', 'cm', 'quality', 'value', 'hours'];
 
 /** Structural validation of nested event payloads (settings/opts/items) so a malformed browser payload cannot inject NaN, strings or unknown flags. */
 const VENT_NUM = { rate: [0, 60], vt: [0, 1500], fio2: [0.21, 1], peep: [0, 25], seal: [0, 1] };
@@ -81,6 +83,25 @@ function validateEventShape(ev) {
     case 'bronch.suction': return SEGMENTS.includes(ev.where) ? null : 'invalid suction site';
     case 'order': return typeof ev.what === 'string' && ev.what.length <= 40 ? null : 'invalid order';
     case 'note': return typeof ev.text === 'string' && ev.text.length <= 300 ? null : 'invalid note';
+    case 'ward.advance': return Number.isInteger(ev.hours) && ev.hours >= 1 && ev.hours <= 72 ? null : 'hours must be an integer in [1, 72]';
+    case 'ward.sample': return SAMPLE_KINDS.includes(ev.kind) ? null : 'invalid sample';
+    case 'ward.rx.start': {
+      if (typeof ev.drug !== 'string' || !Object.hasOwn(ABX, ev.drug)) return 'unknown antibiotic';
+      if (!['iv', 'po'].includes(ev.route)) return 'route must be iv or po';
+      return ev.dose == null || ['std', 'high'].includes(ev.dose) ? null : 'dose must be std or high';
+    }
+    case 'ward.rx.stop': return typeof ev.drug === 'string' && Object.hasOwn(ABX, ev.drug) ? null : 'unknown antibiotic';
+    case 'ward.order': return WARD_ORDERS.includes(ev.what) ? null : 'invalid ward order';
+    case 'echo.view': return ECHO_VIEWS.includes(ev.view) && isNum(ev.quality) && ev.quality >= 0 && ev.quality <= 1 ? null : 'invalid echo view';
+    case 'echo.measure': return ECHO_MEASURES.includes(ev.what) && isNum(ev.value) && ev.value >= 0 && ev.value <= 100 ? null : 'invalid echo measurement';
+    case 'echo.report': {
+      for (const [k, v] of Object.entries(ev)) {
+        if (k === 'type') continue;
+        if (!(k in ECHO_REPORT)) return `unknown report field ${k}`;
+        if (!(v === null || ECHO_REPORT[k].includes(v))) return `invalid ${k}`;
+      }
+      return null;
+    }
     default: return null;
   }
 }
@@ -105,11 +126,15 @@ export class Patient {
     this.rngS = new Rng(((seed ^ 0x9e3779b9) >>> 0) || 7);   // separate stream for surgical gestures: never perturbs the main random sequence
     this.chest = new Chest(this.body, this.rngS); this.neck = new Neck(this.body, this.rngS);
     this.tube = new EtTube(this.body);                 // tracheal tube depth, secretions, bronchoscope
+    this.ward = null;                                  // infectiology ward course (Ward from infection.js), set by an infectiology scenario's init
     this.hard = null;                                  // difficult-airway case: { ett: P(success) of laryngoscopy, cap: ceiling of upper-airway patency for mask / supraglottic device }
     this.vent = { mode: 'spont', rate: 10, vt: 500, fio2: 0.21, peep: 0, seal: 0.9, efficiency: 1 };
     this.o2 = null;                                    // spontaneous-breathing oxygen device {fio2, seal}
     this.apOx = null;
     this.lv = this.spec.lvFunction ?? 1;               // structural LV function (MI size, cardiomyopathy)
+    this.peri = new Pericardium(this.spec.effusionMl ?? 0);   // pericardial effusion (mL); its pressure is transmitted to the heart like an intrathoracic pressure
+    this.rvLoad = clamp(this.spec.rvLoad ?? 0, 0, 1);  // acute RV pressure overload (e.g. pulmonary embolism) 0..1
+    this.echo = { views: [], measures: [], reports: [] };   // focused echo record (scored; no effect on the physiology)
     this.flags = { padsOn: false, ivAccess: false, ecgLeads: false, spo2Probe: false, nibp: false, aline: false, capnography: false, tempProbe: false };
     this.timers = { hypoxic: 0, lowMap: 0, hypotensionPostRosc: 0 };
     this.arrestTone = 1; this.postRoscTone = 1;
@@ -196,7 +221,10 @@ export class Patient {
       case 'exam.chest': return { ok: true, findings: this.chest.findings({ ppv: this._ppv(), rap: this.circ.rap }) };
       case 'exam.pocus': return { ok: true, ...this.chest.pocus() };
       case 'exam.neck': return this._examNeck(ev);
-      case 'procedure.pericardiocentesis': this.arrest.fixCause('tamponade'); return { ok: true };
+      case 'procedure.pericardiocentesis': { this.arrest.fixCause('tamponade'); const ml = this.peri.drain(); if (ml > 1) this.notes.push({ t, text: `pericardiocentesis: ${Math.round(ml)} mL drained` }); return { ok: true, drainedMl: Math.round(ml) }; }
+      case 'echo.view': { const s = echoState(this); this.echo.views.push({ t, view: ev.view, quality: ev.quality }); return { ok: true, findings: s }; }
+      case 'echo.measure': { const s = echoState(this); this.echo.measures.push({ t, what: ev.what, value: ev.value, truth: measureTruth(s, ev.what) }); return { ok: true }; }
+      case 'echo.report': { const { type, ...r } = ev; this.echo.reports.push({ t, ...r, state: echoState(this) }); return { ok: true }; }
       case 'procedure.pci': this.arrest.fixCause('coronary_thrombosis'); this.notes.push({ t, text: 'reperfusion' }); return { ok: true };
       case 'procedure.thrombolysis': this.arrest.fixCause('pulmonary_embolism'); this.arrest.fixCause('coronary_thrombosis'); return { ok: true };
       case 'procedure.treat_hyperkalemia': this.arrest.fixCause('hyperkalemia'); return { ok: true };
@@ -204,8 +232,21 @@ export class Patient {
       case 'thermal.cover': this.therm.cover = ev.factor; return { ok: true };
       case 'thermal.ambient': this.therm.setAmbient(ev.c); return { ok: true };
       case 'note': this.notes.push({ t, text: ev.text }); return { ok: true };
+      case 'ward.advance': case 'ward.sample': case 'ward.rx.start': case 'ward.rx.stop': case 'ward.order': return this._ward(ev);
       default: return { ok: false, error: 'unknown event ' + ev.type };
     }
+  }
+  /** Infectiology ward course (only in cases that define one): the ward has its own clock in hours. */
+  _ward(ev) {
+    const w = this.ward; if (!w) return { ok: false, error: 'no ward course in this case' };
+    switch (ev.type) {
+      case 'ward.advance': return w.advance(ev.hours);
+      case 'ward.sample': return w.sample(ev.kind);
+      case 'ward.rx.start': return w.start(ev.drug, ev.route, ev.dose ?? 'std');
+      case 'ward.rx.stop': return w.stop(ev.drug);
+      case 'ward.order': return w.order(ev.what);
+    }
+    return { ok: false };
   }
   _ppv() { return this.vent.mode === 'ctrl' && !this.airway.intubating; }
   /** needle thoracostomy. With no parameters (older clients, scripted cases) an ideal catheter is placed on the affected side. */
@@ -280,11 +321,18 @@ export class Patient {
     return { ok: true, willTakeS: +dur.toFixed(1), success: ok };
   }
   _adenosine(mg) {
+    // First-pass effect at the AV node once the bolus reaches the heart: 17.5 +/- 1.0 s after an antecubital injection (REF ng1999),
+    // about 20 s in healthy volunteers, lasting < 10 s (REF watt1986). The 2.5 s response after arrival and the block length (4 s in sinus rhythm, 6 s of asystole on SVT conversion) are design.
+    const at = this.t + IV_TRANSIT_S + 2.5;
     if (['SVT'].includes(this.arrest.key) && mg >= 6 && this.rng.chance(mg >= 12 ? 0.9 : 0.7)) {
-      this.pendingEvents.push({ at: this.t + 8, run: p => p.arrest.setRhythm('NSR', p.t) });
-      this.pendingEvents.push({ at: this.t + 0.5, run: p => p.arrest.setRhythm('ASYSTOLE', p.t) });
-      this.pendingEvents.push({ at: this.t + 6, run: p => p.arrest.setRhythm('NSR', p.t) });
+      this.pendingEvents.push({ at, run: p => { if (p.arrest.key === 'SVT') p.arrest.setRhythm('ASYSTOLE', p.t); } });
+      this.pendingEvents.push({ at: at + 6, run: p => { if (p.arrest.key === 'ASYSTOLE' && !p.arrest.arrested) p.arrest.setRhythm('NSR', p.t); } });
       this.brief = true;
+    } else if (['NSR', 'SINUS_BRADY', 'SINUS_TACH'].includes(this.arrest.key) && mg >= 6) {
+      // sinus rhythm: short-lasting high-grade AV block (REF label_adenosine "first-, second- or third-degree heart block"), then back
+      const before = this.arrest.key;
+      this.pendingEvents.push({ at, run: p => { if (p.arrest.key === before) p.arrest.setRhythm('AV_BLOCK3', p.t); } });
+      this.pendingEvents.push({ at: at + 4, run: p => { if (p.arrest.key === 'AV_BLOCK3') p.arrest.setRhythm(before, p.t); } });
     }
   }
   _shock() {
@@ -354,10 +402,10 @@ export class Patient {
     const cprActive = arrested ? this.cpr.flow * this.chest.cprMult : 0;
     this.chest.step(dt, { ppv: this._ppv(), peep: this.vent.peep }, t);
     const ctx = {
-      itp: this.chest.itp,
+      itp: this.chest.itp + this.peri.pressure,          // a pericardial effusion compresses the heart like a raised surrounding pressure (REF design)
       rhythm: { perfusing: info.perfusing, rate },
       bloodVolume: this.vol.bloodVolume,
-      fx: eff.fx, lvFunction: lvNow * this.chest.pumpMult, tempC: this.therm.tc,
+      fx: eff.fx, lvFunction: lvNow * this.chest.pumpMult, tempC: this.therm.tc, rvShift: 14 * this.rvLoad,   // a pressure-overloaded RV limits LV filling (REF design)
       cprFlow: cprActive, cprAmp: this.cpr.amp, arrestTone: this.arrestTone, svrTone: this.postRoscTone,
     };
     // pressure support: the exact bleeding / volume loads enter through vol
@@ -455,7 +503,7 @@ export class Patient {
   /** FNV-1a over a quantised (6-decimal) state vector; used for replay verification. Coarse enough to tolerate last-ulp differences between JS engines. */
   stateHash() {
     const c = this.circ, r = this.resp, v = this.vol, th = this.therm;
-    const vec = [this.n, c.hr, c.sbp, c.dbp, c.mapArt, c.rap, c.co, c.x.hr, c.x.svr, r.sao2, r.paco2, r.pv, r.vO2, r.vN2, r.cv, r.lactate, v.vp, v.rbc, v.vi, th.tc, th.tp, this.arrest.readiness, this.arrest.vfAmp, this.myoHypox, this.rng.state, this.chest.air, this.chest.pip, this.chest.leak, this.neck.palpable ? 1 : 0, this.neck.marked ? 1 : 0, this.neck.cannulaOk ? 1 : 0, this.rngS.state, ...this.tube.hashVec()];
+    const vec = [this.n, c.hr, c.sbp, c.dbp, c.mapArt, c.rap, c.co, c.x.hr, c.x.svr, r.sao2, r.paco2, r.pv, r.vO2, r.vN2, r.cv, r.lactate, v.vp, v.rbc, v.vi, th.tc, th.tp, this.arrest.readiness, this.arrest.vfAmp, this.myoHypox, this.rng.state, this.chest.air, this.chest.pip, this.chest.leak, this.neck.palpable ? 1 : 0, this.neck.marked ? 1 : 0, this.neck.cannulaOk ? 1 : 0, this.rngS.state, ...this.tube.hashVec(), this.peri.volume, this.rvLoad, ...(this.ward ? this.ward.hashVec() : []), ...this.drugs.hashVec()];
     for (const k of Object.keys(this.drugs.pk)) vec.push(...this.drugs.pk[k].a, this.drugs.pk[k].ce);
     let h = 0x811c9dc5;
     const s = vec.map(x => (Number.isFinite(x) ? x.toFixed(6) : 'NaN')).join('|') + '|' + this.arrest.key;

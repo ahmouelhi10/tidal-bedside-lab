@@ -22,11 +22,11 @@ const post = (url, body, headers = {}) => fetch(url, { method: 'POST', headers: 
 test('health, scenario list and security headers', async () => {
   await withServer({}, async (base) => {
     const h = await j(await fetch(base + '/api/health'));
-    assert.equal(h.status, 200); assert.equal(h.body.status, 'ok'); assert.equal(h.body.scenarios, 8);
+    assert.equal(h.status, 200); assert.equal(h.body.status, 'ok'); assert.equal(h.body.scenarios, Object.keys(SCENARIOS).length);
     assert.match(h.headers.get('content-security-policy'), /default-src 'self'/);
     assert.equal(h.headers.get('x-content-type-options'), 'nosniff');
     const sc = await j(await fetch(base + '/api/scenarios'));
-    assert.equal(sc.body.length, 8); assert.ok(sc.body.every(x => x.id && x.title && !('score' in x)));
+    assert.equal(sc.body.length, Object.keys(SCENARIOS).length); assert.ok(sc.body.every(x => x.id && x.title && !('score' in x)));
   });
 });
 
