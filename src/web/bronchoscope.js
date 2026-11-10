@@ -5,6 +5,7 @@ import { mat4 } from './gl/math.js';
 import { sphere } from './gl/geometry.js';
 import { buildTree, buildAirwayMesh, buildTubeMesh, secretionSpots, regionOf, Scope, V } from './gl/airway.js';
 import { t, getLang } from './i18n.js';
+import { mechanics } from '/engine/mechanics.js';
 
 const VS = `#version 300 es
 in vec3 aPos; in vec3 aNorm; in vec3 aTint;
@@ -249,8 +250,10 @@ export class Bronchoscope {
   _hud(p) {
     const m = p.monitor, f = (v, u = '') => (v == null ? '--' : v + u);
     const ctrl = p.vent?.mode === 'ctrl', vt = ctrl ? p.vent.vt : p.resp?.vt;
+    const mech = mechanics(p);   // the scope in the tube raises the resistive pressure (engine mechanics.js)
     const chips = [['HR', f(m.hr), 'hr'], ['SpO₂', f(m.spo2, '%'), 'sp'], ['EtCO₂', f(m.etco2), 'co'], [t('br_rr'), f(m.rr), 'rr'],
-      ['VT', f(Number.isFinite(vt) ? Math.round(vt) : null, ' mL'), 'vt'], ['FiO₂', f(ctrl && Number.isFinite(p.vent.fio2) ? Math.round(p.vent.fio2 * 100) : null, '%'), 'fi']];
+      ['VT', f(Number.isFinite(vt) ? Math.round(vt) : null, ' mL'), 'vt'], ['FiO₂', f(ctrl && Number.isFinite(p.vent.fio2) ? Math.round(p.vent.fio2 * 100) : null, '%'), 'fi'],
+      ['Ppeak', f(mech ? Math.round(mech.ppeak) : null), 'pk'], ['Pplat', f(mech ? Math.round(mech.pplat) : null), 'pl']];
     if (!this.dom.vitEls) { this.dom.vitEls = chips.map(([k, , c]) => { const v = el('b'); this.dom.vit.append(el('span', { class: 'br-v ' + c }, el('i', { text: k }), v)); return v; }); }
     chips.forEach(([, v], i) => { this.dom.vitEls[i].textContent = v; });
     this.dom.depth.textContent = `${p.tube.depth} cm`;

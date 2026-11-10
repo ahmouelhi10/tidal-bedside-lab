@@ -12,6 +12,8 @@ export const REFERENCES = {
   mosteller1987: { status: 'VERIFIED', cite: 'Mosteller RD. Simplified calculation of body-surface area. N Engl J Med 1987;317:1098' },
   dubois1916:    { status: 'VERIFIED', cite: 'Du Bois D, Du Bois EF. A formula to estimate the approximate surface area. Arch Intern Med 1916;17:863' },
   devine1974:    { status: 'VERIFIED', cite: 'Devine BJ. Gentamicin therapy. Drug Intell Clin Pharm 1974;8:650' },
+  anesth_impedance1990: { status: 'SECONDARY', cite: 'Respiratory input impedance in anesthetized paralyzed patients. J Appl Physiol 1990 (PMID 2262456): total respiratory elastance 23.5 +/- 1.9 cmH2O/L under anaesthesia, 25.5 +/- 5.4 with paralysis; resistance ~2 cmH2O.s/L (values from the abstract)' },
+  pelosi1996:    { status: 'SECONDARY', cite: 'Pelosi P, Croci M, Ravagnan I, Vicardi P, Gattinoni L. Total respiratory system, lung, and chest wall mechanics in sedated-paralyzed postoperative morbidly obese patients. Chest 1996;109:144 (PMID 8549177): lung compliance 55.3 vs 106.6 mL/cmH2O obese vs normal (abstract)' },
   ardsnet2000:   { status: 'SECONDARY', cite: 'ARDS Network. Ventilation with lower tidal volumes. N Engl J Med 2000;342:1301 (PBW formulas via LITFL; female constant 45.5 per original)' },
   james1976:     { status: 'VERIFIED', cite: 'James WPT. Research on obesity. HMSO 1976 (as printed in Absalom 2009 / arXiv 2309.04787)' },
   janmahasatian2005: { status: 'VERIFIED', cite: 'Janmahasatian S et al. Quantification of lean bodyweight. Clin Pharmacokinet 2005;44:1051' },

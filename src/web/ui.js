@@ -12,6 +12,10 @@ import { WardView, wardClock, abxName } from './ward.js';
 import { EffectWatcher } from './effects.js';
 import { monitorOnset } from './onset.js';
 import { REFERENCES } from '/engine/references.js';
+import { mechanics, waveAt } from '/engine/mechanics.js';
+import { LAB_KINDS, RANGES as LAB_RANGES } from '/engine/labs.js';
+import { SCENARIOS } from '/engine/scenarios.js';
+import { buildTimeline, keyActionTimes } from '/engine/timeline.js';
 import { AREAS, loadProgress, recordProgress, clearProgress, levelOf, profileOf, achievementsOf } from './progress.js';
 
 /** Skills training: the case each procedure is practised on (the condition that makes the procedure meaningful). */
@@ -449,7 +453,7 @@ export class UI {
   onSessionStart() {
     this.closeMenu(false); this._speedBefore = 0;
     this.logLines = []; this.dom.logList.replaceChildren(); this.guide = null; this._unseen = 0; this._logBadge(); this.toggleLog(false);
-    this.effects.reset(); this.effLines = []; this.dom.effList.replaceChildren(); this.drugClock = {};
+    this.effects.reset(); this.effLines = []; this.dom.effList.replaceChildren(); this.drugClock = {}; this._labsSeen = 0;
     // free play (physiology lab, instructor): standard monitoring connected from the start; in scored cases it is the learner's job
     if (!this.sim.scenarioId && ['lab', 'instructor', undefined].includes(this._mode)) { this.sim.act({ type: 'monitor.attach', items: { ecgLeads: true, spo2Probe: true, nibp: true, capnography: true } }); this.sim.act({ type: 'nibp.cycle' }); }
     this.refreshCard(); this.dom.card.hidden = !this.scenarios.find(s => s.id === this.sim.scenarioId);
@@ -588,7 +592,36 @@ export class UI {
       el('div', { class: 'row2' }, el('label', { class: 'f' }, el('span', { text: t('aw_depth') }), depth), this.btn(t('aw_bronch'), () => this.bronch?.start(), 'act', { id: 'btnBronch' })),
       el('h4', { text: t('aw_vent') }),
       el('div', { class: 'row2' }, this.btn(t('aw_bvm_start'), () => this.act({ type: 'vent.set', settings: { mode: 'ctrl', rate: 10, vt: Math.round(7 * b.pbw), fio2: 1, peep: 0, seal: this.sim.patient.airway.intubated || this.sim.patient.airway.device === 'sga' ? 0.97 : 0.85 } }, t('aw_bvm_start')), 'act primary', { id: 'btnBvm' }), this.btn(t('aw_vent_stop'), () => this.act({ type: 'vent.set', settings: { mode: 'spont' } }, t('aw_vent_stop')), 'act')), el('div', { class: 'row4' }, el('label', { class: 'f' }, el('span', { text: t('aw_mode') }), mode), el('label', { class: 'f' }, el('span', { text: t('aw_rate') }), rate), el('label', { class: 'f' }, el('span', { text: t('aw_vt') }), vt), el('label', { class: 'f' }, el('span', { text: t('aw_fio2') }), fio2)),
-      el('div', { class: 'row2' }, el('label', { class: 'f' }, el('span', { text: t('aw_peep') }), peep), this.btn(t('aw_set'), () => this.act({ type: 'vent.set', settings: { mode: mode.value, rate: Number(rate.value), vt: Number(vt.value) * b.pbw, fio2: Number(fio2.value), peep: Number(peep.value), seal: this.sim.patient.airway.intubated ? 0.97 : 0.85 } }, t('aw_set')), 'act primary')));
+      el('div', { class: 'row2' }, el('label', { class: 'f' }, el('span', { text: t('aw_peep') }), peep), this.btn(t('aw_set'), () => this.act({ type: 'vent.set', settings: { mode: mode.value, rate: Number(rate.value), vt: Number(vt.value) * b.pbw, fio2: Number(fio2.value), peep: Number(peep.value), seal: this.sim.patient.airway.intubated ? 0.97 : 0.85 } }, t('aw_set')), 'act primary')),
+      this.mechBlock());
+  }
+  /** Ventilator mechanics read-out and pressure / flow / volume curves (engine mechanics.js, display only). */
+  mechBlock() {
+    const vals = el('div', { class: 'mech-vals' });
+    const cv = el('canvas', { class: 'mech-curves', width: 600, height: 300, 'aria-label': t('mech_curves') });
+    this.dom.mech = { vals, cv, box: el('div', { class: 'mech' }, el('h4', { text: t('mech_title') }), el('p', { class: 'muted small mech-off', text: t('mech_off') }), vals, cv) };
+    return this.dom.mech.box;
+  }
+  _mechTick(p) {
+    const d = this.dom.mech; if (!d || !d.box.isConnected) return;
+    const m = mechanics(p); d.box.classList.toggle('on', !!m); if (!m) return;
+    const warn = (k, v) => (k === 'pplat' && v > 30) || (k === 'dp' && v > 15) || (k === 'peepi' && v > 2) || (k === 'ppeak' && v > 40);
+    const rows = [['ppeak', 'Ppeak', m.ppeak, 'cmH₂O'], ['pplat', 'Pplat', m.pplat, 'cmH₂O'], ['dp', 'ΔP', m.dp, 'cmH₂O'], ['peep', 'PEEP', m.peep, 'cmH₂O'], ['peepi', t('mech_peepi'), m.peepi, 'cmH₂O'],
+      ['mpaw', t('mech_mpaw'), m.mpaw, 'cmH₂O'], ['crs', 'Crs', m.crs, 'mL/cmH₂O'], ['rrs', 'Rrs', m.rrs, 'cmH₂O/L/s'], ['flow', t('mech_flow'), m.flow, 'L/min']];
+    const sig = rows.map(r => r[2]).join('|');
+    if (sig !== d.sig) { d.sig = sig; d.vals.replaceChildren(...rows.map(([k, lab, v, u]) => el('div', { class: 'mv' + (warn(k, v) ? ' warn' : ''), title: t('mech_tip_' + k) }, el('span', { text: lab }), el('b', { text: String(v) }), el('i', { text: u })))); }
+    // curves over two breaths; the sweep follows simulated time
+    const c = d.cv, g = c.getContext('2d'), W = c.width, H = c.height, tTot = m.ti + m.te, span = 2 * tTot, now = p.t % span;
+    g.clearRect(0, 0, W, H);
+    const lanes = [['p', '#ffc23d', Math.max(20, m.ppeak * 1.2), 0, 'Paw'], ['f', '#4cc3ff', Math.max(30, Math.abs(m.flow) * 1.6), -1, t('mech_flow')], ['v', '#3ee08f', Math.max(300, m.vt * 1.2), 0, 'V']];
+    lanes.forEach(([k, col, max, sym, lab], i) => {
+      const y0 = i * H / 3, h = H / 3 - 6, base = sym < 0 ? y0 + h / 2 : y0 + h, sc = sym < 0 ? h / 2 / max : h / max;
+      g.strokeStyle = 'rgba(255,255,255,.12)'; g.beginPath(); g.moveTo(0, base); g.lineTo(W, base); g.stroke();
+      g.fillStyle = 'rgba(255,255,255,.55)'; g.font = '13px system-ui'; g.fillText(lab, 4, y0 + 13);
+      g.strokeStyle = col; g.lineWidth = 2; g.beginPath();
+      for (let x = 0; x <= W; x += 2) { const ss = (x / W) * span; if (ss > now) break; const w = waveAt(m, ss)[k]; const y = base - w * sc; if (x) g.lineTo(x, y); else g.moveTo(x, y); }
+      g.stroke();
+    });
   }
   panelCirc(P) {
     const rate = el('input', { type: 'number', id: 'inCprRate', value: 110, min: 60, max: 180 }), depth = el('input', { type: 'number', id: 'inCprDepth', value: 5.5, min: 2, max: 8, step: 0.5 }), en = el('input', { type: 'number', id: 'inEnergy', value: 200, min: 50, max: 360, step: 10 });
@@ -650,8 +683,33 @@ export class UI {
     P.append(el('h4', { text: t('od_monitor') }), el('div', { class: 'stack' }, att('ecgLeads', 'od_ecg'), att('spo2Probe', 'od_spo2'), this.btn(t('od_nibp'), () => { this.act({ type: 'monitor.attach', items: { nibp: true } }); this.act({ type: 'nibp.cycle' }, t('od_nibp')); }, 'act'), att('aline', 'od_aline'), att('capnography', 'od_capno'), att('tempProbe', 'od_temp'), this.btn(t('od_iv'), () => this.act({ type: 'iv.access' }, t('od_iv')), 'act')),
       el('h4', { text: t('od_orders') }), el('div', { class: 'stack' }, this.btn(t('od_ecg12'), () => { const r = this.act({ type: 'order', what: 'ecg12' }, t('od_ecg12')); if (r?.result) this.showResult(r.result); }, 'act'), this.btn(t('od_trop'), () => { const r = this.act({ type: 'order', what: 'troponin' }, t('od_trop')); if (r?.result) this.showResult(r.result); }, 'act'),
         this.btn(t('od_aspirin'), () => this.act({ type: 'order', what: 'aspirin', mg: 324 }, t('od_aspirin')), 'act'), this.btn(t('od_cath'), () => this.act({ type: 'order', what: 'cath_lab' }, t('od_cath')), 'act'), this.btn(t('od_call_help'), () => this.act({ type: 'order', what: 'call_help' }, t('od_call_help')), 'act'), this.btn(t('od_declare_cico'), () => this.act({ type: 'order', what: 'declare_cico' }, t('od_declare_cico')), 'act'), this.btn(t('od_ttm'), () => { this.act({ type: 'order', what: 'temperature_control' }); this.act({ type: 'thermal.device', target: 36 }, t('od_ttm')); }, 'act')),
+      el('h4', { text: t('lab_title') }), el('div', { class: 'stack' }, ...LAB_KINDS.map(k => this.btn(t('lab_' + k), () => this.act({ type: 'lab.order', kind: k }, t('lab_' + k)), 'act', { dataset: { lab: k } }))),
+      this.dom.labBox = el('div', { class: 'labs' }),
       el('h4', { text: t('od_env') }), el('div', { class: 'row2' }, el('label', { class: 'f' }, el('span', { text: t('od_ambient') }), amb), this.btn(t('od_set'), () => this.act({ type: 'thermal.ambient', c: Number(amb.value) }, t('od_set')), 'act')),
       el('div', { class: 'stack' }, this.btn(t('od_cover'), () => this.act({ type: 'thermal.cover', factor: 0.5 }, t('od_cover')), 'act'), this.btn(t('od_warmer'), () => this.act({ type: 'thermal.device', target: 38 }, t('od_warmer')), 'act'), this.btn(t('od_cool'), () => this.act({ type: 'thermal.device', target: null }, t('od_cool')), 'act')));
+  }
+  /** Laboratory: pending samples with a countdown, then the results table (each sample a column, so trends read left to right). */
+  _labsTick(p) {
+    const box = this.dom.labBox; if (!box || !box.isConnected) return;
+    const mm = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
+    const pending = p.labs.filter(l => l.readyAt > p.t), done = p.labResults();
+    const sig = `${p.labs.length}|${done.length}|${pending.map(l => Math.ceil(l.readyAt - p.t)).join(',')}`;
+    if (sig === box.dataset.sig) return; box.dataset.sig = sig;
+    const kids = pending.map(l => el('div', { class: 'lab-pend' }, el('span', { text: `⏳ ${t('lab_' + l.kind)} · ${t('lab_sampled')} ${mm(l.t)}` }), el('b', { text: mm(l.readyAt - p.t) })));
+    const rowsOf = { abg: ['ph', 'paco2', 'pao2', 'hco3', 'be', 'sao2', 'lactate', 'fio2'], lactate: ['lactate'], cbc: ['hb', 'hct'] };
+    const unit = { ph: '', paco2: 'mmHg', pao2: 'mmHg', hco3: 'mmol/L', be: 'mmol/L', sao2: '%', lactate: 'mmol/L', fio2: '', hb: 'g/dL', hct: '' };
+    const label = { ph: 'pH', paco2: 'PaCO₂', pao2: 'PaO₂', hco3: 'HCO₃⁻', be: t('lab_be'), sao2: 'SaO₂', lactate: t('lab_lact'), fio2: 'FiO₂', hb: 'Hb', hct: 'Hct' };
+    for (const kind of LAB_KINDS) {
+      const cols = done.filter(l => l.kind === kind); if (!cols.length) continue;
+      const sex = p.spec.sex === 'F' ? 'F' : 'M', rng = (k) => LAB_RANGES[k] || LAB_RANGES[`${k}_${sex}`];
+      const head = el('tr', {}, el('th', { text: t('lab_' + kind) }), ...cols.map(l => el('th', { text: mm(l.t) })), el('th', { class: 'muted', text: t('lab_ref') }));
+      const body = rowsOf[kind].map(k => el('tr', {}, el('td', { text: `${label[k]} ${unit[k] ? '(' + unit[k] + ')' : ''}` }),
+        ...cols.map(l => el('td', { class: l.flags[k] === 'H' ? 'hi' : l.flags[k] === 'L' ? 'lo' : '', text: `${l.values[k]}${l.flags[k] ? ' ' + (l.flags[k] === 'H' ? '↑' : '↓') : ''}` })),
+        el('td', { class: 'muted', text: rng(k) ? `${rng(k)[0]} – ${rng(k)[1]}` : '' })));
+      kids.push(el('table', { class: 'lab-tab' }, el('thead', {}, head), el('tbody', {}, ...body)));
+    }
+    if (!kids.length) kids.push(el('p', { class: 'muted small', text: t('lab_none') }));
+    box.replaceChildren(...kids);
   }
   showResult(res) { if (res.findings) this.toast(res.findings); else if (res.note) this.toast(res.note); }
 
@@ -874,6 +932,9 @@ export class UI {
   refresh() {
     const p = this.sim.patient; if (!p) return;
     this.effects.tick(p);
+    if (this.panelOpen && this.tab === 'tab_airway') this._mechTick(p);
+    if (this.panelOpen && this.tab === 'tab_orders') this._labsTick(p);
+    if (p.labs) { const n = p.labResults().length; if (n > (this._labsSeen ?? 0)) { this._labsSeen = n; const l = p.labResults()[n - 1]; this.toast(`${t('lab_back')}: ${t('lab_' + l.kind)}`); this.log(`${t('lab_back')}: ${t('lab_' + l.kind)} (${Object.entries(l.values).map(([k, v]) => k + ' ' + v).join(', ')})`); } }
     // the cuff re-inflates every 2.5 min once connected, like a monitor set to automatic
     if (p.flags.nibp && !this.sim.finished && this.sim.speed > 0 && p.t - (p.nibp?.t ?? -1e9) >= 150) this.sim.act({ type: 'nibp.cycle' });
     if (this.dom.monAttach) this.dom.monAttach.hidden = !!(p.flags.ecgLeads || p.flags.spo2Probe || p.flags.capnography);
@@ -952,9 +1013,85 @@ export class UI {
         el('span', { class: 'bar' }, el('i', { class: f >= 0.8 ? '' : f >= 0.4 ? 'mid' : 'low', style: `width:${(f * 100).toFixed(0)}%` })), el('span', { class: 'cd', text: i.detail })); })));
       if (x) box.append(el('h4', { text: t('learning') }), el('ul', { class: 'muted' }, x.learning.map(l => el('li', { text: l }))));
     } else box.append(el('p', { class: 'muted', text: `${t('score_server')}: ${v}` }));
-    box.append(el('div', { class: 'db-actions' }, el('button', { class: 'primary', onclick: () => ov.remove(), text: t('close') })));
+    // replay timeline: rebuilt from the event log by the engine itself, so the curves are exactly what happened
+    const tlBox = el('div', { class: 'db-tl' }, el('h4', { text: t('tl_title') }), el('p', { class: 'muted small', text: t('tl_building') }));
+    box.append(tlBox);
+    const rec = { scen: x, sc, out };
+    box.append(el('div', { class: 'db-actions' },
+      el('button', { class: 'ghost', onclick: () => this.printRecord(rec), text: '🖨 ' + t('rec_print') }),
+      el('button', { class: 'ghost', onclick: () => this.exportRecord(rec), text: t('rec_export') }),
+      el('button', { class: 'primary', onclick: () => ov.remove(), text: t('close') })));
+    setTimeout(() => {
+      const p = this.sim.patient, ss = this.sim.session; if (!p || !ss) return;
+      try { rec.tl = buildTimeline({ spec: ss.spec, seed: ss.seed, scenario: this.sim.scenarioId, log: p.log, until: p.t }, SCENARIOS, 5); }
+      catch (e) { tlBox.lastChild.textContent = String(e.message || e); return; }
+      this.drawTimeline(tlBox, rec.tl);
+    }, 30);
     ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
     ov.append(box); document.body.append(ov);
+  }
+  /** Debrief timeline: true HR/MAP, SpO2, EtCO2/RR lanes with every learner action marked; hover reads the values. */
+  drawTimeline(box, tl) {
+    const W = 920, H = 260, PADL = 44, PADR = 10, T = tl.end || 1, X = (s) => PADL + (s / T) * (W - PADL - PADR);
+    const cv = el('canvas', { class: 'tl-canvas', width: W, height: H }), read = el('div', { class: 'tl-read small' }, t('tl_hover'));
+    const lanes = [{ keys: [['hr', '#3ee08f', t('vl_hr')], ['map', '#ff5d6c', t('vl_map')]], max: 200 }, { keys: [['spo2', '#4cc3ff', 'SpO₂']], max: 100 }, { keys: [['etco2', '#ffc23d', 'EtCO₂'], ['rr', '#e6e6e6', t('vl_rr')]], max: 60 }];
+    const g = cv.getContext('2d'), lh = (H - 24) / lanes.length;
+    const draw = (hx) => {
+      g.clearRect(0, 0, W, H); g.font = '11px system-ui';
+      lanes.forEach((ln, i) => {
+        const y0 = i * lh + 4, y1 = y0 + lh - 8, Y = (v) => y1 - (Math.max(0, Math.min(ln.max, v)) / ln.max) * (y1 - y0);
+        g.strokeStyle = 'rgba(255,255,255,.1)'; g.strokeRect(PADL, y0, W - PADL - PADR, y1 - y0);
+        g.fillStyle = 'rgba(255,255,255,.5)'; g.fillText(String(ln.max), 4, y0 + 9); g.fillText('0', 4, y1);
+        ln.keys.forEach(([k, col, lab], j) => {
+          g.strokeStyle = col; g.lineWidth = 1.8; g.beginPath();
+          tl.t.forEach((tt, n) => { const xx = X(tt), yy = Y(tl[k][n]); if (n) g.lineTo(xx, yy); else g.moveTo(xx, yy); });
+          g.stroke(); g.fillStyle = col; g.fillText(lab, PADL + 6 + j * 60, y0 + 11);
+        });
+      });
+      g.fillStyle = 'rgba(255,255,255,.5)';
+      for (let m = 0; m <= T / 60; m += Math.max(1, Math.round(T / 60 / 8))) g.fillText(`${m}′`, X(m * 60) - 4, H - 4);
+      for (const e of tl.events) { g.strokeStyle = e.ok ? 'rgba(176,124,255,.75)' : 'rgba(255,93,108,.6)'; g.lineWidth = 1; g.beginPath(); g.moveTo(X(e.t), 2); g.lineTo(X(e.t), H - 16); g.stroke(); }
+      if (hx != null) { g.strokeStyle = '#fff'; g.beginPath(); g.moveTo(hx, 2); g.lineTo(hx, H - 16); g.stroke(); }
+    };
+    draw(null);
+    cv.addEventListener('pointermove', (ev) => {
+      const r = cv.getBoundingClientRect(), hx = (ev.clientX - r.left) * (W / r.width), s = Math.max(0, Math.min(T, ((hx - PADL) / (W - PADL - PADR)) * T));
+      let n = 0; while (n < tl.t.length - 1 && tl.t[n + 1] <= s) n++;
+      const near = tl.events.filter(e => Math.abs(e.t - s) < T / 60).map(e => this.describe(e.ev) || e.type);
+      read.textContent = `${mmss(s)} · ${t('vl_hr')} ${Math.round(tl.hr[n])} · ${t('vl_map')} ${Math.round(tl.map[n])} · SpO₂ ${Math.round(tl.spo2[n])} · EtCO₂ ${Math.round(tl.etco2[n])} · ${t('vl_rr')} ${Math.round(tl.rr[n])}${near.length ? ' — ' + near.join(', ') : ''}`;
+      draw(hx);
+    });
+    cv.addEventListener('pointerleave', () => { draw(null); read.textContent = t('tl_hover'); });
+    box.replaceChildren(el('h4', { text: t('tl_title') }), el('p', { class: 'muted small', text: t('tl_note') }), cv, read);
+  }
+  /** Competency record of the finished session (learner pseudonym, case, body, verified score, criteria, key action times). */
+  _recordData(rec) {
+    const ss = this.sim.session, p = this.sim.patient, sc = rec.sc, k = rec.tl ? keyActionTimes(rec.tl.events) : null;
+    return { app: 'Tidal Bedside Lab', learner: this._learner || '', case: rec.scen?.title || t('free_play'), scenarioId: this.sim.scenarioId, date: new Date().toISOString(),
+      patient: ss?.spec, durationS: p ? Math.round(p.t) : null, score: sc ? { pct: Math.round(sc.pct), grade: sc.grade, points: sc.total, max: sc.max } : null,
+      verified: !!rec.out.server?.verified, sessionId: ss?.id || null,
+      criteria: sc ? sc.items.map(i => ({ label: getLang() === 'fr' && CRITERION_FR[i.id] ? CRITERION_FR[i.id] : i.label, points: +i.points.toFixed(1), weight: i.weight, detail: i.detail })) : [],
+      keyActionsS: k };
+  }
+  exportRecord(rec) {
+    const d = this._recordData(rec), a = el('a', { href: URL.createObjectURL(new Blob([JSON.stringify(d, null, 1)], { type: 'application/json' })), download: `tidal-record-${(d.learner || 'learner').replace(/[^\w-]+/g, '_')}-${d.date.slice(0, 10)}.json` });
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  printRecord(rec) {
+    const d = this._recordData(rec), fmtT = (x) => (x == null ? '—' : mmss(x));
+    const sp = d.patient ? `${d.patient.sex === 'F' ? t('female') : t('male')}, ${d.patient.age} ${t('rec_years')}, ${d.patient.heightCm} cm, ${d.patient.weightKg} kg` : '';
+    const page = el('div', { class: 'printable' },
+      el('h1', { text: t('rec_title') }),
+      el('table', { class: 'rec-meta' }, ...[[t('rec_learner'), d.learner || '—'], [t('rec_case'), d.case], [t('rec_patient'), sp], [t('rec_date'), new Date(d.date).toLocaleString(getLang() === 'fr' ? 'fr-FR' : 'en-GB')], [t('rec_duration'), fmtT(d.durationS)],
+        [t('rec_score'), d.score ? `${d.score.pct} % · ${t('grade')} ${d.score.grade} (${d.score.points} / ${d.score.max})` : '—'], [t('rec_verified'), d.verified ? t('verified') : t('rec_not_verified')], [t('rec_session'), d.sessionId || '—']].map(([a, b]) => el('tr', {}, el('th', { text: a }), el('td', { text: b })))),
+      el('h2', { text: t('rec_criteria') }),
+      el('table', { class: 'rec-crit' }, el('tr', {}, el('th', { text: t('rec_criterion') }), el('th', { text: t('points') }), el('th', { text: t('rec_detail') })), ...d.criteria.map(c => el('tr', {}, el('td', { text: c.label }), el('td', { text: `${c.points} / ${c.weight}` }), el('td', { text: c.detail || '' })))),
+      el('h2', { text: t('rec_times') }),
+      el('table', { class: 'rec-crit' }, ...Object.entries(d.keyActionsS || {}).map(([k, v]) => el('tr', {}, el('td', { text: t('rec_k_' + k) }), el('td', { text: fmtT(v) })))),
+      el('p', { class: 'rec-foot', text: t('disclaimer') }));
+    document.body.append(page);
+    const done = () => { page.remove(); window.removeEventListener('afterprint', done); };
+    window.addEventListener('afterprint', done); window.print(); setTimeout(done, 60000);
   }
   hotspot(h) {
     if (!this.sim.patient || this.sim.finished || this.menuOpen) return;

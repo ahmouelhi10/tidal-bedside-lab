@@ -1,6 +1,6 @@
 # References
 
-Generated from `src/engine/references.js` by `npm run docs` - do not edit by hand. Total entries: 115.
+Generated from `src/engine/references.js` by `npm run docs` - do not edit by hand. Total entries: 117.
 
 Every engine constant that is not a pure convention carries a `REF <id>` tag in code, tests or docs; `tests/references.test.js` fails if a cited id is missing from the registry or an entry is never used. Status meanings:
 
@@ -87,12 +87,14 @@ Primary source or two concordant independent sources.
 | `barlam2016` | cited in code/tests | Barlam TF et al. Implementing an antibiotic stewardship program: guidelines by IDSA and SHEA. Clin Infect Dis 2016;62:e51 (read: preauthorisation and/or prospective audit and feedback; timely IV-to-oral transition; shortest effective duration; aminoglycoside PK monitoring; selective and cascade reporting) <https://academic.oup.com/cid/article/62/10/e51/2462846> |
 | `idsa_sab2026` | cited in code/tests | IDSA/ESCMID 2026 consensus statements on Staphylococcus aureus bacteremia, part 1 (page read: TTE in all adults with SAB; at least 2 sets of follow-up blood cultures 48 h after the first positive one; prompt removal of central venous catheters; 14 days for low-risk SAB without foci, counted from the day of blood culture clearance) <https://www.idsociety.org/practice-guideline/staphylococcus-aureus-bacteremia/> |
 
-## Secondary (38)
+## Secondary (40)
 
 Primary source not read in this project.
 
 | id | use | citation |
 |---|---|---|
+| `anesth_impedance1990` | cited in code/tests | Respiratory input impedance in anesthetized paralyzed patients. J Appl Physiol 1990 (PMID 2262456): total respiratory elastance 23.5 +/- 1.9 cmH2O/L under anaesthesia, 25.5 +/- 5.4 with paralysis; resistance ~2 cmH2O.s/L (values from the abstract) |
+| `pelosi1996` | cited in code/tests | Pelosi P, Croci M, Ravagnan I, Vicardi P, Gattinoni L. Total respiratory system, lung, and chest wall mechanics in sedated-paralyzed postoperative morbidly obese patients. Chest 1996;109:144 (PMID 8549177): lung compliance 55.3 vs 106.6 mL/cmH2O obese vs normal (abstract) |
 | `ardsnet2000` | cited in code/tests | ARDS Network. Ventilation with lower tidal volumes. N Engl J Med 2000;342:1301 (PBW formulas via LITFL; female constant 45.5 per original) |
 | `guyton_hall` | cited in code/tests | Guyton & Hall Textbook of Medical Physiology (body fluid compartments; venous return; Starling curve) |
 | `magder2012` | cited in code/tests | Magder S. Bench-to-bedside review: an approach to hemodynamic monitoring - Guyton at the bedside. Crit Care 2012 (stressed volume ~30%, Pms ~ 8 mmHg) |

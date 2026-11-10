@@ -14,12 +14,13 @@ import { Chest, Neck, SITES, fonaPlan } from './surgical.js';
 import { EtTube, SEGMENTS } from './ett.js';
 import { ABX, SAMPLE_KINDS, WARD_ORDERS } from './infection.js';
 import { Pericardium, ECHO_VIEWS, ECHO_MEASURES, ECHO_REPORT, echoState, measureTruth } from './echo.js';
+import { LAB_KINDS, TURNAROUND_S, sampleValues, flags as labFlags } from './labs.js';
 
 export const DT = 0.1;
 const AIRWAYS = { none: 1.0, chin_lift: 0.8, jaw_thrust: 0.9, opa: 0.9, sga: 0.95, ett: 1.0 };
 
 /** Every intervention accepted by Patient.dispatch(); the server validates replay logs against this list. */
-export const EVENT_TYPES = Object.freeze(['drug.bolus', 'bicarb.bolus', 'drug.infusion', 'drug.stop', 'fluid.bolus', 'blood.transfuse', 'bleed.set', 'bleed.control', 'order', 'airway.set', 'position.set', 'airway.intubate', 'vent.set', 'o2.mask', 'apox.set', 'monitor.attach', 'iv.access', 'nibp.cycle', 'cpr.start', 'cpr.stop', 'cpr.compress', 'cpr.switch', 'cpr.surface', 'defib.pads', 'defib.setEnergy', 'defib.mode', 'defib.charge', 'defib.shock', 'procedure.needle_decompression', 'procedure.chest_tube', 'procedure.cricothyroidotomy', 'exam.chest', 'exam.pocus', 'exam.neck', 'procedure.pericardiocentesis', 'procedure.pci', 'procedure.thrombolysis', 'procedure.treat_hyperkalemia', 'airway.tube_adjust', 'bronch.insert', 'bronch.suction', 'bronch.remove', 'thermal.device', 'thermal.cover', 'thermal.ambient', 'echo.view', 'echo.measure', 'echo.report', 'ward.advance', 'ward.sample', 'ward.rx.start', 'ward.rx.stop', 'ward.order', 'note']);
+export const EVENT_TYPES = Object.freeze(['drug.bolus', 'bicarb.bolus', 'drug.infusion', 'drug.stop', 'fluid.bolus', 'blood.transfuse', 'bleed.set', 'bleed.control', 'order', 'airway.set', 'position.set', 'airway.intubate', 'vent.set', 'o2.mask', 'apox.set', 'monitor.attach', 'iv.access', 'nibp.cycle', 'cpr.start', 'cpr.stop', 'cpr.compress', 'cpr.switch', 'cpr.surface', 'defib.pads', 'defib.setEnergy', 'defib.mode', 'defib.charge', 'defib.shock', 'procedure.needle_decompression', 'procedure.chest_tube', 'procedure.cricothyroidotomy', 'exam.chest', 'exam.pocus', 'exam.neck', 'procedure.pericardiocentesis', 'procedure.pci', 'procedure.thrombolysis', 'procedure.treat_hyperkalemia', 'airway.tube_adjust', 'bronch.insert', 'bronch.suction', 'bronch.remove', 'thermal.device', 'thermal.cover', 'thermal.ambient', 'echo.view', 'echo.measure', 'echo.report', 'ward.advance', 'ward.sample', 'ward.rx.start', 'ward.rx.stop', 'ward.order', 'lab.order', 'note']);
 
 const NUMERIC_EVENT_PARAMS = ['amount', 'rate', 'volumeL', 'minutes', 'mlPerMin', 'c', 'factor', 'energy', 'mEq', 'target', 'maxWatts', 'fio2', 'seal', 'eff', 'depth', 'needleMm', 'fr', 'depthCm', 'cm', 'quality', 'value', 'hours'];
 
@@ -85,6 +86,7 @@ function validateEventShape(ev) {
     case 'note': return typeof ev.text === 'string' && ev.text.length <= 300 ? null : 'invalid note';
     case 'ward.advance': return Number.isInteger(ev.hours) && ev.hours >= 1 && ev.hours <= 72 ? null : 'hours must be an integer in [1, 72]';
     case 'ward.sample': return SAMPLE_KINDS.includes(ev.kind) ? null : 'invalid sample';
+    case 'lab.order': return LAB_KINDS.includes(ev.kind) ? null : 'invalid laboratory test';
     case 'ward.rx.start': {
       if (typeof ev.drug !== 'string' || !Object.hasOwn(ABX, ev.drug)) return 'unknown antibiotic';
       if (!['iv', 'po'].includes(ev.route)) return 'route must be iv or po';
@@ -141,7 +143,7 @@ export class Patient {
     this.log = []; this.timeline = []; this.scenario = scenario;
     this.stimulus = 0; this.nibp = { sbp: null, dbp: null, t: null }; this.antiarr = 0;
     this.monitor = { hr: 72, spo2: 97, sbp: 114, dbp: 74, map: 87, etco2: 38, rr: 12, temp: 37, rhythm: 'NSR' };
-    this.shockLog = []; this.pendingEvents = []; this.notes = []; this.orders = []; this.bleedControlledAt = null;
+    this.shockLog = []; this.pendingEvents = []; this.notes = []; this.orders = []; this.labs = []; this.bleedControlledAt = null;
     this.bicarbMmol = 0; this.painIndex = 0; this.hrSmooth = 72; this.myoHypox = 0;   // progressive hypoxic myocardial depression 0..1 (design)
     if (scenario?.init) scenario.init(this);
     if (this.airway.device === 'ett' && !this.tube.placed) this.tube.place();   // a scenario that starts intubated has a well-placed tube
@@ -187,6 +189,11 @@ export class Patient {
       case 'blood.transfuse': this.vol.transfuse(ev.kind); return { ok: true };
       case 'bleed.set': this.vol.setBleed(ev.mlPerMin); return { ok: true };
       case 'bleed.control': this.vol.setBleed(0); this.bleedControlledAt = t; this.notes.push({ t, text: 'haemorrhage source controlled' }); return { ok: true };
+      case 'lab.order': {                              // the sample freezes the values now; the result is released after the turnaround
+        const rec = { id: this.labs.length + 1, kind: ev.kind, t, readyAt: +(t + TURNAROUND_S[ev.kind]).toFixed(1), values: sampleValues(ev.kind, this) };
+        rec.flags = labFlags(rec.values, this.spec.sex); this.labs.push(rec);
+        return { ok: true, id: rec.id, readyAt: rec.readyAt, willTakeS: TURNAROUND_S[ev.kind] };
+      }
       case 'order': { const rec = { t, what: ev.what, ...(ev.mg != null ? { mg: ev.mg } : {}) }; this.orders.push(rec); return { ok: true, result: this.scenario?.orderResult?.(ev.what, this) ?? null }; }
       case 'airway.set': {
         const d = ev.device; if (!(d in AIRWAYS)) return { ok: false };
@@ -480,6 +487,8 @@ export class Patient {
     m.rr = this.flags.capnography ? Math.round(this.resp.rr) : null;
     m.temp = this.flags.tempProbe ? +this.therm.tc.toFixed(1) : null;
   }
+  /** Laboratory results released by now (the learner sees nothing before the turnaround). */
+  labResults() { return this.labs.filter(l => l.readyAt <= this.t + 1e-9); }
   tick(steps = 1) { for (let i = 0; i < steps; i++) this._physio(); return this; }
   run(seconds) { return this.tick(Math.round(seconds / this.dt)); }
   /** pulse presence at carotid (palpable if SBP > ~60) */
