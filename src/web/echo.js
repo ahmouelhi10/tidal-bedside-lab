@@ -4,6 +4,7 @@
 // What reaches the patient record goes through engine events (echo.view / echo.measure / echo.report) so it replays and scores.
 import { t } from './i18n.js';
 import { echoState, ECHO_VIEWS, ECHO_REPORT } from '/engine/echo.js';
+import { makeResizable } from './resize.js';
 
 function el(tag, attrs = {}, ...kids) {
   const e = document.createElement(tag);
@@ -34,6 +35,10 @@ const DEPTH = { plax: 160, psax: 150, a4c: 170, subcostal: 190, ivc: 160 };
 /** What each step of the protocol records (measurement ids, see ECHO_MEASURES). */
 const STEP_MEASURES = { plax: ['lvef'], psax: [], a4c: ['tapse'], subcostal: ['effusion'], ivc: ['ivc_max', 'ivc_min'] };
 const CALIPER_TARGETS = ['lvedd', 'rv_basal', 'tapse', 'effusion', 'ivc_max', 'ivc_min'];
+/** Vital signs shown while scanning: monitor key, label, css colour class, change that counts as a trend over 60 s. */
+const VITALS = [['hr', 'HR', 'hr', 5], ['map', 'ec_bp', 'co', 5], ['spo2', 'SpO₂', 'sp', 2], ['rr', 'ec_rr', 'rr', 3], ['etco2', 'EtCO₂', 'co', 3], ['temp', 'T°', '', 0.3]];
+const LAB_SHOW = { abg: ['ph', 'paco2', 'pao2', 'lactate', 'k', 'ica', 'glucose'], lactate: ['lactate'], chem: ['na', 'k', 'glucose'], cbc: ['hb', 'hct'] };
+const LAB_LABEL = { ph: 'pH', paco2: 'PaCO₂', pao2: 'PaO₂', lactate: 'Lact', na: 'Na⁺', k: 'K⁺', ica: 'Ca²⁺', glucose: 'Glu', hb: 'Hb', hct: 'Hct' };
 
 /** Cardiac cycle: LV size factor (1 = end-diastole at the R wave, 0 = end-systole). */
 function lvFill(ph) {
@@ -259,6 +264,9 @@ export class EchoLab {
     if (this.open) return; const p = this.sim.patient; if (!p) return;
     this.open = true; this.probe = null; this.rot = 0; this.tilt = 0; this.frozen = false; this.cine = []; this.cineAt = 0; this.cal = []; this.calOn = null;
     this.mmode = null; this.sniffT = -9; this.ph = 0; this.rph = 0; this.tick = 0; this.steady = 0; this.lastSaved = null;
+    this.vitHist = []; this.vitBase = null; this._ptAt = -1;
+    if (this.ui.panelOpen) this.ui.closePanel();                                  // the echo window needs the chest in view: close the action panel and the briefing
+    if (this.ui.dom?.card) this.ui.dom.card.hidden = true;
     this._build();
     this.img = new EchoImage(this.dom.canvas, this.dom.mcanvas);
     this._hs = this.scene.onHotspot; this.scene.onHotspot = null;                  // clicks on the patient place the probe instead
@@ -272,7 +280,7 @@ export class EchoLab {
     this.open = false; cancelAnimationFrame(this._raf); window.removeEventListener('keydown', this._key, true);
     const c = this.scene.canvas; c?.removeEventListener('pointerdown', this._pd); c?.removeEventListener('pointermove', this._pm); c?.removeEventListener('pointerup', this._pu);
     this.scene.onHotspot = this._hs; this.scene.echoProbe = null;
-    this.dom.root.remove(); this.dom = null; this.scene.setCamera?.('default');
+    this.rz?.dispose(); this.dom.root.remove(); this.dom = null; this.scene.setCamera?.('default');
   }
 
   /** acoustic windows on this patient's chest, from the GLB landmarks */
@@ -438,7 +446,7 @@ export class EchoLab {
       ['meas', t('ec_tab_meas'), el('div', { class: 'ec-measp' }, el('p', { class: 'small muted', text: t('ec_cal_help') }), el('div', { class: 'ec-row' }, el('span', { class: 'small', text: t('ec_cal') }), d.calVal), el('div', { class: 'ec-chips' }, ...d.calBtns),
         el('div', { class: 'ec-row' }, el('span', { class: 'small', text: t('ec_ef_eye') }), d.ef, d.efV), B('ec-chip', t('ec_ef_rec'), () => this._record('lvef', Number(d.ef.value))), el('h4', { text: t('ec_recorded') }), d.meas,
         el('details', { class: 'small muted' }, el('summary', { text: t('ec_norms') }), el('ul', {}, ...['ec_n_ef', 'ec_n_tapse', 'ec_n_rv', 'ec_n_ivc', 'ec_n_vent'].map(k => el('li', { text: t(k) })))))],
-      ['rep', t('ec_tab_rep'), d.report]];
+      ['rep', t('ec_tab_rep'), d.report], ['pt', t('ec_tab_pt'), d.pt = el('div', { class: 'ec-ptab' })]];
     d.tabBtns = tabs.map(([k, label]) => B('ec-tab', label, () => this._tab(k)));
     d.tabBodies = Object.fromEntries(tabs.map(([k, , body]) => [k, el('div', { class: 'ec-tabbody', hidden: k !== 'proto' }, body)]));
     d.root = el('div', { class: 'echo', role: 'dialog', 'aria-label': t('ec_title') },
@@ -451,6 +459,7 @@ export class EchoLab {
         el('div', { class: 'ec-side' }, el('div', { class: 'ec-tabs', role: 'tablist' }, ...d.tabBtns), ...Object.values(d.tabBodies))),
       el('footer', { class: 'br-foot small muted', text: t('ec_hint') }));
     document.body.append(d.root);
+    this.rz = makeResizable(d.root, { edge: 'left', key: 'tbl.echoWidth', min: 380, max: () => window.innerWidth - 140, label: t('rz_label') });
     this._tab('proto'); this._steps(); this._measList(); this._calText();
     this._key = (e) => {
       if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
@@ -460,7 +469,7 @@ export class EchoLab {
     };
     window.addEventListener('keydown', this._key, true);
   }
-  _tab(k) { this.dom.tabBtns.forEach((b, i) => b.classList.toggle('on', ['proto', 'meas', 'rep'][i] === k)); for (const [n, b] of Object.entries(this.dom.tabBodies)) b.hidden = n !== k; }
+  _tab(k) { this.dom.tabBtns.forEach((b, i) => b.classList.toggle('on', ['proto', 'meas', 'rep', 'pt'][i] === k)); for (const [n, b] of Object.entries(this.dom.tabBodies)) b.hidden = n !== k; if (k === 'pt') this._ptAt = -1; }
   _steps() {
     const p = this.sim.patient, L = this.dom?.steps; if (!L || !p) return;
     const saved = new Set(p.echo.views.filter(v => v.quality >= 0.7).map(v => v.view)), meas = new Set(p.echo.measures.map(m => m.what));
@@ -482,15 +491,47 @@ export class EchoLab {
     const r = this.ui.act(ev, t('ec_r_saved'));
     if (r && r.ok !== false) { d.repOut.replaceChildren(el('span', { text: t('ec_r_done') + ' ' }), el('button', { class: 'ghost', onclick: () => { this.stop(); this.ui.onFinish?.(); }, text: t('ec_finish') })); this._steps(); }
   }
+  /** monitor values now, and the trend over the last minute of simulated time */
+  _vitals(p) {
+    const m = p.monitor, now = { hr: m.hr, map: m.map, sbp: m.sbp, dbp: m.dbp, spo2: m.spo2, rr: m.rr, etco2: m.etco2, temp: m.temp };
+    const h = this.vitHist; if (!h.length || p.t - h[h.length - 1].t >= 1) { h.push({ t: p.t, ...now }); if (h.length > 90) h.shift(); }
+    if (!this.vitBase && Object.values(now).some(v => v != null)) this.vitBase = { t: p.t, ...now };
+    const old = h.find(x => p.t - x.t <= 60) || h[0];
+    const trend = (k, thr) => { const a = old?.[k], b = now[k]; if (a == null || b == null || p.t - old.t < 20) return ''; return b - a >= thr ? '↑' : a - b >= thr ? '↓' : ''; };
+    return { now, trend };
+  }
+  _vitText(k, v) { return v[k] == null ? '--' : k === 'map' ? `${v.sbp}/${v.dbp}` : k === 'spo2' ? v[k] + '%' : String(v[k]); }
   _hud(p) {
-    const m = p.monitor, f = (v, u = '') => (v == null ? '--' : v + u);
-    const chips = [['HR', f(m.hr), 'hr'], ['SpO₂', f(m.spo2, '%'), 'sp'], [t('ec_bp'), m.sbp == null ? '--' : `${m.sbp}/${m.dbp}`, 'co']];
-    if (!this.dom.vitEls) this.dom.vitEls = chips.map(([k, , c]) => { const v = el('b'); this.dom.vit.append(el('span', { class: 'br-v ' + c }, el('i', { text: k }), v)); return v; });
-    chips.forEach(([, v], i) => { this.dom.vitEls[i].textContent = v; });
+    const { now, trend } = this._vitals(p);
+    if (!this.dom.vitEls) this.dom.vitEls = VITALS.map(([, k, c]) => { const v = el('b'), a = el('em'); this.dom.vit.append(el('span', { class: 'br-v ' + c }, el('i', { text: k.startsWith('ec_') ? t(k) : k }), v, a)); return { v, a }; });
+    VITALS.forEach(([key, , , thr], i) => { const e = this.dom.vitEls[i], tr = trend(key, thr); e.v.textContent = this._vitText(key, now); e.a.textContent = tr; e.a.className = tr ? 'tr' : ''; e.v.parentElement.hidden = now[key] == null && key !== 'hr' && key !== 'map' && key !== 'spo2'; });   // unmonitored extras stay out of the header
+    if (!this.dom.tabBodies.pt.hidden && Math.floor(p.t) !== this._ptAt) { this._ptAt = Math.floor(p.t); this._patient(p, now); }
     const a = this.cur || { q: 0 }, q = this.frozen ? (this.cine[this.cineAt]?.q ?? 0) : a.q;
     this.dom.qual.firstChild.style.width = `${Math.round(q * 100)}%`; this.dom.qual.classList.toggle('ok', q >= 0.7);
     this.dom.viewName.textContent = !this.probe ? t('ec_place') : q >= 0.5 && a.view ? `${t('ec_v_' + a.view)} · ${Math.round(q * 100)} %` : q > 0.1 ? t('ec_adjust', { q: Math.round(q * 100) }) : t('ec_no_window');
     this.dom.rotV.textContent = `${Math.round(this.rot)}°`; this.dom.tiltV.textContent = `${this.tilt}°`;
+  }
+  /** Patient tab: the case, the body, vital signs since the echo started, and the latest laboratory results. */
+  _patient(p, now) {
+    const box = this.dom.pt, mm = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
+    const kids = [];
+    const cs = this.ui.caseText?.(); if (cs) kids.push(el('div', { class: 'ec-case' }, el('b', { text: cs.title }), el('p', { class: 'small', text: cs.summary })));
+    const sp = p.spec; kids.push(el('p', { class: 'small muted', text: `${t(sp.sex === 'F' ? 'ec_pt_f' : 'ec_pt_m')} · ${sp.age} ${t('ec_pt_y')} · ${sp.heightCm} cm · ${sp.weightKg} kg · BMI ${p.body.bmi.toFixed(1)}` }));
+    const b = this.vitBase, row = ([key, label, , thr]) => {
+      const a = b ? this._vitText(key, b) : '--', n = this._vitText(key, now), d = b && b[key] != null && now[key] != null ? now[key] - b[key] : 0, up = Math.abs(d) >= thr ? Math.sign(d) : 0;   // only changes beyond the trend threshold are marked
+      return el('tr', {}, el('td', { text: label.startsWith('ec_') ? t(label) : label }), el('td', { class: 'muted', text: a }), el('td', { class: up ? 'chg' : '', text: n + (up > 0 ? ' ↑' : up < 0 ? ' ↓' : '') }));
+    };
+    kids.push(el('h4', { text: t('ec_pt_vitals') }), el('table', { class: 'ec-pt' }, el('thead', {}, el('tr', {}, el('th'), el('th', { text: b ? `${t('ec_pt_start')} (${mm(b.t)})` : t('ec_pt_start') }), el('th', { text: `${t('ec_pt_now')} (${mm(p.t)})` }))), el('tbody', {}, ...VITALS.map(row))));
+    if (Object.values(now).every(v => v == null)) kids.push(el('p', { class: 'small warn', text: t('ec_pt_nomon') }));
+    kids.push(el('h4', { text: t('ec_pt_labs') }));
+    const done = p.labResults(), last = {}; for (const l of done) last[l.kind] = l;
+    const pending = p.labs.filter(l => l.readyAt > p.t);
+    for (const l of Object.values(last)) kids.push(el('div', { class: 'ec-lab' }, el('span', { class: 'small muted', text: `${t('lab_' + l.kind)} · ${mm(l.t)}` }),
+      el('div', { class: 'ec-labv' }, ...LAB_SHOW[l.kind].filter(k => k in l.values).map(k => el('span', { class: l.flags[k] === 'H' ? 'hi' : l.flags[k] === 'L' ? 'lo' : '' }, el('i', { text: LAB_LABEL[k] }), `${l.values[k]}${l.flags[k] === 'H' ? '↑' : l.flags[k] === 'L' ? '↓' : ''}`)))));
+    for (const l of pending) kids.push(el('div', { class: 'small muted', text: `⏳ ${t('lab_' + l.kind)} · ${mm(l.readyAt - p.t)}` }));
+    if (!done.length && !pending.length) kids.push(el('p', { class: 'small muted', text: t('ec_pt_nolab') }));
+    kids.push(el('div', { class: 'ec-chips' }, ...['abg', 'chem', 'lactate', 'cbc'].map(k => el('button', { class: 'ec-chip', onclick: () => { this.ui.act({ type: 'lab.order', kind: k }, t('lab_' + k)); this._ptAt = -1; }, text: '+ ' + t('lab_' + k) }))));
+    box.replaceChildren(...kids);
   }
   _ecg() {
     const c = this.dom.ecg, x = c.getContext('2d'), dpr = Math.min(2, window.devicePixelRatio || 1), W = Math.round(c.clientWidth * dpr), H = Math.round(c.clientHeight * dpr);

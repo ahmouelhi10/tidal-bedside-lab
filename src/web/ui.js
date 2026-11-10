@@ -16,6 +16,7 @@ import { mechanics, waveAt } from '/engine/mechanics.js';
 import { LAB_KINDS, RANGES as LAB_RANGES } from '/engine/labs.js';
 import { SCENARIOS } from '/engine/scenarios.js';
 import { buildTimeline, keyActionTimes } from '/engine/timeline.js';
+import { makeResizable } from './resize.js';
 import { AREAS, loadProgress, recordProgress, clearProgress, levelOf, profileOf, achievementsOf } from './progress.js';
 
 /** Skills training: the case each procedure is practised on (the condition that makes the procedure meaningful). */
@@ -355,7 +356,10 @@ export class UI {
     this.dom.panel = el('div', { class: 'panel' });
     this.dom.panelWrap = el('section', { class: 'hud-panel', hidden: true }, el('div', { class: 'phead' }, this.dom.panelTitle, el('button', { class: 'x', 'aria-label': t('panel_close'), title: t('panel_close'), onclick: () => this.closePanel(), text: '×' })), this.dom.panel);
     L.append(this.dom.card, this.dom.panelWrap);
+    this.rzLeft = makeResizable(L, { edge: 'right', key: 'tbl.panelWidth', min: 280, max: () => Math.min(760, window.innerWidth * 0.6), label: t('rz_label'), host: this.dom.panelWrap });   // the action panel can be widened from its right edge
   }
+  /** title and summary of the running case, for windows that show it (the echo window) */
+  caseText() { const sc = this.scenarios.find(s => s.id === this.sim.scenarioId); return sc ? scenarioText(sc) : null; }
   buildSetup() {
     const S = this.dom.setup; S.replaceChildren();
     const sel = el('select', { id: 'selScenario', hidden: true, 'aria-hidden': 'true', onchange: () => { this.syncSpecInputs(); this.showScenarioInfo(); this.markCards(); } },
