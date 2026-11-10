@@ -90,10 +90,10 @@ export const IV_TRANSIT_S = 15;
  * `kind` drives the effect mapping in DrugSystem.effects().
  */
 export const DRUGS = {
-  propofol:       { name: 'Propofol', unit: 'mg', concUnit: 'ug/mL', ref: 'eleveld2018', kind: 'hypnotic', c50: 3.08, gamma: 2.5, ventC50: 2.0, ventGamma: 3, ventEmax: 0.97, hemoC50: 2.0, hemoGamma: 3 },
+  propofol:       { name: 'Propofol', unit: 'mg', concUnit: 'ug/mL', ref: 'eleveld2018', kind: 'hypnotic', c50: 3.08, gamma: 2.5, ventC50: 1.16, ventGamma: 3, ventEmax: 0.97, hemoC50: 2.0, hemoGamma: 3 },   // ventC50 fitted to REF nieuwenhuijs2003: Ce 1 ug/mL depresses ventilation at a fixed PetCO2 of 55 mmHg by 44.3 +/- 3.9 % (gamma / Emax stay design)
   etomidate:      { name: 'Etomidate', unit: 'mg', concUnit: 'ug/mL', ref: 'opentiva', kind: 'hypnotic', c50: 0.40, gamma: 2.5, ventC50: 0.5, ventGamma: 3, ventEmax: 0.3, hemoC50: 0.5, hemoGamma: 2, hemoSvr: 0.05, hemoInot: 0.0 },
   ketamine:       { name: 'Ketamine', unit: 'mg', concUnit: 'ug/mL', ref: 'opentiva', kind: 'hypnotic', c50: 1.5, gamma: 3, ventC50: 3.0, ventGamma: 2, ventEmax: 0.15, symp: true },
-  midazolam:      { name: 'Midazolam', unit: 'mg', concUnit: 'ug/mL', ref: 'opentiva', kind: 'hypnotic', c50: 0.30, gamma: 2.5, ventC50: 0.35, ventGamma: 2, ventEmax: 0.5, hemoC50: 0.4, hemoGamma: 2, hemoSvr: 0.10, hemoInot: 0.0, emax: 0.8 },
+  midazolam:      { name: 'Midazolam', unit: 'mg', concUnit: 'ug/mL', ref: 'opentiva', kind: 'hypnotic', c50: 0.58, gamma: 2.5, ventC50: 0.35, ventGamma: 2, ventEmax: 0.8, hemoC50: 0.4, hemoGamma: 2, hemoSvr: 0.10, hemoInot: 0.0, emax: 0.8 },   // hypnotic c50 REF design, calibrated with the age term in effects() to REF label_midazolam (IV induction in 2-2.5 min without premedication); ventEmax fitted to REF forster1980 / REF gross1991 (0.13-0.15 mg/kg lowers the CO2-response slope 29-33 %)
   dexmedetomidine:{ name: 'Dexmedetomidine', unit: 'mcg', concUnit: 'ng/mL', ref: 'opentiva', kind: 'hypnotic', c50: 3.0, gamma: 2, emax: 0.45, ventC50: 3, ventGamma: 2, ventEmax: 0.1, brady: 0.25, bradyC50: 0.6 },
   remifentanil:   { name: 'Remifentanil', unit: 'mcg', concUnit: 'ng/mL', ref: 'minto1997', kind: 'opioid', c50: 2.0, gamma: 2, ventC50: 0.92, ventGamma: 2, ventEmax: 0.98, brady: 0.25, svrDrop: 0.10 },
   fentanyl:       { name: 'Fentanyl', unit: 'mcg', concUnit: 'ng/mL', ref: 'opentiva', kind: 'opioid', c50: 2.0, gamma: 2, ventC50: 1.3, ventGamma: 2, ventEmax: 0.98, brady: 0.15, svrDrop: 0.05 },
@@ -198,6 +198,7 @@ export class DrugSystem {
       const c = m.ce;
       if (d.kind === 'hypnotic') {
         let c50 = d.c50; if (k === 'propofol') c50 = 3.08 * Math.exp(-0.00635 * (age - 35)) * syn;   // REF eleveld2018 Ce50(age)
+        else if (k === 'midazolam') c50 = d.c50 * Math.exp(-0.012 * (age - 35));   // age sensitivity, REF design: the Albrecht kinetics alone give an older patient a LOWER effect-site concentration, while the label says older patients need less drug (REF label_midazolam)
         const emax = d.emax ?? 1; I += emax * Math.pow(c / c50, d.gamma);
         const v = d.ventEmax * PD(c, d.ventC50, d.ventGamma);
         slopeRes *= 1 - v; shift += 5 * v; hypoxRes *= 1 - 0.9 * v;

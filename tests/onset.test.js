@@ -92,3 +92,58 @@ test('drugs in transit are part of the replay state: stateHash sees them and rep
   assert.equal(r.stateHash(), a.stateHash());
   a.run(15); assert.equal(a.drugs.inTransit('phenylephrine'), 0); assert.ok(a.drugs.cp('phenylephrine') > 0, 'arrived after the transit');
 });
+
+// ---------------------------------------------------------------- hypnotic onset: ventilatory and sedative PD
+// The PD targets are the published measurements, not values read back from the code:
+//  - propofol 1 ug/mL steady state depresses ventilation at a fixed PetCO2 of 55 mmHg by 44.3 +/- 3.9 % (REF nieuwenhuijs2003);
+//  - midazolam 0.13-0.15 mg/kg IV lowers the CO2-response slope by 29 +/- 5 % (REF gross1991) to about 33 % (REF forster1980);
+//  - midazolam IV induction without premedication takes 2 to 2.5 min (REF label_midazolam).
+/** ventilation the respiratory model would produce at a fixed PaCO2, for a drug held at a steady effect-site concentration */
+function ventAt(drug, ce, pco2 = 55) {
+  const p = new Patient(SPEC, { seed: 1 });
+  p.drugs.model(drug); p.drugs.pk[drug].ce = ce; p.drugs.hemo[drug] = ce;
+  const e = p.drugs.effects({});
+  const V = (slope, shift) => 2.0 * slope * (pco2 - (36.75 + shift));   // the hypercapnic drive of src/engine/respiratory.js
+  return { rel: V(e.dep.slope, e.dep.shift) / V(1, 0), slope: e.dep.slope };
+}
+
+test('propofol ventilatory depression matches the published concentration-response (-44.3 +/- 3.9 % at 1 ug/mL)', () => {
+  const drop = (1 - ventAt('propofol', 1.0).rel) * 100;
+  assert.ok(drop >= 36 && drop <= 53, `ventilation at PetCO2 55 fell ${drop.toFixed(1)} % (published 44.3 +/- 3.9 %)`);
+  assert.ok(ventAt('propofol', 2.0).rel < ventAt('propofol', 1.0).rel, 'dose-dependent');
+});
+
+test('propofol induction dose: ventilation collapses 30-60 s after the bolus', () => {
+  for (const perKg of [2.0, 2.5]) {                            // the label induction range for a healthy adult
+    const p = new Patient(SPEC, { seed: 1 }); p.run(5);
+    const ve0 = p.resp.ve;
+    p.dispatch({ type: 'drug.bolus', drug: 'propofol', amount: perKg * SPEC.weightKg });
+    let at = null;
+    for (let s = 1; s <= 300 && at == null; s++) { p.run(1); if (p.resp.ve < 0.3 * ve0) at = s; }
+    assert.ok(at != null && at >= 20 && at <= 60, `${perKg} mg/kg: ventilation below 30 % of baseline at ${at} s`);
+  }
+});
+
+test('midazolam CO2-response depression matches the published slope fall (-29 to -33 % at 0.13-0.15 mg/kg)', () => {
+  const p = new Patient(SPEC, { seed: 1 }); p.run(5);
+  p.dispatch({ type: 'drug.bolus', drug: 'midazolam', amount: 0.14 * SPEC.weightKg });
+  let worst = 1;
+  for (let s = 1; s <= 900; s++) { p.run(1); worst = Math.min(worst, p.drugs.effects({}).dep.slope); }
+  const drop = (1 - worst) * 100;
+  assert.ok(drop >= 22 && drop <= 42, `CO2-response slope fell ${drop.toFixed(1)} % (published 29-33 %)`);
+});
+
+test('midazolam IV induction (0.3 mg/kg) takes 2-2.5 min, and a premedication dose does not induce', () => {
+  const loc = (spec, mgPerKg) => {
+    const p = new Patient(spec, { seed: 1 }); p.run(5);
+    p.dispatch({ type: 'drug.bolus', drug: 'midazolam', amount: +(mgPerKg * spec.weightKg).toFixed(1) });
+    for (let s = 1; s <= 900; s++) { p.run(1); if (p.drugs.effects({}).loc) return s; }
+    return null;
+  };
+  const young = loc(SPEC, 0.3);
+  assert.ok(young >= 105 && young <= 165, `induction at ${young} s (label 2-2.5 min)`);
+  assert.equal(loc(SPEC, 0.07), null, 'a premedication dose does not reach loss of consciousness');
+  for (const spec of [{ sex: 'F', age: 70, heightCm: 160, weightKg: 55 }, { sex: 'M', age: 85, heightCm: 170, weightKg: 60 }]) {
+    assert.ok(loc(spec, 0.3) != null, `an induction dose still induces at age ${spec.age}`);
+  }
+});

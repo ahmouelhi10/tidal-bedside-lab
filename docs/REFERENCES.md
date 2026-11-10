@@ -1,6 +1,6 @@
 # References
 
-Generated from `src/engine/references.js` by `npm run docs` - do not edit by hand. Total entries: 122.
+Generated from `src/engine/references.js` by `npm run docs` - do not edit by hand. Total entries: 125.
 
 Every engine constant that is not a pure convention carries a `REF <id>` tag in code, tests or docs; `tests/references.test.js` fails if a cited id is missing from the registry or an entry is never used. Status meanings:
 
@@ -8,7 +8,7 @@ Every engine constant that is not a pure convention carries a `REF <id>` tag in 
 - **SECONDARY** - taken from a review, a software library or a teaching page; the primary paper was not read.
 - **UNVERIFIED** - a design value or textbook recollection. A clinician or physiologist must review it before any educational claim relies on it (see VALIDATION.md).
 
-## Verified (72)
+## Verified (75)
 
 Primary source or two concordant independent sources.
 
@@ -55,7 +55,10 @@ Primary source or two concordant independent sources.
 | `label_atropine` | cited in code/tests | Atropine sulfate injection label (Pfizer) 12.2: maximum heart rate after IV administration (rapid constant infusion over 3 min) "delayed by 7 to 8 minutes after drug administration" <https://www.pfizermedical.com/atropine-sulfate/clinical-pharmacology> |
 | `label_epinephrine` | cited in code/tests | Adrenalin (epinephrine in sodium chloride) label 12.2: onset of blood pressure increase after an IV dose "< 5 minutes", offset "within 15 minutes"; 12.3 effective half-life < 5 min <https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=61b0e2a2-71ed-43d6-b1a7-36d2dae651b5> |
 | `label_phenylephrine` | cited in code/tests | Phenylephrine HCl injection label (Dr. Reddy's) 12.2: blood pressure increase after an IV bolus is "rapid" and "may persist for up to 20 minutes"; reflex bradycardia; 12.3 effective half-life about 5 min <https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=71b8fb8a-e13a-246f-f7b4-aa912b9ccd54> |
-| `label_midazolam` | background | Midazolam HCl injection label (Gland): IV sedation "within 3 to 5 minutes"; IV induction in 2 to 2.5 min without premedication (about 1.5 min with narcotic premedication) <https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=23f4df96-1151-4815-8f01-4d79e5aa2145> |
+| `nieuwenhuijs2003` | cited in code/tests | Nieuwenhuijs DJ et al. Response surface modeling of remifentanil-propofol interaction on cardiorespiratory control and bispectral index. Anesthesiology 2003;98:312 (22 volunteers, steady state: at 1 ug/mL propofol resting ventilation -12.6 +/- 3.3 %, ventilation at a fixed PetCO2 of 55 mmHg -44.3 +/- 3.9 %, blood pressure -9.9 +/- 1.8 %; abstract read, full text not retrieved) <https://pubmed.ncbi.nlm.nih.gov/12552187/> |
+| `forster1980` | cited in code/tests | Forster A, Gardaz JP, Suter PM, Gemperle M. Respiratory depression by midazolam and diazepam. Anesthesiology 1980;53:494 (8 volunteers: midazolam 0.15 mg/kg IV lowered the CO2-response slope from 2.1 +/- 0.2 to 1.4 +/- 0.1 L/min/torr, about -33 %; abstract read) <https://pubmed.ncbi.nlm.nih.gov/7457966/> |
+| `gross1991` | cited in code/tests | Gross JB, Weller RS, Conard P. Flumazenil antagonism of midazolam-induced ventilatory depression. Anesthesiology 1991;75:179 (12 volunteers, midazolam 0.13 +/- 0.01 mg/kg to unresponsiveness: CO2-response slope -29 +/- 5 %, minute ventilation at PetCO2 46 mmHg -28 +/- 4 %, tidal volume -44 +/- 4 %; abstract read) <https://pubmed.ncbi.nlm.nih.gov/1859005/> |
+| `label_midazolam` | cited in code/tests | Midazolam HCl injection label (Gland): IV sedation "within 3 to 5 minutes"; IV induction in 2 to 2.5 min without premedication (about 1.5 min with narcotic premedication) <https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=23f4df96-1151-4815-8f01-4d79e5aa2145> |
 | `aha2025_part7` | cited in code/tests | AHA 2025 Guidelines Part 7 Adult Basic Life Support (rate 100-120, depth >=5 cm <=6 cm, CCF >=60%, 30:2) <https://cpr.heart.org/en/resuscitation-science/cpr-and-ecc-guidelines/adult-basic-life-support> |
 | `aha2025_part9` | cited in code/tests | AHA 2025 Guidelines Part 9 Adult Advanced Life Support (epinephrine 1 mg q3-5 min; amiodarone 300/150; lidocaine 1-1.5/0.5-0.75 mg/kg; vasopressin, routine calcium and bicarbonate Class 3) <https://cpr.heart.org/en/resuscitation-science/cpr-and-ecc-guidelines/adult-advanced-life-support> |
 | `aha2025_part11` | cited in code/tests | AHA 2025 Guidelines Part 11 Post-Cardiac Arrest Care (SpO2 90-98, PaCO2 35-45, MAP >=65, glucose 70-180, TTM >=36 h) <https://cpr.heart.org/en/resuscitation-science/cpr-and-ecc-guidelines/post-cardiac-arrest-care> |
