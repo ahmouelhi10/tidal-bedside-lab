@@ -14,6 +14,7 @@ import { Chest, Neck, SITES, fonaPlan } from './surgical.js';
 import { EtTube, SEGMENTS } from './ett.js';
 import { ABX, SAMPLE_KINDS, WARD_ORDERS } from './infection.js';
 import { Pericardium, ECHO_VIEWS, ECHO_MEASURES, ECHO_REPORT, echoState, measureTruth } from './echo.js';
+import { Electrolytes } from './electrolytes.js';
 import { LAB_KINDS, TURNAROUND_S, sampleValues, flags as labFlags } from './labs.js';
 
 export const DT = 0.1;
@@ -145,7 +146,9 @@ export class Patient {
     this.monitor = { hr: 72, spo2: 97, sbp: 114, dbp: 74, map: 87, etco2: 38, rr: 12, temp: 37, rhythm: 'NSR' };
     this.shockLog = []; this.pendingEvents = []; this.notes = []; this.orders = []; this.labs = []; this.bleedControlledAt = null;
     this.bicarbMmol = 0; this.painIndex = 0; this.hrSmooth = 72; this.myoHypox = 0;   // progressive hypoxic myocardial depression 0..1 (design)
+    this.lytes = new Electrolytes(this.spec, this.body);   // K+, Na+, ionised Ca2+, glucose (reported; no feedback on the physiology yet)
     if (scenario?.init) scenario.init(this);
+    if (this.arrest.causes.hyperkalemia && this.spec.potassium == null) this.lytes.kBase = Math.max(this.lytes.kBase, 7.4);
     if (this.airway.device === 'ett' && !this.tube.placed) this.tube.place();   // a scenario that starts intubated has a well-placed tube
     this.flags0 = { ...this.flags };                   // what the scenario had already in place at t = 0 (scoring credits it; not part of the state hash)
     if (scenario?.timeline) this.timeline = scenario.timeline.map(x => ({ ...x, done: false }));
@@ -180,13 +183,14 @@ export class Patient {
         if (ev.drug === 'adenosine') this._adenosine(ev.amount);
         if (ev.drug === 'naloxone' && ev.amount >= 200) this.arrest.fixCause('toxins');        // opioid reversal is effective at >= 0.2 mg IV (design)
         if (ev.drug === 'amiodarone' || ev.drug === 'lidocaine') this.antiarr = Math.min(1, this.antiarr + (ev.drug === 'amiodarone' ? 0.5 : 0.35));
+        if (ev.drug === 'succinylcholine') this.lytes.succinylcholine(ev.amount / this.body.weightKg);
         this.drugs.bolus(ev.drug, ev.amount, t); return { ok: true };
       }
       case 'bicarb.bolus': this.bicarbMmol += ev.mEq / (0.5 * this.body.weightKg); this.drugs.log.push({ t, key: 'sodiumBicarbonate', amount: ev.mEq }); return { ok: true };
       case 'drug.infusion': this.drugs.infusion(ev.drug, ev.rate); return { ok: true };
       case 'drug.stop': this.drugs.stop(ev.drug); return { ok: true };
       case 'fluid.bolus': this.vol.startInfusion(ev.volumeL, ev.minutes ?? 15, 'crystalloid'); return { ok: true };
-      case 'blood.transfuse': this.vol.transfuse(ev.kind); return { ok: true };
+      case 'blood.transfuse': this.vol.transfuse(ev.kind); this.lytes.transfuse(); return { ok: true };
       case 'bleed.set': this.vol.setBleed(ev.mlPerMin); return { ok: true };
       case 'bleed.control': this.vol.setBleed(0); this.bleedControlledAt = t; this.notes.push({ t, text: 'haemorrhage source controlled' }); return { ok: true };
       case 'lab.order': {                              // the sample freezes the values now; the result is released after the turnaround
@@ -234,7 +238,7 @@ export class Patient {
       case 'echo.report': { const { type, ...r } = ev; this.echo.reports.push({ t, ...r, state: echoState(this) }); return { ok: true }; }
       case 'procedure.pci': this.arrest.fixCause('coronary_thrombosis'); this.notes.push({ t, text: 'reperfusion' }); return { ok: true };
       case 'procedure.thrombolysis': this.arrest.fixCause('pulmonary_embolism'); this.arrest.fixCause('coronary_thrombosis'); return { ok: true };
-      case 'procedure.treat_hyperkalemia': this.arrest.fixCause('hyperkalemia'); return { ok: true };
+      case 'procedure.treat_hyperkalemia': this.arrest.fixCause('hyperkalemia'); this.lytes.insulinGlucose(); return { ok: true };
       case 'thermal.device': this.therm.setDevice(ev.target == null ? null : { targetC: ev.target, maxWatts: ev.maxWatts ?? 300 }); return { ok: true };
       case 'thermal.cover': this.therm.cover = ev.factor; return { ok: true };
       case 'thermal.ambient': this.therm.setAmbient(ev.c); return { ok: true };
@@ -469,6 +473,7 @@ export class Patient {
       const r = this.arrest.step(dt, { cpp: this.circ.cpp, epi: this.drugs.cp('epinephrine'), t, spo2True: this.resp.sao2, map: this.circ.mapArt });
       if (r === 'ROSC') this._rosc();
     }
+    this.lytes.step(dt, { hco3: this.resp.hco3, cacl2: this.drugs.cp('calciumChloride'), coreC: this.therm.tc });
     this._monitor();
     if (!this.warming && this.scenario?.track) this.scenario.track(this);
     this.n++;
@@ -503,6 +508,7 @@ export class Patient {
       spo2True: +(r.sao2 * 100).toFixed(1), spo2: +r.spo2.toFixed(1), pao2: +r.pao2.toFixed(1), paco2: +r.paco2.toFixed(1), etco2: +r.etco2.toFixed(1), ph: +r.pH.toFixed(3), hco3: +r.hco3.toFixed(1), lactate: +r.lactate.toFixed(2),
       rr: +r.rr.toFixed(1), ve: +r.ve.toFixed(2), shunt: +r.shunt.toFixed(3),
       bloodVolume: +v.bloodVolume.toFixed(3), fractionLost: +v.fractionLost.toFixed(4), hct: +v.hct.toFixed(3), hb: +v.hb.toFixed(2),
+      k: +this.lytes.k.toFixed(2), na: +this.lytes.na.toFixed(1), ica: +this.lytes.ica.toFixed(2), glucose: +this.lytes.glucose.toFixed(1),
       core: +this.therm.tc.toFixed(2), periph: +this.therm.tp.toFixed(2),
       readiness: +this.arrest.readiness.toFixed(3), vfAmp: +this.arrest.vfAmp.toFixed(3),
       chest: this.chest.snapshot(), fona: this.neck.fona ? this.neck.fona.kind + (this.neck.fona.displaced ? ' (displaced)' : '') : null,
@@ -512,7 +518,7 @@ export class Patient {
   /** FNV-1a over a quantised (6-decimal) state vector; used for replay verification. Coarse enough to tolerate last-ulp differences between JS engines. */
   stateHash() {
     const c = this.circ, r = this.resp, v = this.vol, th = this.therm;
-    const vec = [this.n, c.hr, c.sbp, c.dbp, c.mapArt, c.rap, c.co, c.x.hr, c.x.svr, r.sao2, r.paco2, r.pv, r.vO2, r.vN2, r.cv, r.lactate, v.vp, v.rbc, v.vi, th.tc, th.tp, this.arrest.readiness, this.arrest.vfAmp, this.myoHypox, this.rng.state, this.chest.air, this.chest.pip, this.chest.leak, this.neck.palpable ? 1 : 0, this.neck.marked ? 1 : 0, this.neck.cannulaOk ? 1 : 0, this.rngS.state, ...this.tube.hashVec(), this.peri.volume, this.rvLoad, ...(this.ward ? this.ward.hashVec() : []), ...this.drugs.hashVec()];
+    const vec = [this.n, c.hr, c.sbp, c.dbp, c.mapArt, c.rap, c.co, c.x.hr, c.x.svr, r.sao2, r.paco2, r.pv, r.vO2, r.vN2, r.cv, r.lactate, v.vp, v.rbc, v.vi, th.tc, th.tp, this.arrest.readiness, this.arrest.vfAmp, this.myoHypox, this.rng.state, this.chest.air, this.chest.pip, this.chest.leak, this.neck.palpable ? 1 : 0, this.neck.marked ? 1 : 0, this.neck.cannulaOk ? 1 : 0, this.rngS.state, ...this.tube.hashVec(), this.peri.volume, this.rvLoad, ...(this.ward ? this.ward.hashVec() : []), ...this.drugs.hashVec(), ...this.lytes.hashVec()];
     for (const k of Object.keys(this.drugs.pk)) vec.push(...this.drugs.pk[k].a, this.drugs.pk[k].ce);
     let h = 0x811c9dc5;
     const s = vec.map(x => (Number.isFinite(x) ? x.toFixed(6) : 'NaN')).join('|') + '|' + this.arrest.key;

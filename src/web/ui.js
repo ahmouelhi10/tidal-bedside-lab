@@ -696,9 +696,9 @@ export class UI {
     const sig = `${p.labs.length}|${done.length}|${pending.map(l => Math.ceil(l.readyAt - p.t)).join(',')}`;
     if (sig === box.dataset.sig) return; box.dataset.sig = sig;
     const kids = pending.map(l => el('div', { class: 'lab-pend' }, el('span', { text: `⏳ ${t('lab_' + l.kind)} · ${t('lab_sampled')} ${mm(l.t)}` }), el('b', { text: mm(l.readyAt - p.t) })));
-    const rowsOf = { abg: ['ph', 'paco2', 'pao2', 'hco3', 'be', 'sao2', 'lactate', 'fio2'], lactate: ['lactate'], cbc: ['hb', 'hct'] };
-    const unit = { ph: '', paco2: 'mmHg', pao2: 'mmHg', hco3: 'mmol/L', be: 'mmol/L', sao2: '%', lactate: 'mmol/L', fio2: '', hb: 'g/dL', hct: '' };
-    const label = { ph: 'pH', paco2: 'PaCO₂', pao2: 'PaO₂', hco3: 'HCO₃⁻', be: t('lab_be'), sao2: 'SaO₂', lactate: t('lab_lact'), fio2: 'FiO₂', hb: 'Hb', hct: 'Hct' };
+    const rowsOf = { abg: ['ph', 'paco2', 'pao2', 'hco3', 'be', 'sao2', 'lactate', 'na', 'k', 'ica', 'glucose', 'fio2'], lactate: ['lactate'], chem: ['na', 'k', 'glucose'], cbc: ['hb', 'hct'] };
+    const unit = { ph: '', paco2: 'mmHg', pao2: 'mmHg', hco3: 'mmol/L', be: 'mmol/L', sao2: '%', lactate: 'mmol/L', na: 'mmol/L', k: 'mmol/L', ica: 'mmol/L', glucose: 'mmol/L', fio2: '', hb: 'g/dL', hct: '' };
+    const label = { ph: 'pH', paco2: 'PaCO₂', pao2: 'PaO₂', hco3: 'HCO₃⁻', be: t('lab_be'), sao2: 'SaO₂', lactate: t('lab_lact'), na: 'Na⁺', k: 'K⁺', ica: 'Ca²⁺ ' + t('lab_ion'), glucose: t('lab_glu'), fio2: 'FiO₂', hb: 'Hb', hct: 'Hct' };
     for (const kind of LAB_KINDS) {
       const cols = done.filter(l => l.kind === kind); if (!cols.length) continue;
       const sex = p.spec.sex === 'F' ? 'F' : 'M', rng = (k) => LAB_RANGES[k] || LAB_RANGES[`${k}_${sex}`];
