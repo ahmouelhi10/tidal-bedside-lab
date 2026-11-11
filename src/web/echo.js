@@ -459,7 +459,7 @@ export class EchoLab {
         el('div', { class: 'ec-side' }, el('div', { class: 'ec-tabs', role: 'tablist' }, ...d.tabBtns), ...Object.values(d.tabBodies))),
       el('footer', { class: 'br-foot small muted', text: t('ec_hint') }));
     document.body.append(d.root);
-    this.rz = makeResizable(d.root, { edge: 'left', key: 'tbl.echoWidth', min: 380, max: () => window.innerWidth - 140, label: t('rz_label') });
+    this.rz = makeResizable(d.root, { edge: 'left', key: 'tbl.echoWidth', min: 380, max: () => window.innerWidth - 140, label: t('rz_label'), minViewport: 900 });
     this._tab('proto'); this._steps(); this._measList(); this._calText();
     this._key = (e) => {
       if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;

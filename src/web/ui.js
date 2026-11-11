@@ -356,7 +356,7 @@ export class UI {
     this.dom.panel = el('div', { class: 'panel' });
     this.dom.panelWrap = el('section', { class: 'hud-panel', hidden: true }, el('div', { class: 'phead' }, this.dom.panelTitle, el('button', { class: 'x', 'aria-label': t('panel_close'), title: t('panel_close'), onclick: () => this.closePanel(), text: '×' })), this.dom.panel);
     L.append(this.dom.card, this.dom.panelWrap);
-    this.rzLeft = makeResizable(L, { edge: 'right', key: 'tbl.panelWidth', min: 280, max: () => Math.min(760, window.innerWidth * 0.6), label: t('rz_label'), host: this.dom.panelWrap });   // the action panel can be widened from its right edge
+    this.rzLeft = makeResizable(L, { edge: 'right', key: 'tbl.panelWidth', min: 280, max: () => Math.min(760, window.innerWidth * 0.6), label: t('rz_label'), host: this.dom.panelWrap, minViewport: 860 });   // the action panel can be widened from its right edge
   }
   /** title and summary of the running case, for windows that show it (the echo window) */
   caseText() { const sc = this.scenarios.find(s => s.id === this.sim.scenarioId); return sc ? scenarioText(sc) : null; }
@@ -489,7 +489,7 @@ export class UI {
     if (this.dom.hint) this.dom.hint.hidden = !this.dom.panelWrap.hidden || !this.sim.patient || this.menuOpen;   // the shortcut hint would sit under the open panel
     if (this.dom.panelWrap.hidden) return;
     this.dom.panelTitle.textContent = t(this.tab);
-    const P = this.dom.panel; P.replaceChildren();
+    const P = this.dom.panel; P.replaceChildren(); P.className = 'panel';   // a workspace (the infectiology ward) may have restyled the panel: start clean for every tab
     const b = this.sim.patient.body;
     queueMicrotask(() => stepify(P));
     ({ tab_guide: () => this.panelGuide(P), tab_drugs: () => this.panelDrugs(P, b), tab_fluids: () => this.panelFluids(P), tab_airway: () => this.panelAirway(P, b), tab_circ: () => this.panelCirc(P), tab_proc: () => this.panelProc(P), tab_orders: () => this.panelOrders(P), tab_ward: () => (this.wardView ??= new WardView(this)).render(P) })[this.tab]();

@@ -7,16 +7,18 @@ const save = (key, v) => { try { if (v == null) localStorage.removeItem(key); el
  * @param {HTMLElement} target the window whose width changes
  * @param {{edge: 'left'|'right', key: string, min: number, max: () => number, label: string, onChange?: () => void}} o
  *   edge: which side of the window carries the handle (a window docked on the right is resized from its left edge);
- *   host: the element that holds the handle (default: the window itself)
+ *   host: the element that holds the handle (default: the window itself); minViewport: window width at or below which the
+ *   stylesheet lays the window out as a full-width sheet, so the handle is hidden and the saved width is not applied
  * @returns {{handle: HTMLElement, apply: () => void, dispose: () => void}}
  */
-export function makeResizable(target, { edge, key, min, max, label, onChange, host = target }) {
+export function makeResizable(target, { edge, key, min, max, label, onChange, host = target, minViewport = 600 }) {
   const handle = document.createElement('div');
   handle.className = `rz rz-${edge}`; handle.tabIndex = 0;
   handle.setAttribute('role', 'separator'); handle.setAttribute('aria-orientation', 'vertical'); handle.setAttribute('aria-label', label); handle.title = label;
   let width = load(key);
-  const enabled = () => window.innerWidth > 600;                  // phones: panels are bottom sheets, widths come from the stylesheet
+  const enabled = () => window.innerWidth > minViewport;          // below the window's own breakpoint it is a full-width sheet: widths come from the stylesheet
   const apply = () => {
+    handle.hidden = !enabled();
     if (!enabled() || width == null) { target.style.width = ''; return; }
     width = Math.max(min, Math.min(max(), width));
     target.style.width = width + 'px';
