@@ -50,10 +50,10 @@ HS = importlib.import_module(MPFB + '.services.humanservice').HumanService
 MACRO = dict(gender=0.5, age=0.5, muscle=0.5, weight=0.5, proportions=0.5, height=0.5, cupsize=0.5, firmness=0.5,
              race=dict(asian=1 / 3, caucasian=1 / 3, african=1 / 3))
 CUT = 0.068           # m: the glove ends this far up the forearm from the wrist joint
-SLEEVE = (0.064, 0.100)   # m: gown sleeve hint from / to (up the forearm), starts under the glove cuff
-GLOVE_RGB = (0.042, 0.159, 0.686)      # #3a6fd8 in linear RGB
+SLEEVE = (0.064, 0.260)   # m: gown sleeve from / to (up the forearm), starts under the glove cuff; long enough that its end is out of frame
+GLOVE_RGB = (0.072, 0.180, 0.640)      # #4c75d1 in linear RGB: medical nitrile blue, a little less saturated
 SLEEVE_RGB = (0.36, 0.55, 0.68)        # pale blue gown cuff
-TRI_BUDGET = 2900                      # triangles per hand (glove + cuff + sleeve)
+TRI_BUDGET = 8000                      # triangles per hand (glove + cuff + sleeve): enough for knuckles and finger pads
 
 FINGERS = {'thumb': 'finger1', 'index': 'finger2', 'middle': 'finger3', 'ring': 'finger4', 'pinky': 'finger5'}
 
@@ -103,6 +103,14 @@ GRIPS = {
                                    'index': ('curl', [12, 12, 6], 0)},
                               post={'thumb': (0.024, 0.0, 0.238), 'index': (0.0035, 0.0065, 0.19)},
                               label='thumb and ring finger in the rings, index along the shank'),
+    'hand_stethoscope': dict(instrument='stethoscope', wrist=(26, 0), mode='frame', flat=True, p=(0, 0, 0.0165), q=(0.042, 0, 0), z=(0, 0, -1), x=(1, 0, 0),
+                             pre={'index': ('curl', [18, 30, 20], 6), 'middle': ('curl', [20, 32, 22], 0), 'ring': ('curl', [30, 45, 30], -6), 'pinky': ('curl', [40, 55, 35], -12)},
+                             post={'thumb': (-0.010, -0.019, 0.010)},
+                             label='palm over the chest piece, fingertips steadying the rim'),
+    'hand_usProbe': dict(instrument='usProbe', wrist=(12, 0), mode='frame', p=(0, 0, 0.078), q=(0.033, 0.0, 0.0175), z=(0, 1, 0), x=(0, 0, 1),
+                         pre={'index': ('curl', [52, 72, 42], 0), 'middle': ('curl', [56, 76, 44], 0), 'ring': ('curl', [58, 78, 46], 0), 'pinky': ('curl', [60, 80, 48], 0)},
+                         post={'thumb': (0.0, 0.0135, 0.085)},
+                         label='palmar grip around the body, lens below the little finger, thumb on the marked side'),
     'hand_syringe': dict(instrument='syringe', wrist=(10, 0), mode='frame', p=(0, 0, 0.0878), q=(0.072, 0.0095, 0.024), z=(-1, 0, -0.08), x=(0, 1, 0),
                          pre={'ring': CURLED, 'pinky': CURLED, 'index': ('curl', [30, 60, 40], 6), 'middle': ('curl', [30, 60, 40], -6)},
                          post={'index': (0.0125, 0.0, 0.0790), 'middle': (-0.0125, 0.0, 0.0790), 'thumb': (0.0, 0.0, 0.1445)},
@@ -373,18 +381,37 @@ def ring_mesh(bm, center, axis, radii, r, rseg=8):
 
 
 def sleeve_mesh(bm, c0, axis, radii0, flare, length):
-    """Gown sleeve: a short cloth tube up the forearm, slightly flared, closed by a flat end."""
+    """Gown sleeve up the forearm: a cloth tube that widens toward the elbow, with soft folds that drift along its length
+    (deterministic, no random numbers), ending in a gathered hem closed by a rounded end (it is usually out of frame)."""
     ax, e1, e2 = basis(axis)
+    NR = 12
     rings = []
-    for s_, k in ((0.0, 0.0), (length * 0.5, 0.5), (length, 1.0)):
-        rings.append([bm.verts.new(Vector(c0) + ax * s_ + (e1 * math.cos(2 * math.pi * i / SEG) + e2 * math.sin(2 * math.pi * i / SEG)) * (radii0[i] + flare * k))
-                      for i in range(SEG)])
-    for k in range(2):
+    for k in range(NR + 1):
+        u = k / NR
+        s_ = length * u
+        gather = 1.0 - 0.10 * max(0.0, (u - 0.9) / 0.1)                      # elastic hem pulls in at the end
+        ring = []
+        for i in range(SEG):
+            th = 2 * math.pi * i / SEG
+            fold = 0.0016 * math.sin(5 * th + 7.0 * u) * min(1.0, u * 4) + 0.0010 * math.sin(3 * th - 4.0 * u + 1.3)
+            r_ = (radii0[i] + flare * u + fold) * gather
+            ring.append(bm.verts.new(Vector(c0) + ax * s_ + (e1 * math.cos(th) + e2 * math.sin(th)) * r_))
+        rings.append(ring)
+    for k in range(NR):
         for i in range(SEG):
             bm.faces.new((rings[k][i], rings[k][(i + 1) % SEG], rings[k + 1][(i + 1) % SEG], rings[k + 1][i])).smooth = True
-    cap = bm.verts.new(sum((v.co for v in rings[2]), Vector()) / SEG)
+    # rounded end: two shrinking rings then a pole, instead of a flat disc
+    last = rings[-1]
+    c = sum((v.co for v in last), Vector()) / SEG
+    prev = last
+    for k, (dz, kr) in enumerate(((0.006, 0.78), (0.010, 0.42))):
+        ring = [bm.verts.new(c + (v.co - c) * kr + ax * dz) for v in last]
+        for i in range(SEG):
+            bm.faces.new((prev[i], prev[(i + 1) % SEG], ring[(i + 1) % SEG], ring[i])).smooth = True
+        prev = ring
+    cap = bm.verts.new(c + ax * 0.012)
     for i in range(SEG):
-        bm.faces.new((rings[2][i], rings[2][(i + 1) % SEG], cap)).smooth = False
+        bm.faces.new((prev[i], prev[(i + 1) % SEG], cap)).smooth = True
 
 
 def build_hand_object(name, human, rig, tmpl, orig, M, T, edges, mats):
@@ -425,7 +452,7 @@ def build_hand_object(name, human, rig, tmpl, orig, M, T, edges, mats):
     nglove = len(bm.faces)
     # rolled glove cuff (outermost), then the gown sleeve under it running up the forearm
     ring_mesh(bm, Vector(wr - f * CUT), Vector(-f), radii_at(-CUT + 0.003, 0.0012), 0.0022)
-    sleeve_mesh(bm, Vector(wr - f * SLEEVE[0]), Vector(-f), radii_at(-SLEEVE[0] + 0.002, 0.0008), 0.004, SLEEVE[1] - SLEEVE[0])
+    sleeve_mesh(bm, Vector(wr - f * SLEEVE[0]), Vector(-f), radii_at(-SLEEVE[0] + 0.002, 0.0015), 0.016, SLEEVE[1] - SLEEVE[0])   # forearm widens ~1.6 cm toward the elbow
     bm.faces.ensure_lookup_table()
     cuff_faces = SEG * 8
     for i, fc in enumerate(bm.faces):
@@ -465,7 +492,7 @@ def main():
     T = tri_idx(tmpl)
     e = np.array([ed.vertices[:] for ed in tmpl.edges], np.int64)
     edges = np.concatenate([e, e[:, ::-1]])
-    mats = {'glove': material('nitrile_glove', GLOVE_RGB, 0.32), 'sleeve': material('gown_sleeve', SLEEVE_RGB, 0.85)}
+    mats = {'glove': material('nitrile_glove', GLOVE_RGB, 0.55), 'sleeve': material('gown_sleeve', SLEEVE_RGB, 0.9)}   # nitrile is satin, not glossy
     hands, report = [], {}
     for name, g in GRIPS.items():
         M, errs = pose_grip(rig, g, d_palm)

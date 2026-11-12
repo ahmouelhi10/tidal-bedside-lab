@@ -29,7 +29,9 @@ export function morphWeights({ sex = 'M', age = 40, heightCm = 175, weightKg = 7
   return { female, heavy, thin, old, female_heavy: female * heavy, female_thin: female * thin, female_old: female * old, scale: H / meta.referenceHeight, bmiRef };
 }
 
-const MESHES = ['patient_body', 'patient_eyes', 'patient_eyebrows', 'patient_hair', 'patient_gown', 'patient_sheet'];
+// head assets come in a male set (hair, eyebrows) and a female set (hair_f, eyebrows_f); eyelashes are shared. The scene draws
+// the set that matches the patient's sex (weights.female), so the two faces no longer share hair and brows.
+const MESHES = ['patient_body', 'patient_eyes', 'patient_eyebrows', 'patient_hair', 'patient_eyebrows_f', 'patient_hair_f', 'patient_eyelashes', 'patient_gown', 'patient_sheet'];
 
 /** Blend the asset for a spec. Returns renderer-ready meshes (positions in asset space, metres) and blended landmarks. */
 export function buildGlbBody(asset, meta, spec, morph) {

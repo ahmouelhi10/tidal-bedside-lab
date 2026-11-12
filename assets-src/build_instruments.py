@@ -339,6 +339,109 @@ def bronchoscope():
                                     'tip': 'origin (distal lens)', 'axis': '+Y', 'length_m': 0.80})
 
 
+
+def loft(name, sections, material, seg=6, cap0=True, cap1=True):
+    """Smooth body through rounded-rectangle sections [(z, width x, depth y, corner radius)], all with the same vertex count."""
+    bm = bmesh.new()
+    rings = []
+    for z, w, h, r in sections:
+        r = min(r, w / 2 - 1e-4, h / 2 - 1e-4)
+        ring = []
+        for cx, cy, a0 in ((w / 2 - r, h / 2 - r, 0), (-w / 2 + r, h / 2 - r, 90), (-w / 2 + r, -h / 2 + r, 180), (w / 2 - r, -h / 2 + r, 270)):
+            for k in range(seg + 1):
+                a = math.radians(a0 + 90 * k / seg)
+                ring.append(bm.verts.new((cx + r * math.cos(a), cy + r * math.sin(a), z)))
+        rings.append(ring)
+    n = len(rings[0])
+    for i in range(len(rings) - 1):
+        for k in range(n):
+            bm.faces.new((rings[i][k], rings[i][(k + 1) % n], rings[i + 1][(k + 1) % n], rings[i + 1][k]))
+    if cap0:
+        bm.faces.new(list(reversed(rings[0])))
+    if cap1:
+        bm.faces.new(rings[-1])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    return new_obj(name, bm, material)
+
+
+def stethoscope():
+    """Adult dual-head stethoscope chest piece on the skin (diaphragm at the origin, +Y out of the chest), tubing rising
+    toward the clinician."""
+    memb = mat('steth_diaphragm', (0.80, 0.82, 0.84), rough=0.35)
+    P = [cyl('st_diaphragm', 0.0215, 0.0215, 0.0, 0.0012, memb, seg=32),
+         torus('st_rim', 0.0215, 0.0016, (0, 0, 0.0016), (0, 0, 1), STEEL(), seg=32, rseg=8),
+         cyl('st_body', 0.0215, 0.0175, 0.0012, 0.0095, STEEL(), seg=32),
+         cyl('st_bell', 0.0175, 0.0120, 0.0095, 0.0150, STEEL(), seg=32),
+         cyl('st_stem', 0.0040, 0.0035, 0.0150, 0.0300, STEEL(), seg=16),
+         tube_path('st_tubing', [(0, 0, 0.028), (0, 0, 0.045), (-0.010, 0, 0.065), (-0.040, 0, 0.085), (-0.09, 0, 0.11), (-0.16, 0, 0.13), (-0.24, 0, 0.14)],
+                   0.0045, BLACK(), seg=12)]
+    return join('stethoscope', P, {'label': 'adult stethoscope, diaphragm on the skin', 'tip': 'origin (diaphragm centre)', 'axis': '+Y', 'length_m': 0.24})
+
+
+def us_probe():
+    """Phased-array (cardiac) ultrasound probe: lens footprint 2.4 x 1.8 cm at the origin, body toward +Y, cable on top,
+    orientation mark on the +X side."""
+    shell = mat('probe_shell', (0.86, 0.87, 0.88), rough=0.35)
+    lens = mat('probe_lens', (0.10, 0.11, 0.12), rough=0.5)
+    P = [loft('pr_lens', [(0.0, 0.024, 0.018, 0.006), (0.004, 0.026, 0.020, 0.006)], lens),
+         loft('pr_body', [(0.004, 0.026, 0.020, 0.006), (0.030, 0.034, 0.025, 0.009), (0.060, 0.030, 0.023, 0.009), (0.085, 0.025, 0.020, 0.008),
+                          (0.110, 0.022, 0.019, 0.008), (0.128, 0.017, 0.016, 0.0075)], shell),
+         box('pr_mark', 0.0012, 0.006, 0.010, 0.0172, 0, 0.040, BLUE()),
+         cyl('pr_relief', 0.0065, 0.0045, 0.128, 0.160, BLACK(), seg=16),
+         tube_path('pr_cable', [(0, 0, 0.158), (0, 0, 0.20), (0, 0.004, 0.25), (0, 0.012, 0.30)], 0.0035, BLACK(), seg=10)]
+    return join('usProbe', P, {'label': 'phased-array ultrasound probe, lens on the skin, mark on +X', 'tip': 'origin (lens centre)', 'axis': '+Y', 'length_m': 0.16})
+
+
+def laryngoscope():
+    """Macintosh 3 laryngoscope: the blade tip at the origin, the curved blade running along +Y to the hinge, the knurled
+    handle at the hinge pointing along +X (the operator's grip), light near the tip."""
+    chrome = mat('chrome', (0.86, 0.87, 0.89), metal=1.0, rough=0.18)
+    knurl = mat('knurl', (0.62, 0.64, 0.67), metal=1.0, rough=0.45)
+    P = []
+    L, sag = 0.125, 0.014
+    xs = lambda z: -sag * 4 * (z / L) * (1 - z / L)                     # blade curve: concave toward -X (the tongue)
+    n = 14
+    for i in range(n):
+        z0, z1 = L * i / n, L * (i + 1) / n
+        zm = 0.5 * (z0 + z1)
+        w = 0.010 + 0.012 * min(1, zm / 0.04)                           # narrow, rounded tip; ~2.2 cm wide blade
+        ang = math.atan2(xs(z1) - xs(z0), z1 - z0)
+        b = box('ly_blade%d' % i, 0.0018, w, (z1 - z0) * 1.04, xs(zm), 0, zm, STEEL())
+        b.rotation_euler = (0, -ang, 0)
+        P.append(b)
+        if zm > 0.03:                                                   # vertical flange along the left edge
+            f = box('ly_flange%d' % i, 0.011, 0.0016, (z1 - z0) * 1.04, xs(zm) + 0.0055, -w / 2, zm, STEEL())
+            f.rotation_euler = (0, -ang, 0)
+            P.append(f)
+    P.append(torus('ly_tipbead', 0.0, 0.0022, (xs(0.002), 0, 0.002), (0, 1, 0), STEEL(), seg=8, rseg=8))
+    P.append(cyl('ly_light', 0.0022, 0.0022, 0.055, 0.062, mat('bulb', (1.0, 0.97, 0.85), rough=0.1), seg=10, x=xs(0.058) + 0.003, y=-0.006))
+    P.append(box('ly_hinge', 0.022, 0.016, 0.014, 0.004, 0, L + 0.004, chrome))
+    h = cyl('ly_handle', 0.0145, 0.0145, 0.0, 0.125, knurl, seg=24)
+    h.rotation_euler = (0, math.radians(90), 0)
+    h.location = (0.012, 0, L + 0.006)
+    P.append(h)
+    cap = cyl('ly_cap', 0.0150, 0.0130, 0.125, 0.132, chrome, seg=24)
+    cap.rotation_euler = (0, math.radians(90), 0)
+    cap.location = (0.012, 0, L + 0.006)
+    P.append(cap)
+    for o in P:                                                         # bake the transforms before joining
+        o.select_set(True)
+    with bpy.context.temp_override(selected_editable_objects=P, selected_objects=P, active_object=P[0]):
+        bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    return join('laryngoscope', P, {'label': 'Macintosh 3 laryngoscope', 'tip': 'origin (blade tip)', 'axis': '+Y along the blade, handle along +X', 'length_m': 0.135})
+
+
+def face_mask():
+    """Adult anaesthetic face mask: the cushion rim on the face at the origin, +Y away from the face, clear shell,
+    22 mm connector on top. The long axis of the rim (nasal bridge to chin) is +Z... in glTF: rim long axis along +X."""
+    cushion = mat('mask_cushion', (0.62, 0.80, 0.86), rough=0.3, alpha=0.75)
+    P = [torus('mk_cushion', 0.040, 0.0085, (0, 0, 0.0085), (0, 0, 1), cushion, seg=32, rseg=12, sx=1.28),
+         loft('mk_shell', [(0.010, 0.112, 0.088, 0.040), (0.026, 0.096, 0.074, 0.034), (0.042, 0.062, 0.050, 0.024), (0.052, 0.030, 0.028, 0.013)], CLEAR(),
+              seg=8, cap0=False, cap1=False),
+         cyl('mk_connector', 0.0112, 0.0112, 0.051, 0.074, mat('mask_connector', (0.92, 0.92, 0.9), rough=0.4), seg=24)]
+    return join('faceMask', P, {'label': 'adult anaesthetic face mask, cushion on the face', 'tip': 'origin (rim centre)', 'axis': '+Y', 'length_m': 0.074})
+
+
 # ----------------------------------------------------------------------------- main
 def main():
     bpy.context.preferences.filepaths.save_version = 0      # no .blend1 backups
@@ -347,7 +450,7 @@ def main():
     for _ in range(3):
         bpy.data.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
     objs = [syringe(), needle14(), scalpel(), bougie(), chest_drain(), forceps_gauze(), tourniquet(), iv_cannula(),
-            defib_pad('defibPadRight'), defib_pad('defibPadLeft'), bronchoscope()]
+            defib_pad('defibPadRight'), defib_pad('defibPadLeft'), bronchoscope(), stethoscope(), us_probe(), laryngoscope(), face_mask()]
     report = {}
     for o in objs:
         o.location = (0, 0, 0)
@@ -388,7 +491,8 @@ def render(objs):
     # lay the instruments flat on a tray: +Y (Blender Z) axis along the tray's +Y
     layout = {'bronchoscope': (-0.42, -0.45), 'bougie': (-0.30, -0.36), 'chestDrain': (-0.20, -0.3), 'forcepsGauze': (-0.08, -0.2),
               'scalpel': (0.02, -0.15), 'syringe': (0.10, -0.12), 'needle14G': (0.18, -0.12), 'ivCannula': (0.25, -0.1),
-              'tourniquet': (0.35, 0.05), 'defibPadRight': (0.30, -0.17), 'defibPadLeft': (0.47, -0.17)}
+              'tourniquet': (0.35, 0.05), 'defibPadRight': (0.30, -0.17), 'defibPadLeft': (0.47, -0.17),
+              'stethoscope': (0.42, 0.10), 'usProbe': (0.52, 0.08), 'laryngoscope': (0.60, 0.02), 'faceMask': (0.50, 0.22)}
     for o in objs:
         x, y = layout[o.name]
         if o.name.startswith('defibPad') or o.name == 'tourniquet':

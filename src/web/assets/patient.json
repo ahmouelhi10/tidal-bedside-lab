@@ -358,17 +358,29 @@
    "vertices": 448,
    "triangles": 810
   },
-  "patient_hair": {
-   "vertices": 1755,
-   "triangles": 3344
+  "patient_eyes": {
+   "vertices": 96,
+   "triangles": 172
   },
   "patient_eyebrows": {
    "vertices": 124,
    "triangles": 192
   },
-  "patient_eyes": {
-   "vertices": 96,
-   "triangles": 172
+  "patient_hair": {
+   "vertices": 1755,
+   "triangles": 3344
+  },
+  "patient_hair_f": {
+   "vertices": 925,
+   "triangles": 1134
+  },
+  "patient_eyebrows_f": {
+   "vertices": 124,
+   "triangles": 192
+  },
+  "patient_eyelashes": {
+   "vertices": 250,
+   "triangles": 368
   }
  },
  "macros": {
@@ -513,5 +525,5 @@
    -0.0
   ]
  },
- "triangles": 33640
+ "triangles": 35334
 }

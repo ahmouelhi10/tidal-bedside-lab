@@ -59,6 +59,13 @@ plantar-flexed 22°.
 | `patient_hair` | 3,344 | `hair`: 512 PNG, `alphaMode: MASK` (cutoff 0.5) | MakeHuman `short02` |
 | `patient_eyebrows` | 192 | `eyebrows`: 256 PNG, `alphaMode: BLEND` | MakeHuman `eyebrow001` |
 | `patient_eyes` | 172 | `eyes`: 256 JPEG | MakeHuman low-poly eyes, brown |
+| `patient_hair_f` | ~1,100 | `hair_f`: 512 PNG, `alphaMode: MASK` | MakeHuman `braid01`, hair pulled back; the braid's tail under the head and back (x < -0.20 m) is cut away because it is never visible |
+| `patient_eyebrows_f` | 192 | `eyebrows_f`: 256 PNG, `alphaMode: BLEND` | MakeHuman `eyebrow006` (finer, arched) |
+| `patient_eyelashes` | 368 | `eyelashes`: 256 PNG, `alphaMode: BLEND` | MakeHuman `eyelashes01`, both sexes |
+
+**Male and female heads:** `patient_hair` and `patient_eyebrows` are the male set, `patient_hair_f` and `patient_eyebrows_f`
+the female set; the app draws the set that matches `female` (0 or 1). `patient_albedo_female.jpg` (beside the GLB, 2048 JPEG,
+same UVs as `patient_body`) is the skin baked from MPFB's female textures at the same tone mix; the app swaps it in for a woman.
 
 Total: 33,640 triangles, 5.83 MB. Textures are embedded. There are no tangents (compute MikkTSpace if you need
 them) and no skin or animation. Indices are u16/u32 as the exporter chose.
@@ -163,17 +170,22 @@ landmark and rotate +Y to the approach direction (for pads, to the outward skin 
 | `ivCannula` | 18 G 45 mm cannula, green hub, wings, injection port | 9 cm |
 | `defibPadRight`, `defibPadLeft` | adult pads 12.4 × 9.4 cm, gel side faces -Y, lead toward +X | |
 | `bronchoscope` | 5.2 mm × 60 cm insertion tube, handle, thumb lever, umbilical cord | 80 cm |
+| `stethoscope` | chest piece (diaphragm at the origin, +Y out of the chest), stem and tubing running back | 24 cm |
+| `usProbe` | phased-array probe, 2.4 × 1.8 cm lens at the origin, orientation mark on +X, cable | 16 cm |
+| `laryngoscope` | Macintosh 3: blade tip at the origin, curved blade along +Y with flange and light, knurled handle along +X at the hinge | 13.5 cm |
+| `faceMask` | adult anaesthetic mask: cushion rim at the origin (long axis +X), clear shell, 22 mm connector along +Y | 7.4 cm |
 
 Total: 6,404 triangles, 0.21 MB. Materials are plain colours (no textures). Clear plastics use `alphaMode: BLEND`.
 
 ## hands.glb
 
-A gloved adult right hand per grip: 9 top-level mesh nodes, 2,900 triangles each (26,100 in all), 0.50 MB, no
-textures. Two materials: `nitrile_glove` (#3a6fd8, roughness 0.32) and `gown_sleeve` (pale blue). The hand is the
+A gloved adult right hand per grip: 11 top-level mesh nodes, about 4,700 triangles each, 0.7 MB, no textures. Two
+materials: `nitrile_glove` (#4c75d1, roughness 0.55: nitrile is satin) and `gown_sleeve` (pale blue). The app draws the glove
+with a nitrile shader (fine stipple, slight translucency) and the sleeve with the fabric shader. The hand is the
 MakeHuman/MPFB base-mesh right hand (sex-neutral adult, glove size about 7.5 to 8). It is posed with the MakeHuman
 default rig: fingers are curled, or driven by a small CCD IK onto contact points of the instrument. It is then frozen,
-smoothed (nails and skin creases removed), thickened 0.7 mm, and given a rolled glove cuff and a 3.6 cm hint of the
-gown sleeve. Both follow the forearm's own cross-section.
+smoothed (nails and skin creases removed), thickened 0.7 mm, and given a rolled glove cuff and a 20 cm gown sleeve with
+soft folds, widening toward the elbow and closed by a gathered, rounded hem (its end is normally out of frame). Both follow the forearm's own cross-section.
 
 **Frame: each hand is already placed in its instrument's frame** (metres, glTF +Y up), so draw it with exactly the
 instrument's model matrix. The instrument's origin is its working point and +Y points toward its handle (see
@@ -189,6 +201,8 @@ instruments.glb above). The node transform is identity.
 | `hand_chestDrain` | `chestDrain` | palmar (fist) grip around the tube 15 cm from the tip, thumb side toward the tip |
 | `hand_bougie` | `bougie` | pencil grip 12 cm from the tip |
 | `hand_defibPadRight` | `defibPadRight` | flat palm on the back of the pad, fingers spread toward the pad's -X (away from the lead) |
+| `hand_stethoscope` | `stethoscope` | palm over the chest piece, fingertips steadying the rim, tubing back between the fingers |
+| `hand_usProbe` | `usProbe` | palmar grip around the body, lens below the little finger, thumb on the marked side |
 | `hand_press` | its own | flat palm: origin = palm centre on the skin, +Y = back of the hand (outward normal), fingers along +X |
 
 The forearm leaves each hand at a natural angle: wrist extended 32 degrees for the flat-palm grips and 8 to 14

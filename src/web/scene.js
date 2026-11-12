@@ -179,6 +179,10 @@ export class Scene {
       const glb = parseGlb(buf), imgs = await decodeImages(glb), r = this.r, tex = {};
       const texFor = (mat, key) => { const i = glb.texImage(mat?.[key]?.index ?? mat?.pbrMetallicRoughness?.[key]?.index); return i != null && imgs[i] ? r.imageTexture(imgs[i]) : null; };
       for (const [name, m] of Object.entries(glb.meshes)) tex[name] = { albedo: texFor(m.material, 'baseColorTexture'), normal: m.material?.normalTexture ? texFor(m.material, 'normalTexture') : null };
+      // female skin (finer brows and lips on the same UVs), baked by assets-src/build_patient.py; optional
+      const fb = await fetch(base + 'patient_albedo_female.jpg').then(x => (x.ok ? x.blob() : null)).catch(() => null);
+      const fimg = fb && typeof createImageBitmap === 'function' ? await createImageBitmap(fb).catch(() => null) : null;
+      if (fimg) tex.patient_body_female = { albedo: r.imageTexture(fimg), normal: tex.patient_body?.normal };
       this.asset = { glb, meta, tex };
       if (this.body) this.setPatient(this.body.spec, this.tone);
       this.onAsset?.();
@@ -194,7 +198,7 @@ export class Scene {
       this.instruments = out;
       // gloved hands posed in each instrument's frame (assets/hands.glb, optional)
       const hb = await fetch(base + 'hands.glb').then(r => (r.ok ? r.arrayBuffer() : null)).catch(() => null);
-      if (hb) { const hg = parseGlb(hb), hands = {}; for (const [name, m] of Object.entries(hg.meshes)) hands[name] = m.prims.map(pr => { const f = pr.material?.pbrMetallicRoughness?.baseColorFactor || [0.23, 0.44, 0.85, 1]; return { g: this.r.upload({ pos: pr.pos, nrm: pr.nrm, w: new Float32Array(pr.pos.length / 3 * 2), idx: pr.idx }), color: f.slice(0, 3) }; }); this.hands = hands; }
+      if (hb) { const hg = parseGlb(hb), hands = {}; for (const [name, m] of Object.entries(hg.meshes)) hands[name] = m.prims.map(pr => { const f = pr.material?.pbrMetallicRoughness?.baseColorFactor || [0.23, 0.44, 0.85, 1], sleeve = /sleeve/i.test(pr.material?.name || ''); return { g: this.r.upload({ pos: pr.pos, nrm: pr.nrm, w: new Float32Array(pr.pos.length / 3 * 2), idx: pr.idx }), color: f.slice(0, 3), sleeve }; }); this.hands = hands; }
     } catch (e) { console.warn('instruments unavailable:', e && e.message); }
   }
   /** Ray-pick the realistic body's skin: { p, n, region } in world space, or null (also null with the procedural body). */
@@ -214,7 +218,8 @@ export class Scene {
     ex = vec3.norm(vec3.add(vec3.scale(ex, Math.cos(angle)), vec3.scale(ez0, Math.sin(angle)))); const ez = vec3.cross(ex, ey);
     const M = mat4.fromBasis(ex, ey, ez, p);
     const hand = opts.noHand ? null : this.hands?.['hand_' + name];             // the gloved hand holding it, same frame
-    if (hand) for (const pt of hand) this.r.draw(pt.g, M, { color: pt.color, spec: 0.55, pattern: 0 });
+    // nitrile glove (satin rubber, textured fingertips, a little translucent) and the cotton gown sleeve
+    if (hand) for (const pt of hand) this.r.draw(pt.g, M, pt.sleeve ? { color: pt.color, spec: 0.05, pattern: 5 } : { color: pt.color, spec: 0.32, pattern: 8 });
     for (const pt of parts) { if (opts.only && !opts.only.includes(pt.mat)) continue; if (opts.skip && opts.skip.includes(pt.mat)) continue; this.r.draw(pt.g, M, { color: pt.color, alpha: pt.alpha, spec: pt.metal > 0.5 ? 0.95 : 0.4, noShadow: pt.alpha < 0.9 }); }
   }
 
@@ -437,11 +442,13 @@ export class Scene {
       o.compDir = [0, 1, 0];                                   // the asset's anterior axis is +y (procedural body: +z)
       // the chest is exposed for anything done on it: pads, leads, CPR, chest procedures and examinations in progress
       const exposed = p.flags.padsOn || p.flags.ecgLeads || arrested || !!this.echoProbe || !!(p.chest && (p.chest.needle || p.chest.tube)) || this.gest.list.some(g => ['needle', 'tube', 'steth', 'probe', 'step_pads'].includes(g.k));
-      r.draw(B.g.body, M, { color: tint, spec: 0.3, pattern: 7, albedo: A('body').albedo, normalMap: A('body').normal, ...o });
+      const fem = (B.b.weights.female ?? 0) > 0.5, sx = (k) => (fem && B.g[k + '_f'] ? k + '_f' : k), skinT = fem && T.patient_body_female ? T.patient_body_female : A('body');
+      r.draw(B.g.body, M, { color: tint, spec: 0.3, pattern: 7, albedo: skinT.albedo, normalMap: skinT.normal, ...o });
       r.draw(B.g.eyes, M, { color: [1, 1, 1], spec: 0.9, pattern: 6, albedo: A('eyes').albedo, ...o });
-      r.draw(B.g.eyebrows, M, { color: [1, 1, 1], spec: 0.05, albedo: A('eyebrows').albedo, alphaCut: -1, cull: false, depthWrite: false, noShadow: true, ...o });
+      r.draw(B.g[sx('eyebrows')], M, { color: [1, 1, 1], spec: 0.05, albedo: A(sx('eyebrows')).albedo, alphaCut: -1, cull: false, depthWrite: false, noShadow: true, ...o });
+      if (B.g.eyelashes) r.draw(B.g.eyelashes, M, { color: [1, 1, 1], spec: 0.05, albedo: A('eyelashes').albedo, alphaCut: -1, cull: false, depthWrite: false, noShadow: true, ...o });
       const grey = Math.min(1, Math.max(0, (B.spec.age - 45) / 35));
-      r.draw(B.g.hair, M, { color: [1 + grey * 1.6, 1 + grey * 1.55, 1 + grey * 1.5], spec: 0.2, pattern: 4, albedo: A('hair').albedo, alphaCut: 0.5, cull: false, noShadow: true, ...o });
+      r.draw(B.g[sx('hair')], M, { color: [1 + grey * 1.6, 1 + grey * 1.55, 1 + grey * 1.5], spec: 0.2, pattern: 4, albedo: A(sx('hair')).albedo, alphaCut: 0.5, cull: false, noShadow: true, ...o });
       const infl = 0.004 + 0.016 * Math.min(1, B.b.weights.heavy + 0.5 * B.b.weights.female_heavy);   // heavier morphs need more clearance
       if (!exposed) r.draw(B.g.gown, M, { color: [0.36, 0.55, 0.66], spec: 0.05, pattern: 5, cull: false, inflate: infl, ...o });
       r.draw(B.g.sheet, M, { color: sheetCol, spec: 0.05, pattern: 5, cull: false, ...o });   // the draped sheet's normals are not consistently outward: no inflate

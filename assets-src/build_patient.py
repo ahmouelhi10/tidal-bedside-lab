@@ -32,6 +32,7 @@ REPO = os.path.dirname(HERE)
 ARGS = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
 OUT_GLB = os.path.join(REPO, 'src', 'web', 'assets', 'patient.glb')
 OUT_JSON = os.path.join(REPO, 'src', 'web', 'assets', 'patient.json')
+OUT_ALBEDO_F = os.path.join(REPO, 'src', 'web', 'assets', 'patient_albedo_female.jpg')
 OUT_BLEND = os.path.join(HERE, 'patient.blend')
 RENDER_DIR = os.path.join(HERE, 'renders')
 TMP = os.path.join(HERE, 'build-tmp')
@@ -81,7 +82,14 @@ ASSETS = [  # (object key, MPFB asset type, mhclo path)
     ('eyes', 'Eyes', os.path.join(UD, 'eyes', 'low-poly', 'low-poly.mhclo')),
     ('eyebrows', 'Eyebrows', os.path.join(UD, 'eyebrows', 'eyebrow001', 'eyebrow001.mhclo')),
     ('hair', 'Hair', os.path.join(UD, 'hair', 'short02', 'short02.mhclo')),
+    # female head: her own hair (pulled back in a braid, no fringe over the face), finer arched brows; eyelashes on both. The app shows the male or the
+    # female set by the `female` weight, so male and female faces no longer share hair and brows.
+    ('hair_f', 'Hair', os.path.join(UD, 'hair', 'braid01', 'braid01.mhclo')),
+    ('eyebrows_f', 'Eyebrows', os.path.join(UD, 'eyebrows', 'eyebrow006', 'eyebrow006.mhclo')),
+    ('eyelashes', 'Eyelashes', os.path.join(UD, 'eyelashes', 'eyelashes01', 'eyelashes01.mhclo')),
 ]
+HEAD_ASSETS = [a[0] for a in ASSETS]
+MALE_ONLY, FEMALE_ONLY = ('hair', 'eyebrows'), ('hair_f', 'eyebrows_f')
 # Pose (degrees). Standing frame while posing: +Z up, body faces -Y, patient's left = +X.
 POSE = dict(left_abduction=12.0, right_abduction=40.0, arm_extension=0.0,
             foot_plantarflexion=22.0, leg_external_rotation=8.0, leg_adduction=4.0)
@@ -460,6 +468,15 @@ def main():
             kb.data.foreach_set('co', keys[key].astype(np.float32).ravel())
             kb.slider_min, kb.slider_max = 0.0, 1.0
     bpy.context.view_layer.update()
+    # the braid's tail lies under the head and back on the mattress (x < -0.20 m, the nape down): never visible, so it is dropped
+    # (shape keys follow, bmesh keeps them); this keeps patient.glb within its download budget
+    hf = finals['hair_f']
+    bm = bmesh.new()
+    bm.from_mesh(hf.data)
+    bmesh.ops.delete(bm, geom=[v for v in bm.verts if v.co.x < -0.20], context='VERTS')
+    bm.to_mesh(hf.data)
+    bm.free()
+    log('hair_f trimmed to', len(hf.data.vertices), 'vertices')
 
     Pb = supine['body']['Basis']
     Nb = vnormals(Pb, T)
@@ -479,7 +496,7 @@ def main():
     G[G < 0.02] = 0
     Bc = region.astype(np.float64) / 10.0
     paint_color(body, np.stack([R, G, Bc], 1))
-    for obj in ('eyes', 'eyebrows', 'hair'):
+    for obj in HEAD_ASSETS:
         n = len(finals[obj].data.vertices)
         paint_color(finals[obj], np.tile([0.0, 0.0, REGIONS['head'] / 10.0], (n, 1)))
 
@@ -982,6 +999,35 @@ def bake_skin(body):
         m.node_tree.nodes.remove(n)
     save_image(albedo, os.path.join(TMP, 'patient_albedo.jpg'), 'JPEG', 88)
     save_image(normal, os.path.join(TMP, 'patient_normal.jpg'), 'JPEG', 92)
+    # female albedo: MPFB's female textures (softer brows and lips, finer skin) at the same tone mix and UVs
+    fl = bpy.data.images.load(os.path.join(UD, 'skins', 'young_caucasian_female', 'young_lightskinned_female_diffuse.png'))
+    fd = bpy.data.images.load(os.path.join(UD, 'skins', 'young_african_female', 'young_darkskinned_female_diffuse.png'))
+    for im in (fl, fd):
+        if tuple(im.size) != (TEX_SIZE, TEX_SIZE):
+            im.scale(TEX_SIZE, TEX_SIZE)
+    fl.pixels.foreach_get(a)
+    fd.pixels.foreach_get(b)
+    fmid = bpy.data.images.new('skin_midtone_female_src', TEX_SIZE, TEX_SIZE)
+    fmid.pixels.foreach_set(a * (1 - SKIN_TONE_MIX) + b * SKIN_TONE_MIX)
+    fmid.pack()
+    for m in body.data.materials:
+        for nt in node_trees(m.node_tree):
+            for n in nt.nodes:
+                if n.bl_idname == 'ShaderNodeTexImage' and n.name == 'DiffuseTexture':
+                    n.image = fmid
+    falb = bpy.data.images.new('patient_albedo_female', TEX_SIZE, TEX_SIZE)
+    nodes = []
+    for m in body.data.materials:
+        n = m.node_tree.nodes.new('ShaderNodeTexImage')
+        n.image = falb
+        m.node_tree.nodes.active = n
+        nodes.append((m, n))
+    bpy.ops.object.bake(use_clear=True, margin=16, type='DIFFUSE', pass_filter={'COLOR'})
+    for m, n in nodes:
+        m.node_tree.nodes.remove(n)
+    save_image(falb, os.path.join(TMP, 'patient_albedo_female.jpg'), 'JPEG', 88)
+    save_image(falb, OUT_ALBEDO_F, 'JPEG', 88)
+    log('baked female albedo', OUT_ALBEDO_F)
 
 
 def node_trees(nt, seen=None):
@@ -1062,11 +1108,17 @@ def make_materials(finals, gown, sheet):
     eye_t = load_resized(eye_png, os.path.join(TMP, 'eye_brown.jpg'), 'JPEG', (256, 256), 90)
     brow_t = load_resized(brow_png, os.path.join(TMP, 'eyebrow.png'), 'PNG', (256, 256))
     hair_t = load_resized(hair_png, os.path.join(TMP, 'hair_short.png'), 'PNG', (512, 512))
+    hairf_t = load_resized(os.path.join(UD, 'hair', 'braid01', 'braid01_diffuse.png'), os.path.join(TMP, 'hair_braid.png'), 'PNG', (512, 512))
+    browf_t = load_resized(os.path.join(UD, 'eyebrows', 'eyebrow006', 'eyebrow006.png'), os.path.join(TMP, 'eyebrow_f.png'), 'PNG', (256, 256))
+    lash_t = load_resized(os.path.join(UD, 'eyelashes', 'eyelashes01', 'eyelashes01.png'), os.path.join(TMP, 'eyelashes.png'), 'PNG', (256, 256))
     mats = {
         'body': principled('skin', tex=os.path.join(TMP, 'patient_albedo.jpg'), normal=os.path.join(TMP, 'patient_normal.jpg'), rough=0.55),
         'eyes': principled('eyes', tex=eye_t, rough=0.08),
         'eyebrows': principled('eyebrows', tex=brow_t, rough=0.8, alpha=True, double=True),
         'hair': principled('hair', tex=hair_t, rough=0.6, alpha=True, cutoff=0.5, double=True),
+        'hair_f': principled('hair_f', tex=hairf_t, rough=0.6, alpha=True, cutoff=0.5, double=True),
+        'eyebrows_f': principled('eyebrows_f', tex=browf_t, rough=0.8, alpha=True, double=True),
+        'eyelashes': principled('eyelashes', tex=lash_t, rough=0.8, alpha=True, double=True),
     }
     for k, m in mats.items():
         finals[k].data.materials.clear()
@@ -1082,10 +1134,11 @@ def make_materials(finals, gown, sheet):
 
 # ----------------------------------------------------------------------------- export
 def export_glb(meta):
-    names = ['patient_body', 'patient_gown', 'patient_sheet', 'patient_hair', 'patient_eyebrows', 'patient_eyes'] + list(meta['landmarks'])
+    meshes = ['patient_body', 'patient_gown', 'patient_sheet'] + ['patient_' + k for k in HEAD_ASSETS]
+    names = meshes + list(meta['landmarks'])
     for o in bpy.context.view_layer.objects:
         o.select_set(o.name in names)
-    for n in names[:6]:
+    for n in meshes:
         o = bpy.data.objects[n]
         me = o.data
         tris = sum(len(p.vertices) - 2 for p in me.polygons)
@@ -1216,7 +1269,7 @@ def renders(finals, gown, sheet, calib, lm):
     target = Vector((-H0 * 0.52, 0, 0.12))
     cam.location = Vector((-0.40, -3.15, 2.45))
     cam.rotation_euler = (target - cam.location).to_track_quat('-Z', 'Y').to_euler()
-    objs = [finals[k] for k in ('body', 'eyes', 'eyebrows', 'hair')] + [gown, sheet]
+    objs = [finals[k] for k in ['body'] + HEAD_ASSETS] + [gown, sheet]
     paths = []
     for sex, fem in (('male', 0.0), ('female', 1.0)):
         for bmi in (17, 25, 45):
@@ -1226,11 +1279,39 @@ def renders(finals, gown, sheet, calib, lm):
             for o in objs:
                 for k, v in vals.items():
                     o.data.shape_keys.key_blocks[k].value = v
+            for k in MALE_ONLY:
+                finals[k].hide_render = fem > 0.5
+            for k in FEMALE_ONLY:
+                finals[k].hide_render = fem <= 0.5
             p = os.path.join(RENDER_DIR, 'patient_%s_bmi%d.png' % (sex, bmi))
             sc.render.filepath = p
             bpy.ops.render.render(write_still=True)
             paths.append(p)
             log('render', p, {k: round(v, 3) for k, v in vals.items() if v})
+    # face close-ups, male and female at BMI 25, to check that the two faces read differently
+    head = Vector((-0.10, 0, 0.17))
+    cam.location = head + Vector((-0.28, -0.42, 0.30))
+    cam.rotation_euler = (head - cam.location).to_track_quat('-Z', 'Y').to_euler()
+    faces = []
+    for sex, fem in (('male', 0.0), ('female', 1.0)):
+        w = weights_for(calib, sex, 25)
+        vals = {'female': fem, 'heavy': w['heavy'], 'thin': w['thin'], 'old': 0.0, 'female_heavy': fem * w['heavy'], 'female_thin': fem * w['thin'], 'female_old': 0.0}
+        for o in objs:
+            for k, v in vals.items():
+                o.data.shape_keys.key_blocks[k].value = v
+        for k in MALE_ONLY:
+            finals[k].hide_render = fem > 0.5
+        for k in FEMALE_ONLY:
+            finals[k].hide_render = fem <= 0.5
+        p = os.path.join(RENDER_DIR, 'patient_face_%s.png' % sex)
+        sc.render.filepath = p
+        bpy.ops.render.render(write_still=True)
+        faces.append(p)
+        log('render', p)
+    for k in FEMALE_ONLY:
+        finals[k].hide_render = True
+    for k in MALE_ONLY:
+        finals[k].hide_render = False
     # landmark check render: basis body, gown hidden, small spheres at each landmark, top view
     for o in objs:
         for kb in o.data.shape_keys.key_blocks[1:]:

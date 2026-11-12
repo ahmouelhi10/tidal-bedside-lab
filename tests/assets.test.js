@@ -54,7 +54,13 @@ test('patient asset: size budget and expected content', { skip: !have && 'patien
   assert.ok(fs.statSync(glbPath).size < 6.5e6, 'patient.glb under 6.5 MB');
   assert.ok(fs.statSync(path.join(ASSETS, 'instruments.glb')).size < 1e6, 'instruments.glb under 1 MB');
   const g = parseGlb(ab(fs.readFileSync(glbPath)));
-  for (const k of ['patient_body', 'patient_gown', 'patient_sheet', 'patient_hair', 'patient_eyes']) assert.ok(g.meshes[k], k);
+  for (const k of ['patient_body', 'patient_gown', 'patient_sheet', 'patient_hair', 'patient_eyes', 'patient_hair_f', 'patient_eyebrows_f', 'patient_eyelashes']) assert.ok(g.meshes[k], k);   // male and female head sets
+  assert.ok(fs.existsSync(path.join(ASSETS, 'patient_albedo_female.jpg')), 'female skin albedo beside the GLB');
+  const ins = parseGlb(ab(fs.readFileSync(path.join(ASSETS, 'instruments.glb'))));
+  for (const k of ['stethoscope', 'usProbe', 'laryngoscope', 'faceMask']) assert.ok(ins.meshes[k], 'instrument ' + k);
+  const hands = parseGlb(ab(fs.readFileSync(path.join(ASSETS, 'hands.glb'))));
+  for (const k of ['hand_stethoscope', 'hand_usProbe']) assert.ok(hands.meshes[k], k);
+  assert.ok(fs.statSync(path.join(ASSETS, 'hands.glb')).size < 1.5e6, 'hands.glb under 1.5 MB');
   assert.deepEqual(g.meshes.patient_body.targetNames, ['female', 'heavy', 'thin', 'old', 'female_heavy', 'female_thin', 'female_old']);
   for (const k of ['face', 'airway', 'sternum', 'neck', 'rightArmIV', 'leftArm', 'abdomen', 'femoral', 'padRight', 'padLeft', 'R_mcl2', 'L_mal5']) assert.ok(g.nodes[k], 'landmark ' + k);
 });

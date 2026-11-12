@@ -123,23 +123,29 @@ export class Gestures {
     const f = g.f, lift = 0.1 * (1 - seg01(u, 0, 0.25)) + 0.1 * seg01(u, 0.8, 1) - 0.004 * Math.sin(Math.min(1, Math.max(0, (u - 0.3) / 0.45)) * Math.PI * 3);
     c.inst('press', add(f.p, f.n, lift), f.n, 0);
   }
-  _probe(c, g, u) {                                                            // ultrasound probe: dark rounded body, lens on the skin, sweeping
-    const f = g.f, side = this._tan(f, [0, 0, 1]), sw = Math.sin(u * Math.PI * 2.4);
-    const p = add(add(f.p, side, 0.06 * sw), f.n, 0.12 * (1 - seg01(u, 0, 0.18)) + 0.12 * seg01(u, 0.86, 1));
-    c.disc(add(f.p, f.n, 0.001), f.n, side, 0.03, 0.02, [0.7, 0.85, 0.95], { alpha: 0.35 * (1 - seg01(u, 0.86, 1)), spec: 1, noShadow: true });   // gel
-    c.seg(add(p, f.n, 0.004), add(p, f.n, 0.095), 0.016, [0.14, 0.15, 0.18], { spec: 0.5 }); c.seg(add(p, f.n, 0.095), add(add(p, f.n, 0.2), side, 0.05), 0.004, [0.1, 0.1, 0.12]);
+  _probe(c, g, u) {                                                            // phased-array probe in a palmar grip: lens on the gel, slow sweep and a fanning tilt
+    const f = g.f, side = this._tan(f, [0, 0, 1]), sw = Math.sin(seg01(u, 0.2, 0.84) * Math.PI * 2), fan = 0.22 * Math.sin(seg01(u, 0.2, 0.84) * Math.PI * 3);
+    const lift = 0.12 * (1 - seg01(u, 0, 0.2)) + 0.12 * seg01(u, 0.86, 1);
+    const p = add(add(f.p, side, 0.035 * sw), f.n, lift + 0.0015), axis = norm(add(f.n, side, fan));
+    c.disc(add(f.p, f.n, 0.001), f.n, side, 0.032, 0.022, [0.72, 0.86, 0.96], { alpha: 0.4 * (1 - seg01(u, 0.86, 1)), spec: 1, noShadow: true });   // gel
+    c.inst('usProbe', p, axis, 0);
   }
-  _steth(c, g, u) {                                                            // stethoscope chest piece moved between four listening points
+  _steth(c, g, u) {                                                            // stethoscope chest piece under the fingers, lifted and placed on four listening points
     const f = g.f, side = this._tan(f, [0, 0, 1]), along = this._tan(f, HEAD), pts = [[0.07, 0.08], [0.07, -0.08], [-0.05, 0.09], [-0.05, -0.09]];
-    const i = Math.min(3, Math.floor(u * 4)), s = u * 4 - i, P = pts[i], lift = s > 0.75 ? 0.04 * ease((s - 0.75) / 0.25) : 0;
-    const p = add(add(add(f.p, along, P[0]), side, P[1]), f.n, 0.004 + lift);
-    c.disc(p, f.n, along, 0.021, 0.006, [0.78, 0.8, 0.84], { spec: 1 }); c.seg(add(p, f.n, 0.006), add(add(p, f.n, 0.13), along, -0.06), 0.004, [0.1, 0.1, 0.12]);
+    const i = Math.min(3, Math.floor(u * 4)), s = u * 4 - i, P = pts[i], prev = pts[Math.max(0, i - 1)];
+    const move = ease(Math.min(1, s / 0.25)), arc = i > 0 && s < 0.25 ? 0.03 * Math.sin(move * Math.PI) : 0;   // travel in a small arc from the previous point
+    const at = [prev[0] + (P[0] - prev[0]) * move, prev[1] + (P[1] - prev[1]) * move];
+    const lead = i === 0 ? 0.12 * (1 - seg01(u, 0, 0.12)) : 0, out = i === 3 ? 0.12 * seg01(s, 0.7, 1) : 0, press = s > 0.3 && s < 0.85 ? -0.0015 : 0;
+    const p = add(add(add(f.p, along, at[0]), side, at[1]), f.n, 0.001 + arc + lead + out + press);
+    c.inst('stethoscope', p, f.n, 0);
   }
-  _laryn(c, g, u, t) {                                                         // Macintosh laryngoscope: steel blade, knurled handle, tube passed alongside
-    const sc = c.scene, a = sc.world.airway, inn = seg01(u, 0.08, 0.35) * (1 - seg01(u, 0.78, 0.95)), mouth = [a[0], a[1] + 0.02, a[2]];
-    const root = add(mouth, [0.24 - 0.17 * inn, 0.1 - 0.05 * inn, 0.04], 1);
-    c.seg(add(mouth, [0.02, 0.01, 0]), root, 0.006, [0.82, 0.84, 0.88], { spec: 1 }); c.seg(root, add(root, [0.1, 0.14, 0.02]), 0.014, [0.3, 0.32, 0.36], { spec: 0.6 });
-    if (u > 0.3 && u < 0.85) { const s = seg01(u, 0.3, 0.6), away = 0.22 * (1 - s); c.seg(add(mouth, [0.02 + away, 0.01 + away * 0.3, -0.01]), add(mouth, [0.16 + away, 0.05 + away * 0.3, -0.01]), 0.0075, [0.9, 0.95, 0.97], { alpha: 0.8, spec: 0.8 }); }
+  _laryn(c, g, u, t) {                                                         // Macintosh 3 laryngoscope: blade slid along the tongue, lifted along the handle axis, tube passed, withdrawn
+    const sc = c.scene, a = sc.world.airway, mouth = [a[0], a[1] + 0.01, a[2] - 0.006];
+    const blade = norm([0.52, 0.85, 0]), handle = norm([-0.85, 0.52, 0]);   // blade axis out of the mouth toward the head; handle up and toward the feet
+    const inn = seg01(u, 0.06, 0.32) * (1 - seg01(u, 0.82, 0.97)), lift = 0.012 * seg01(u, 0.32, 0.42) * (1 - seg01(u, 0.78, 0.84));
+    const tip = add(add(mouth, blade, 0.13 - 0.2 * inn), handle, lift);
+    c.inst('laryngoscope', tip, blade, Math.PI / 2);
+    if (u > 0.38 && u < 0.82) { const s = seg01(u, 0.38, 0.62), away = 0.22 * (1 - s); c.seg(add(mouth, [0.02 + away, 0.01 + away * 0.3, -0.012]), add(mouth, [0.16 + away, 0.05 + away * 0.3, -0.012]), 0.0075, [0.9, 0.95, 0.97], { alpha: 0.8, spec: 0.8 }); }
   }
   _swab(c, g, u, t) {                                                          // sponge forceps with iodine gauze, spiral outwards
     const f = g.f, a = this._tan(f, HEAD), b = this._tan(f, [0, 0, 1]), k = seg01(u, 0.2, 0.85), r = 0.004 + 0.03 * k, ang = u * Math.PI * 9;
@@ -152,9 +158,10 @@ export class Gestures {
     c.inst('scalpel', add(add(f.p, along, (s - 0.5) * 0.035), f.n, away - 0.004), norm(add(f.n, along, 0.9)), Math.PI / 2);
     if (u >= 0.25 && !g._m) { g._m = { kind: 'cut', p: f.p, n: f.n, tan: along, len: 0.035, t0: t, grow: g.dur * 0.5 }; this.marks.push(g._m); }
   }
-  _mask(c, g, u) {                                                             // anaesthetic face mask, seal held
-    const f = g.f, p = add(f.p, f.n, 0.04 + 0.12 * (1 - seg01(u, 0, 0.25)) + 0.12 * seg01(u, 0.85, 1));
-    c.blob(p, 0.07, 0.045, 0.062, [0.82, 0.9, 0.94], { alpha: 0.55, spec: 0.9, noShadow: true }); c.seg(add(p, [0.02, 0.04, 0]), add(p, [0.09, 0.08, 0]), 0.012, [0.32, 0.35, 0.4]);
+  _mask(c, g, u) {                                                             // anaesthetic face mask lowered over nose and mouth, rim along the face, seal held
+    const f = g.f, squeeze = u > 0.3 && u < 0.85 ? -0.002 * (0.5 + 0.5 * Math.sin((u - 0.3) * Math.PI * 6)) : 0;
+    const p = add(f.p, f.n, 0.006 + 0.12 * (1 - seg01(u, 0, 0.25)) + 0.12 * seg01(u, 0.85, 1) + squeeze);
+    c.inst('faceMask', p, f.n, Math.PI / 2);
   }
   _pads(c, g, u) {
     for (const [i, pad] of g.pads.entries()) {

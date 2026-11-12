@@ -105,6 +105,12 @@ void main(){
     base *= 0.97 + 0.03 * w; rough = 0.9; wrap = 0.25; spMul = 0.4;
   } else if (uPattern == 6) { // wet eye
     rough = 0.08; f0 = 0.06; spMul = 2.5;
+  } else if (uPattern == 8) { // nitrile glove: satin rubber, fine stipple (textured grip), thin enough to let a little light through
+    float fadeP = 1.0 - smoothstep(0.6, 2.4, dist);
+    vec3 st = vec3(vnoise(vWP * 1400.0), vnoise(vWP * 1400.0 + 13.1), vnoise(vWP * 1400.0 + 29.7)) - 0.5;
+    n = normalize(n + st * 0.05 * fadeP);
+    base *= 0.95 + 0.07 * vnoise(vWP * 60.0);
+    rough = 0.46; f0 = 0.035; wrap = 0.22; spMul = 0.8; sss = 0.35;
   }
   // key light: ceiling spot with a soft shadow
   vec3 toL = uLightPos - vWP; float ld = length(toL); vec3 L = toL / ld;
@@ -114,7 +120,7 @@ void main(){
   vec3 keyCol = vec3(1.0, 0.955, 0.90);
   float nl = dot(n, L), dif = max((nl + wrap) / (1.0 + wrap), 0.0);
   vec3 col = base * keyCol * dif * att * sh;
-  if (sss > 0.0) { float t = smoothstep(-0.35, 0.15, nl) * (1.0 - smoothstep(0.15, 0.65, nl)); col += base * vec3(0.95, 0.30, 0.18) * t * att * sh * 0.55; }
+  if (sss > 0.0) { float t = smoothstep(-0.35, 0.15, nl) * (1.0 - smoothstep(0.15, 0.65, nl)); col += base * (uPattern == 8 ? vec3(0.55, 0.6, 1.0) : vec3(0.95, 0.30, 0.18)) * t * att * sh * 0.55 * sss; }
   // panel lights (no shadow): the other two ceiling fixtures
   for (int i = 0; i < 2; i++) {
     vec3 lp = i == 0 ? vec3(-1.5, 2.95, -0.8) : vec3(-1.2, 2.95, 1.7);
