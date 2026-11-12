@@ -19,6 +19,15 @@ function satFromContent(c, hb) {                       // true SaO2 and virtual 
   return 0.5 * (lo + hi);
 }
 
+/** Low-flow lactate production: starts when cardiac output falls below 90 % of resting and is full at 55 % (mmol/L/min). REF design */
+const LACT_FLOW_ONSET = 0.9, LACT_FLOW_FULL = 0.55, LACT_FLOW_RATE = 0.55;
+
+/** COPD: chronic PaCO2 rise at full severity (mmHg) and the matching renal HCO3 retention (mmol/L). REF design, textbook */
+const COPD_PACO2_RISE = 16, COPD_HCO3 = 0.35 * COPD_PACO2_RISE;
+/** Respiratory compensation of metabolic acidosis: fall in apnoeic threshold per mmol/L HCO3 deficit (calibrated to Winter's formula). REF albert1967 */
+const WINTER_SLOPE = 1.4;
+const smoothstep = (a, b, x) => { const u = clamp((x - a) / (b - a), 0, 1); return u * u * (3 - 2 * u); };
+
 export class Respiratory {
   constructor(body, opt = {}) {
     this.body = body;
@@ -37,8 +46,13 @@ export class Respiratory {
     this.vdAnat = 2.2 * body.pbw;                                                       // mL, Radford (textbook, UNVERIFIED)
     this.n2Cap = ((0.0118 * (body.tbw) + 0.067 * (body.fatMass / 0.9)) / 760) * 1000;    // mL/mmHg tissue N2 capacitance (solubility-based)
     this.cb = 1.05 * (body.lbm + 0.2 * body.fatMass);                                   // mL CO2 / mmHg body store (calibrated to ~3.4 mmHg/min apnea slope)
+    this.copd = 0;
     this.reset(opt);
   }
+  /** Chronic obstructive pulmonary disease, severity 0..1: more dead space and V/Q mismatch, chronic CO2 retention with a blunted
+   *  CO2 response and renal compensation, and a hypoxic drive that matters more (REF gold2024, textbook; sizes REF design). Starts
+   *  the patient at the chronic PaCO2. */
+  setCopd(sev) { this.copd = clamp(sev || 0, 0, 1); const d = COPD_PACO2_RISE * this.copd; this.paco2 += d; this.pv += d; }
   reset(opt = {}) {
     this.awakeTone = opt.anesthetized ? 0 : 1;
     const frc = this.frcSupine;
@@ -86,32 +100,45 @@ export class Respiratory {
     const dO2crit = 2.0 * vo2Want;                                                   // critical DO2 = 2 x VO2 (UNVERIFIED design; clinical critical DO2 ~4-8 mL/kg/min)
     const debt = Math.max((vo2Want - this.vo2Eff) / Math.max(vo2Want, 1), clamp((dO2crit - this.dO2) / dO2crit, 0, 1));
     // lactate (mmol/L): production when O2-limited, first-order clearance when perfused (all UNVERIFIED design values)
-    this.lactate = Math.max(0.6, this.lactate + (debt * 1.2 - (q > 1 ? 0.04 * (this.lactate - 1) * (1 - debt) : 0)) * dtm);
+    // regional (splanchnic, muscle) hypoperfusion makes lactate well before whole-body oxygen delivery is critical: lactate climbs
+    // with the fall in cardiac output (ATLS class III haemorrhage, 30-40 % loss: lactate ~3-6 mmol/L, REF mutschler2013; rate REF design)
+    const lowFlow = clamp((LACT_FLOW_ONSET - q / this.q0) / (LACT_FLOW_ONSET - LACT_FLOW_FULL), 0, 1);
+    const prod = debt * 1.2 + LACT_FLOW_RATE * lowFlow;
+    // production slows as lactate accumulates and the liver keeps clearing some even in shock (pre-arrest values rarely exceed ~15-20 mmol/L, REF textbook)
+    this.lactate = clamp(this.lactate + (prod * Math.max(0, 1 - this.lactate / 22) - (q > 1 ? 0.04 * (this.lactate - 1) * (1 - 0.7 * Math.max(debt, lowFlow)) : 0)) * dtm, 0.6, 25);
 
     // ---------- ventilation ----------
     const v = c.vent || { mode: 'spont' };
     let va = 0, rr = 0, vt = 0, fio2Raw = 0.21, seal = 1;
     const dep = c.dep || { slope: 1, shift: 0, hypoxic: 1 };
+    // COPD adds dead space; high oxygen in COPD releases hypoxic pulmonary vasoconstriction and adds a Haldane effect, which acts as
+    // more dead space (oxygen-induced hypercapnia, REF beasley2017_o2; size REF design); high-flow nasal oxygen washes out part of it
+    // an exacerbation (bronchospasm on COPD) adds dynamic hyperinflation and rapid shallow breathing: more dead space and a respiratory
+    // pump that cannot keep up (CO2 response blunted further), partly offset by pressure support (REF design; NIV evidence REF davidson2016_niv)
+    const exac = this.copd * clamp(c.br ?? 0, 0, 1) * (1 - Math.min(0.7, 0.05 * (c.niv?.ps ?? 0)));
+    const vd = this.vdAnat * (1 + 0.6 * this.copd + 0.9 * this.copd * smoothstep(70, 250, this.pao2) + 1.0 * exac) * (1 - (c.vdWash ?? 0));
     if (v.mode === 'ctrl') {
       rr = v.rate ?? 10; vt = v.vt ?? 450; fio2Raw = v.fio2 ?? 0.21; seal = v.seal ?? 1;
-      va = Math.max(0, rr * (vt - this.vdAnat)) * (v.efficiency ?? 1);
+      va = Math.max(0, rr * (vt - vd)) * (v.efficiency ?? 1);
       this.ve = rr * vt / 1000;
     } else if (v.mode === 'spont' && !c.paralyzed) {
       const hypox = Math.max(0, 70 - this.pao2Art());
-      const sCo2 = 2.0 * dep.slope * (this.vco2Rest / 196);                           // L/min/mmHg (hypercapnic response, UNVERIFIED)
-      const B = 36.75 + dep.shift;                                                   // apnoeic threshold (UNVERIFIED)
-      const ve = Math.max(0, sCo2 * (this.paco2 - B) + 0.25 * hypox * dep.hypoxic) * (this.awakeTone * 0.0 + 1);
+      const sCo2 = 2.0 * dep.slope * (this.vco2Rest / 196) * (1 - 0.5 * this.copd) * (1 - 0.7 * exac);   // L/min/mmHg (hypercapnic response, UNVERIFIED); blunted in COPD
+      // metabolic acidosis drives breathing: PaCO2 falls ~1.2-1.5 mmHg per mmol/L of lost HCO3 (Winter: 1.5 x HCO3 + 8, REF albert1967)
+      const metDeficit = Math.max(0, -(this.hco3Metab - COPD_HCO3 * this.copd));
+      const B = 36.75 + dep.shift + COPD_PACO2_RISE * this.copd - WINTER_SLOPE * metDeficit;   // apnoeic threshold (UNVERIFIED)
+      const ve = Math.max(0, sCo2 * (this.paco2 - B) + 0.25 * hypox * dep.hypoxic * (1 - 0.6 * exac)) * (this.awakeTone * 0.0 + 1);
       const patency = clamp(c.airwayPatency ?? 1, 0, 1);
-      rr = clamp(12 * Math.sqrt(Math.max(ve, 0.01) / 6.5), 0, 40);
+      rr = clamp(14 * Math.sqrt(Math.max(ve, 0.01) / (6.5 * this.vco2Rest / 196)), 0, 40);   // resting rate ~14/min whatever the body size (REF textbook: adult 12-20/min); scaled to the resting CO2 output
       this.drive = ve;
-      this.ve = ve * patency;
+      this.ve = ve * patency * (1 + 0.03 * (c.niv?.ps ?? 0));                         // pressure support adds tidal volume (REF design)
       vt = rr > 0 ? (this.ve * 1000) / Math.max(rr, 1) : 0;
-      va = Math.max(0, rr * (vt - this.vdAnat));
-      fio2Raw = c.o2 ? c.o2.fio2 : 0.21; seal = c.o2 ? (c.o2.seal ?? 0.85) : 0;
+      va = Math.max(0, rr * (vt - vd));
+      if (c.niv) { fio2Raw = c.niv.fio2; seal = c.niv.seal; } else { fio2Raw = c.o2 ? c.o2.fio2 : 0.21; seal = c.o2 ? (c.o2.seal ?? 0.85) : 0; }
     }
     va *= c.vaMult ?? 1;                                                              // pneumothorax: dead space and lost compliance (1 when absent)
     this.rr = v.mode === 'none' || (rr < 0.5) ? 0 : rr; this.vt = vt; this.vaNow = va;
-    const fio2Eff = 0.21 + (fio2Raw - 0.21) * (v.mode === 'ctrl' ? Math.max(seal, 0.95) : seal);
+    const fio2Eff = (0.21 + (fio2Raw - 0.21) * (v.mode === 'ctrl' ? Math.max(seal, 0.95) : seal)) * (1 - (c.o2Dilution ?? 0));   // nitrous oxide leaving the blood dilutes alveolar oxygen (diffusion hypoxia)
     this.fio2Eff = fio2Eff;
 
     // ---------- shunt and lung volume ----------
@@ -123,7 +150,7 @@ export class Respiratory {
     } else this.atel -= this.atel / 8 * dtm;
     this.atel = clamp(this.atel, 0, 1);
     const obes = clamp((this.body.bmi - 30) / 20, 0, 1);
-    this.shunt = clamp(this.shuntBase + this.atel * 0.065 * (1 + obes) + (c.shuntExtra ?? 0), 0.01, 0.8);
+    this.shunt = clamp(this.shuntBase + 0.04 * this.copd + 0.06 * this.copd * clamp(c.br ?? 0, 0, 1) + this.atel * 0.065 * (1 + obes) + (c.shuntExtra ?? 0), 0.01, 0.8);
     const frcBase = (c.anesthetized || c.paralyzed) ? this.frcAnesth : this.frcSupine;
     const vTarget = frcBase * 1000 * (1 + 0.02 * Math.min(peep, 15)) * (c.frcMult ?? 1);
 
@@ -186,7 +213,7 @@ export class Respiratory {
     this.sao2 = s; this.paO2virtual = sevInv(s);
     this.dO2 = q * 10 * ca;
     // acid-base
-    this.hco3Metab = -0.8 * (this.lactate - 1) + (c.bicarbMmol ?? 0);
+    this.hco3Metab = -0.8 * (this.lactate - 1) + (c.bicarbMmol ?? 0) + COPD_HCO3 * this.copd;   // chronic CO2 retention: renal HCO3 retention (~0.35 per mmHg, REF textbook)
     this.hco3 = clamp(24 + 0.1 * (this.paco2 - 40) + this.hco3Metab, 2, 60);
     this.pH = phHH(this.hco3, this.paco2);
     this.pao2 = this.paO2virtual / bohrShift(this.pH, this.paco2, T);

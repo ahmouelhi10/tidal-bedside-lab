@@ -1,6 +1,7 @@
 // Scripted "learners" used by the tests. They only use the public dispatch() API, exactly like the UI does.
 import { Patient } from '../../src/engine/patient.js';
 import { SCENARIOS } from '../../src/engine/scenarios.js';
+import { isShockable } from '../../src/engine/rhythm.js';
 
 export const mk = (spec = {}, opt = {}) => new Patient({ sex: 'M', age: 50, heightCm: 175, weightKg: 80, ...spec }, { seed: 1, ...opt });
 export const scen = (id, seed = 1, specOverride = {}) => new Patient({ ...SCENARIOS[id].spec, ...specOverride }, { seed, scenario: SCENARIOS[id] });
@@ -28,12 +29,12 @@ export function aclsTeam(p, { endT = 1200, reaction = 10, depth = 5.5, rate = 11
         p.dispatch({ type: 'iv.access' });
         if (!noCpr) p.dispatch({ type: 'cpr.start', mode: 'auto', opts: { rate, depth, ratio: '30:2' }, surface: 'hard' });
         p.dispatch({ type: 'defib.pads' }); p.dispatch({ type: 'defib.setEnergy', energy: 200 });
-        if (['VF', 'VT_PULSELESS'].includes(a.key)) p.dispatch({ type: 'defib.charge' });
+        if (isShockable(a.key)) p.dispatch({ type: 'defib.charge' });
       }
     }
     if (started && a.arrested) {
       const sinceStart = p.t - tStart;
-      if (['VF', 'VT_PULSELESS'].includes(a.key) && p.defib.charged && p.t >= (a.arrestStarts[0] + reaction + delayShockS) && p.t - lastShockAt > 5) {
+      if (isShockable(a.key) && p.defib.charged && p.t >= (a.arrestStarts[0] + reaction + delayShockS) && p.t - lastShockAt > 5) {
         p.dispatch({ type: 'note', text: 'guide defib: clear' });             // "stand clear, oxygen away"
         p.dispatch({ type: 'defib.shock' }); lastShockAt = p.t; shocksThisArrest++;
         if (!noCpr && p.arrest.arrested) p.dispatch({ type: 'cpr.start', mode: 'auto', opts: { rate, depth, ratio: '30:2' }, surface: 'hard' });
@@ -41,7 +42,7 @@ export function aclsTeam(p, { endT = 1200, reaction = 10, depth = 5.5, rate = 11
       }
       if (p.t - lastCycle >= 120) {                                // 2-min rhythm check + compressor swap
         lastCycle = p.t; if (!noCpr && rotate) p.dispatch({ type: 'cpr.switch' });
-        if (['VF', 'VT_PULSELESS'].includes(a.key)) p.dispatch({ type: 'defib.charge' });
+        if (isShockable(a.key)) p.dispatch({ type: 'defib.charge' });
       }
       const epiDue = ['PEA', 'ASYSTOLE'].includes(a.key) ? sinceStart >= 15 : shocksThisArrest >= 2;
       if (epiDue && p.t - lastEpi >= epiGapS) { p.dispatch({ type: 'drug.bolus', drug: 'epinephrine', amount: 1000 }); lastEpi = p.t; }

@@ -97,6 +97,7 @@ export const CAUSES = {
   hypoxia:       { label: 'Hypoxia', fixedBy: 'Oxygenation/ventilation' },
   hypovolemia:   { label: 'Hypovolemia', fixedBy: 'Hemorrhage control + volume' },
   hyperkalemia:  { label: 'Hyperkalemia', fixedBy: 'Calcium, insulin/glucose, bicarbonate' },
+  local_anaesthetic: { label: 'Local anaesthetic toxicity', fixedBy: 'Lipid emulsion 20 %' },
   acidosis:      { label: 'Acidosis', fixedBy: 'Ventilation' },
   hypothermia:   { label: 'Hypothermia', fixedBy: 'Rewarming' },
   tension_ptx:   { label: 'Tension pneumothorax', fixedBy: 'Needle decompression' },
@@ -116,7 +117,9 @@ export class ArrestState {
   }
   get info() { return RHYTHMS[this.key]; }
   setRhythm(key, t) { if (this.key !== key) { this.events.push({ t, type: 'rhythm', from: this.key, to: key }); this.key = key; this.tInRhythm = 0; } }
-  arrest(key, t) { this.startedAt = this.startedAt ?? t; this.arrestStarts = (this.arrestStarts || []).concat([t]); this.arrested = true; this.postRosc = false; this.tArrest = 0; this.setRhythm(key, t); this.cppGoodS = 0; if (key === 'VF') this.vfAmp = 1; }
+  /** a self-terminating run (torsades) gives back the rhythm it interrupted, without the post-arrest state */
+  selfTerminate(t) { this.arrested = false; this.tArrest = 0; this.setRhythm(this.preKey && RHYTHMS[this.preKey].perfusing ? this.preKey : 'NSR', t); }
+  arrest(key, t) { if (!this.arrested) this.preKey = this.key; this.startedAt = this.startedAt ?? t; this.arrestStarts = (this.arrestStarts || []).concat([t]); this.arrested = true; this.postRosc = false; this.tArrest = 0; this.setRhythm(key, t); this.cppGoodS = 0; if (key === 'VF' || key === 'TORSADES') this.vfAmp = 1; }
   fixCause(c) { if (this.causes[c]) this.causes[c] = false; }
   blocking() { return Object.entries(this.causes).filter(([k, v]) => v && k !== 'coronary_thrombosis').map(([k]) => k); }
   /** one step; ctx: {cpp, cprGoodFlow, epi (ng/mL), antiarr (0..1), t, spo2True, map} */
@@ -131,6 +134,12 @@ export class ArrestState {
     const target = goodCpp ? clamp((this.cppAvg - 10) / 20, 0.2, 1) : 0;
     const tau = target > this.readiness ? 90 : 240;                     // improves in ~1.5 min of good CPP, decays over ~4 min without (design)
     this.readiness = lag(this.readiness, target, dt, tau);
+    if (this.key === 'TORSADES') {                                      // most episodes stop on their own within a minute; the rest degenerate to VF; magnesium helps it stop (REF drew2010; rates REF design)
+      const stop = (0.6 + 0.8 * (ctx.mg || 0)) / 60, decay = 0.5 / 60;
+      if (this.tInRhythm > 8 && r.chance(1 - Math.exp(-stop * dt))) return 'SELF_TERM';
+      if (this.tInRhythm > 30 && r.chance(1 - Math.exp(-decay * dt))) { this.setRhythm('VF', ctx.t); this.vfAmp = 1; }
+      return null;
+    }
     if (this.key === 'VF' || this.key === 'VT_PULSELESS') {
       this.vfAmp = clamp(this.vfAmp + (goodCpp ? 0.0006 : -1 / 480) * dt * 1.0, 0, 1);          // coarse VF fades to fine VF over ~8 min without flow (AMSA-type, UNVERIFIED) (REF amsa)
       if (this.vfAmp < 0.08 && this.tInRhythm > 60) this.setRhythm('ASYSTOLE', ctx.t);
@@ -152,7 +161,7 @@ export class ArrestState {
   /** shock outcome */
   shock(energy, impedance, ctx) {
     this.shocksGiven++;
-    if (!(this.key === 'VF' || this.key === 'VT_PULSELESS')) return { delivered: true, terminated: false, rosc: false, note: 'non-shockable rhythm' };
+    if (!RHYTHMS[this.key].shockable) return { delivered: true, terminated: false, rosc: false, note: 'non-shockable rhythm' };
     let p = baseTermination(energy) * (1 - 0.15 * clamp((impedance - 75) / 60, 0, 1)) * (0.45 + 0.55 * this.readiness) * (0.5 + 0.5 * this.vfAmp);
     if (this.causes.coronary_thrombosis) p *= 0.92;
     p *= 1 + 0.06 * (ctx.antiarr || 0);
@@ -161,7 +170,7 @@ export class ArrestState {
     // post-shock organized rhythm: ROSC vs PEA/asystole (REF cares2024: shockable arrests have ROSC 43.7% overall)
     const block = this.blocking().length > 0;
     let pr = clamp(0.20 + 0.78 * Math.pow(this.readiness, 1.2), 0, 0.95) * (block ? 0.25 : 1);
-    const rosc = this.rng.chance(pr);
+    const rosc = this.key === 'TORSADES' && this.tArrest < 120 ? true : this.rng.chance(pr);   // a brief torsades run on a healthy heart: the shock gives back the underlying rhythm (REF drew2010; REF design)
     return { delivered: true, terminated: true, rosc, p, pRosc: pr };
   }
   rosc(t) {

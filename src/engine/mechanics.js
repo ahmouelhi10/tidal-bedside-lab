@@ -32,6 +32,7 @@ function resistanceOf(p, flowLs) {
     r += 8 * s;                                        // secretions narrow the lumen (REF design)
     if (p.tube?.scopeIn) r += 4;                       // a bronchoscope in the tube occupies much of its lumen (REF design)
   } else r += MASK_R;
+  r += p.crises?.airwayResistance ?? 0;                // bronchospasm (crises.js, REF design)
   return r;
 }
 

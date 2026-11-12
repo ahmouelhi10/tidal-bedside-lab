@@ -17,6 +17,12 @@ import { LAB_KINDS, RANGES as LAB_RANGES } from '/engine/labs.js';
 import { SCENARIOS } from '/engine/scenarios.js';
 import { buildTimeline, keyActionTimes } from '/engine/timeline.js';
 import { makeResizable } from './resize.js';
+import { prebrief, pearls, reflect, calibrationCard, momentsList } from './debrief-ui.js';
+import { ANTS_CATEGORIES } from '/engine/debrief.js';
+import { LiveConsole } from './live.js';
+import { procExtra, pacingExtra, ordersExtra, scoresTick, fluidsExtra, showEcg12, vaporizerExtra, volTick, nivExtra, signsTick } from './panels2.js';
+import { TEAM_ACTS } from '/engine/team.js';
+import { SBAR } from '/engine/debrief.js';
 import { AREAS, loadProgress, recordProgress, clearProgress, levelOf, profileOf, achievementsOf } from './progress.js';
 
 /** Skills training: the case each procedure is practised on (the condition that makes the procedure meaningful). */
@@ -81,11 +87,13 @@ const DRUG_UI = [
     { k: 'fentanyl', per: 1.0, basis: 'lbm', step: 25 },
     { k: 'remifentanil', per: 0.5, basis: 'lbm', step: 10, inf: { unit: 'mcg/kg/min', def: 0.15, step: 0.01, toEngine: (v, b) => v * b.lbm } },
     { k: 'naloxone', fixed: 400, step: 100 },
+    { k: 'flumazenil', fixed: 200, step: 100 },
   ] },
   { g: 'g_nmb', items: [
     { k: 'rocuronium', per: 1.2, basis: 'ibw', step: 5 },
     { k: 'succinylcholine', per: 1.5, basis: 'tbw', step: 10 },
     { k: 'sugammadex', per: 4, basis: 'tbw', step: 10 },
+    { k: 'neostigmine', per: 50, basis: 'tbw', step: 500 },
   ] },
   { g: 'g_vaso', items: [
     { k: 'epinephrine', fixed: 1000, step: 100, inf: { unit: 'mcg/kg/min', def: 0.05, step: 0.01, toEngine: (v, b) => v * b.weightKg } },
@@ -100,9 +108,49 @@ const DRUG_UI = [
     { k: 'lidocaine', per: 1.0, basis: 'tbw', step: 10 },
     { k: 'adenosine', fixed: 6, step: 6 },
     { k: 'calciumChloride', fixed: 1000, step: 500 },
+    { k: 'calciumGluconate', fixed: 3000, step: 1000 },
+  ] },
+  { g: 'g_crisis', items: [
+    { k: 'epinephrine', route: 'im', fixed: 500, step: 100, label: 'IM' },
+    { k: 'ephedrine', fixed: 10, step: 5 },
+    { k: 'dobutamine', fixed: 250, step: 50, inf: { unit: 'mcg/kg/min', def: 5, step: 0.5, toEngine: (v, b) => v * b.weightKg } },
+    { k: 'salbutamol', fixed: 5, step: 2.5 },
+    { k: 'magnesium', fixed: 2, step: 0.5 },
+    { k: 'dantrolene', per: 2.5, basis: 'tbw', step: 20 },
+    { k: 'lipid', per: 1.5, basis: 'tbw', step: 10, inf: { unit: 'mL/kg/min', def: 0.25, step: 0.05, toEngine: (v, b) => v * b.weightKg } },
+    { k: 'hydrocortisone', fixed: 200, step: 50 },
+    { k: 'ipratropium', fixed: 0.5, step: 0.25 },
+    { k: 'prednisolone', fixed: 40, step: 10 },
+  ] },
+  { g: 'g_neuro', items: [
+    { k: 'midazolam', route: 'im', fixed: 10, step: 2.5, label: 'IM' },
+    { k: 'lorazepam', fixed: 4, step: 1 },
+    { k: 'diazepam', fixed: 10, step: 2.5 },
+    { k: 'levetiracetam', per: 60, basis: 'tbw', step: 250 },
+  ] },
+  { g: 'g_cardio', items: [
+    { k: 'isoprenaline', fixed: 20, step: 10, inf: { unit: 'mcg/min', def: 5, step: 1, toEngine: (v) => v } },
+    { k: 'esmolol', per: 0.5, basis: 'tbw', step: 5 },
+    { k: 'metoprolol', fixed: 5, step: 2.5 },
+    { k: 'labetalol', fixed: 20, step: 5 },
+    { k: 'urapidil', fixed: 25, step: 5 },
+    { k: 'aspirin', fixed: 250, step: 50 },
+    { k: 'heparin', per: 70, basis: 'tbw', step: 500 },
+    { k: 'morphine', fixed: 5, step: 1 },
+  ] },
+  { g: 'g_metab', items: [
+    { k: 'glucose', fixed: 20, step: 5, inf: { unit: 'mL/h G10 %', def: 125, step: 25, toEngine: (v) => v * 0.1 / 60 } },
+    { k: 'insulin', fixed: 10, step: 2, inf: { unit: 'U/kg/h', def: 0.1, step: 0.05, toEngine: (v, b) => v * b.weightKg / 60 } },
+    { k: 'potassiumChloride', fixed: 10, step: 10 },
+    { k: 'glucagon', route: 'im', fixed: 1, step: 0.5, label: 'IM' },
+    { k: 'furosemide', fixed: 40, step: 10 },
+    { k: 'tranexamicAcid', fixed: 1000, step: 500 },
+  ] },
+  { g: 'g_regional', items: [
+    { k: 'bupivacaine', route: 'regional', per: 1.5, basis: 'tbw', step: 10, label: 'block' },
   ] },
 ];
-const O2 = { room: { fio2: 0.21, seal: 0.5, key: 'aw_room' }, nc: { fio2: 0.36, seal: 0.6, key: 'aw_nc' }, mask: { fio2: 0.55, seal: 0.8, key: 'aw_mask' }, nrb: { fio2: 0.85, seal: 0.9, key: 'aw_nrb' } };
+const O2 = { room: { fio2: 0.21, seal: 0.5, key: 'aw_room' }, nc: { fio2: 0.36, seal: 0.6, key: 'aw_nc' }, mask: { fio2: 0.55, seal: 0.8, key: 'aw_mask' }, nrb: { fio2: 0.85, seal: 0.9, key: 'aw_nrb' }, v24: { fio2: 0.24, seal: 1, key: 'aw_v24' }, v28: { fio2: 0.28, seal: 1, key: 'aw_v28' } };
 
 export class UI {
   constructor(root, ctx) {
@@ -136,6 +184,7 @@ export class UI {
       this.dom.speed = this.speedBar(),
       this.dom.btnLog = el('button', { id: 'btnLog', class: 'ghost', 'aria-expanded': 'false', title: t('log'), onclick: () => this.toggleLog() }, t('log_btn'), this.dom.logBadge = el('span', { class: 'cnt', hidden: true })),
       this.dom.btnBrief = el('button', { id: 'btnBrief', class: 'ghost', onclick: () => { this.dom.card.hidden = !this.dom.card.hidden; }, text: t('briefing') }),
+      this.dom.liveChip = el('button', { class: 'ghost live-chip', hidden: true, onclick: () => { const c = this.liveLink?.code; if (!c) return; navigator.clipboard?.writeText(c).catch(() => {}); this.toast(t('lv_copied', { code: c })); } }),
       this.dom.btnNew = el('button', { id: 'btnNew', class: 'ghost', onclick: () => this.openMenu(), text: t('new_case') }),
       this.dom.btnFinish = el('button', { id: 'btnFinish', class: 'primary', onclick: () => this.onFinish?.(), text: t('finish') }),
       this.dom.opts = this.buildOpts());
@@ -158,6 +207,7 @@ export class UI {
     const box = el('div', { class: 'optsbox' },
       el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'chkSound', onchange: e => { this.sound.enable(e.target.checked); } }), ' ', t('sound')),
       el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'chkHints', checked: this.hints, onchange: e => { this.hints = e.target.checked; } }), ' ', t('hints')),
+      el('label', { class: 'chk', title: t('tm_mode_t') }, el('input', { type: 'checkbox', id: 'chkTeam', checked: !!this.teamMode, onchange: e => { this.teamMode = e.target.checked; } }), ' ', t('tm_mode')),
       el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'chkTeach', checked: this.teach, onchange: e => { this.teach = e.target.checked; this.dom.teach.hidden = !this.teach; } }), ' ', t('teaching')),
       el('label', { class: 'f' }, el('span', { text: t('language') }), el('select', { id: 'selLang', onchange: e => { setLang(e.target.value); this.init(); this.onLang?.(); } },
         el('option', { value: 'en', text: 'English', selected: getLang() === 'en' }), el('option', { value: 'fr', text: 'Français', selected: getLang() === 'fr' }))));
@@ -171,6 +221,7 @@ export class UI {
     for (const e of [d.clock, d.speed, d.cam, d.btnNew, d.btnFinish, d.btnLog, d.left, d.right, d.dock, d.hint]) if (e) e.hidden = !play;
     if (!play && d.logBox) this.toggleLog(false);
     d.btnBrief.hidden = !play || !this.scenarios.find(x => x.id === this.sim.scenarioId);
+    if (d.liveChip) d.liveChip.hidden = !play || !this.liveLink?.code;
     if (!play && d.alarm) d.alarm.hidden = true; else this._alarmMode = null;
   }
   speedBar() {
@@ -321,8 +372,31 @@ export class UI {
     return box;
   }
   /** Instructor mode: free play or any case, with the teaching overlay and markers on, plus the server's session list. */
+  /** Team mode: send the order, show the member's read-back, and carry out only what the leader confirms. */
+  teamOrder(ev, label) {
+    this._teamId = (this._teamId || 0) + 1;
+    const id = this._teamId, r = this.sim.act({ type: 'team.order', id, act: ev });
+    if (!r || r.ok === false) { this.toast(r?.error || t('err_generic'), true); return r; }
+    if (!this.dom.teamBox) { this.dom.teamBox = el('div', { class: 'team-box', 'aria-live': 'polite' }); document.body.append(this.dom.teamBox); }
+    const text = el('p', { class: 'tm-rb' }), card = el('div', { class: 'tm-card' });
+    const say = (act) => { text.textContent = t('tm_rb_' + r.role, { what: this.describe(act) || act.type }); };
+    say(r.readback);
+    const done = () => { card.remove(); };
+    card.append(el('div', { class: 'tm-who' }, el('b', { text: t('tm_role_' + r.role) }), el('span', { class: 'small muted', text: t('tm_you_said', { what: this.describe(ev) || ev.type }) })), text,
+      el('div', { class: 'tm-act' },
+        el('button', { class: 'ghost', type: 'button', onclick: () => { const c = this.sim.act({ type: 'team.correct', id }); if (c?.ok) { say(c.readback); this.toast(t('tm_corrected')); } }, text: t('tm_correct') }),
+        el('button', { class: 'primary', type: 'button', onclick: () => { const c = this.sim.act({ type: 'team.confirm', id }); done(); if (c?.ok) this.actNow(c.act, label); }, text: t('tm_confirm') })));
+    this.dom.teamBox.append(card);
+    return { ok: true, pending: true };
+  }
+  /** title, summary and objectives of a scenario in the current language */
+  caseTextOf(sc) { return scenarioText(sc); }
   instructorView() {
     const box = el('div', { class: 'card lab-note inst' });
+    const code = el('input', { type: 'text', maxlength: 6, autocomplete: 'off', placeholder: 'K7P2QX', 'aria-label': t('lv_code'), class: 'lv-code' });
+    const join = () => { if (code.value.trim()) (this.liveConsole ??= new LiveConsole(this)).open(code.value); };
+    code.addEventListener('keydown', (e) => { if (e.key === 'Enter') join(); });
+    box.append(el('div', { class: 'lv-join' }, el('h4', { text: t('lv_join_title') }), el('p', { class: 'muted small', text: t('lv_join_t') }), el('div', { class: 'row2' }, code, el('button', { class: 'primary', onclick: join, text: t('lv_join') }))));
     const chk = (key, label, get, set) => el('label', { class: 'chk' }, el('input', { type: 'checkbox', checked: get(), onchange: e => set(e.target.checked) }), ' ', t(label));
     if (!this.instructor) { this.instructor = true; this.teach = true; if (this.dom.teach) this.dom.teach.hidden = false; }   // instructor mode shows the hidden physiology by default
     box.append(el('p', { text: t('inst_text') }),
@@ -466,6 +540,10 @@ export class UI {
     this.syncSetupFromSession(); this.syncPins(); this.syncChrome();
     const skill = this.pendingSkill && PROCEDURES.find(pr => pr.id === this.pendingSkill);
     if (skill) setTimeout(() => this.startGuide(skill), 400);
+    this.liveLink?.start();                                         // live instructor channel (online sessions only)
+    this.dom.teamBox?.replaceChildren(); this._teamId = 0;
+    const sc0 = this.scenarios.find(s => s.id === this.sim.scenarioId);
+    if (sc0 && !this.pendingSkill) { const sp = this.sim.speed; this.sim.setSpeed(0); prebrief(scenarioText(sc0), !!this.teamMode).then((r) => { this.teamMode = !!r?.team; const c = this.dom.opts?.querySelector('#chkTeam'); if (c) c.checked = this.teamMode; if (this.sim.patient && !this.sim.finished && this.sim.speed === 0) this.sim.setSpeed(sp || 1); }); }   // scored case: pre-brief first, the clock waits
     if (this.sim.patient?.ward) { this.wardView = new WardView(this); this.tab = 'tab_ward'; this.panelOpen = true; this.dom.card.hidden = true; this.buildTabs(); }   // infectiology cases open the ward workspace
     if (this.scenarios.find(s => s.id === this.sim.scenarioId)?.kind === 'Echo') setTimeout(() => this.echoLab?.start(), 400);   // focused echo cases open the echo window
     this.dom.pins.classList.add('learn'); clearTimeout(this._learnT); this._learnT = setTimeout(() => this.dom.pins.classList.remove('learn'), 8000);   // names of the markers show for 8 s, then only on hover
@@ -492,10 +570,14 @@ export class UI {
     const P = this.dom.panel; P.replaceChildren(); P.className = 'panel';   // a workspace (the infectiology ward) may have restyled the panel: start clean for every tab
     const b = this.sim.patient.body;
     queueMicrotask(() => stepify(P));
-    ({ tab_guide: () => this.panelGuide(P), tab_drugs: () => this.panelDrugs(P, b), tab_fluids: () => this.panelFluids(P), tab_airway: () => this.panelAirway(P, b), tab_circ: () => this.panelCirc(P), tab_proc: () => this.panelProc(P), tab_orders: () => this.panelOrders(P), tab_ward: () => (this.wardView ??= new WardView(this)).render(P) })[this.tab]();
+    ({ tab_guide: () => this.panelGuide(P), tab_drugs: () => this.panelDrugs(P, b), tab_fluids: () => { this.panelFluids(P); fluidsExtra(this, P); }, tab_airway: () => this.panelAirway(P, b), tab_circ: () => { this.panelCirc(P); pacingExtra(this, P); }, tab_proc: () => { this.panelProc(P); procExtra(this, P); }, tab_orders: () => { this.panelOrders(P); ordersExtra(this, P); }, tab_ward: () => (this.wardView ??= new WardView(this)).render(P) })[this.tab]();
   }
 
   act(ev, label) {
+    if (this.teamMode && !this.guide && ev.type in TEAM_ACTS && this.sim.patient && !this.sim.finished) return this.teamOrder(ev, label);   // team mode: the order goes to a team member first
+    return this.actNow(ev, label);
+  }
+  actNow(ev, label) {
     const r = this.sim.act(ev);
     if (r && r.ok === false) this.toast(r.error || t('err_generic'), true); else if (label) this.toast(label + (r && r.willTakeS ? ` (${Math.round(r.willTakeS)} s)` : ''));
     return r;
@@ -554,7 +636,7 @@ export class UI {
       for (const it of grp.items) {
         const d = DRUGS[it.k]; const def = it.fixed ?? Math.max(it.step, round(it.per * basisW[it.basis], it.step));
         const dose = el('input', { type: 'number', min: 0, step: it.step, value: def, 'aria-label': t('dose') + ' ' + drugName(it.k, d.name) });
-        const name = drugName(it.k, d.name);
+        const name = drugName(it.k, d.name) + (it.label ? ' (' + t('route_' + it.route) + ')' : '');
         // one card per drug: name and dosing rule, a bolus line, and for infusions a rate line with start / stop below
         const row = el('div', { class: 'drug', dataset: { drug: it.k } },
           el('div', { class: 'dn' }, el('b', { text: name }), el('span', { class: 'drun', text: t('dr_running') }),
@@ -562,7 +644,7 @@ export class UI {
           el('div', { class: 'dcount', hidden: true, dataset: { drug: it.k } }, el('span', { class: 'dc-txt' }), el('span', { class: 'dc-bar' }, el('i'))),
           el('div', { class: 'dtime', dataset: { drug: it.k, dose: def } }, el('span', { class: 'muted small', text: '⏱ ' + t('dt_computing') })),
           el('div', { class: 'dline' }, el('span', { class: 'dl', text: t('bolus') }), dose, el('span', { class: 'unit', text: d.unit }),
-            this.btn(t('bolus'), () => this.act({ type: 'drug.bolus', drug: it.k, amount: Number(dose.value) }, `${name} ${dose.value} ${d.unit}`), 'act')));
+            this.btn(it.route && it.route !== 'iv' ? t('route_' + it.route) : t('bolus'), () => this.act({ type: 'drug.bolus', drug: it.k, amount: Number(dose.value), ...(it.route ? { route: it.route } : {}) }, `${name} ${dose.value} ${d.unit}`), 'act')));
         if (it.inf) {
           const rate = el('input', { type: 'number', min: 0, step: it.inf.step, value: it.inf.def, 'aria-label': t('rate') + ' ' + name });
           row.append(el('div', { class: 'dline' }, el('span', { class: 'dl', text: t('infusion') }), rate, el('span', { class: 'unit', text: it.inf.unit })),
@@ -578,9 +660,10 @@ export class UI {
   }
   panelFluids(P) {
     const vol = el('input', { type: 'number', id: 'inFluidVol', value: 500, min: 50, max: 3000, step: 50 }), mins = el('input', { type: 'number', id: 'inFluidMin', value: 15, min: 1, max: 120, step: 1 });
-    P.append(el('h4', { text: t('fl_crystalloid') }), el('div', { class: 'row3' }, el('label', { class: 'f' }, el('span', { text: t('fl_volume') }), vol), el('label', { class: 'f' }, el('span', { text: t('fl_minutes') }), mins), this.btn(t('fl_give'), () => this.act({ type: 'fluid.bolus', volumeL: Number(vol.value) / 1000, minutes: Number(mins.value) }, `${vol.value} mL`), 'act')),
+    const kind = el('select', { id: 'selFluid', 'aria-label': t('fl_kind') }, el('option', { value: 'balanced', text: t('fl_balanced') }), el('option', { value: 'saline', text: t('fl_saline') }));
+    P.append(el('h4', { text: t('fl_crystalloid') }), el('div', { class: 'row3' }, el('label', { class: 'f' }, el('span', { text: t('fl_volume') }), vol), el('label', { class: 'f' }, el('span', { text: t('fl_minutes') }), mins), this.btn(t('fl_give'), () => this.act({ type: 'fluid.bolus', volumeL: Number(vol.value) / 1000, minutes: Number(mins.value), fluid: kind.value }, `${vol.value} mL ${t('fl_' + kind.value)}`), 'act')), el('label', { class: 'f' }, el('span', { text: t('fl_kind') }), kind),
       el('div', { class: 'stack' },
-        this.btn(t('fl_prbc'), () => this.act({ type: 'blood.transfuse', kind: 'prbc' }, t('fl_prbc')), 'act'), this.btn(t('fl_whole'), () => this.act({ type: 'blood.transfuse', kind: 'whole' }, t('fl_whole')), 'act'), this.btn(t('fl_ffp'), () => this.act({ type: 'blood.transfuse', kind: 'ffp' }, t('fl_ffp')), 'act'),
+        this.btn(t('fl_prbc'), () => this.act({ type: 'blood.transfuse', kind: 'prbc' }, t('fl_prbc')), 'act'), this.btn(t('fl_whole'), () => this.act({ type: 'blood.transfuse', kind: 'whole' }, t('fl_whole')), 'act'), this.btn(t('fl_ffp'), () => this.act({ type: 'blood.transfuse', kind: 'ffp' }, t('fl_ffp')), 'act'), this.btn(t('fl_plt'), () => this.act({ type: 'blood.transfuse', kind: 'platelets' }, t('fl_plt')), 'act'), this.btn(t('fl_cryo'), () => this.act({ type: 'blood.transfuse', kind: 'cryo' }, t('fl_cryo')), 'act'),
         this.btn(t('fl_tourniquet'), () => this.act({ type: 'bleed.control' }, t('fl_tourniquet')), 'act danger'), this.btn(t('fl_bicarb'), () => this.act({ type: 'bicarb.bolus', mEq: 50 }, t('fl_bicarb')), 'act')));
   }
   panelAirway(P, b) {
@@ -598,6 +681,8 @@ export class UI {
       el('div', { class: 'row2' }, this.btn(t('aw_bvm_start'), () => this.act({ type: 'vent.set', settings: { mode: 'ctrl', rate: 10, vt: Math.round(7 * b.pbw), fio2: 1, peep: 0, seal: this.sim.patient.airway.intubated || this.sim.patient.airway.device === 'sga' ? 0.97 : 0.85 } }, t('aw_bvm_start')), 'act primary', { id: 'btnBvm' }), this.btn(t('aw_vent_stop'), () => this.act({ type: 'vent.set', settings: { mode: 'spont' } }, t('aw_vent_stop')), 'act')), el('div', { class: 'row4' }, el('label', { class: 'f' }, el('span', { text: t('aw_mode') }), mode), el('label', { class: 'f' }, el('span', { text: t('aw_rate') }), rate), el('label', { class: 'f' }, el('span', { text: t('aw_vt') }), vt), el('label', { class: 'f' }, el('span', { text: t('aw_fio2') }), fio2)),
       el('div', { class: 'row2' }, el('label', { class: 'f' }, el('span', { text: t('aw_peep') }), peep), this.btn(t('aw_set'), () => this.act({ type: 'vent.set', settings: { mode: mode.value, rate: Number(rate.value), vt: Number(vt.value) * b.pbw, fio2: Number(fio2.value), peep: Number(peep.value), seal: this.sim.patient.airway.intubated ? 0.97 : 0.85 } }, t('aw_set')), 'act primary')),
       this.mechBlock());
+    nivExtra(this, P);
+    vaporizerExtra(this, P);
   }
   /** Ventilator mechanics read-out and pressure / flow / volume curves (engine mechanics.js, display only). */
   mechBlock() {
@@ -685,7 +770,7 @@ export class UI {
     const att = (k, key) => this.btn(t(key), () => this.act({ type: 'monitor.attach', items: { [k]: true } }, t(key)), 'act', { dataset: { att: k } });
     const amb = el('input', { type: 'number', id: 'inAmb', value: 22, min: 5, max: 40, step: 1 });
     P.append(el('h4', { text: t('od_monitor') }), el('div', { class: 'stack' }, att('ecgLeads', 'od_ecg'), att('spo2Probe', 'od_spo2'), this.btn(t('od_nibp'), () => { this.act({ type: 'monitor.attach', items: { nibp: true } }); this.act({ type: 'nibp.cycle' }, t('od_nibp')); }, 'act'), att('aline', 'od_aline'), att('capnography', 'od_capno'), att('tempProbe', 'od_temp'), this.btn(t('od_iv'), () => this.act({ type: 'iv.access' }, t('od_iv')), 'act')),
-      el('h4', { text: t('od_orders') }), el('div', { class: 'stack' }, this.btn(t('od_ecg12'), () => { const r = this.act({ type: 'order', what: 'ecg12' }, t('od_ecg12')); if (r?.result) this.showResult(r.result); }, 'act'), this.btn(t('od_trop'), () => { const r = this.act({ type: 'order', what: 'troponin' }, t('od_trop')); if (r?.result) this.showResult(r.result); }, 'act'),
+      el('h4', { text: t('od_orders') }), el('div', { class: 'stack' }, this.btn(t('od_ecg12'), () => { const r = this.act({ type: 'order', what: 'ecg12' }, t('od_ecg12')); showEcg12(this); if (r?.result) this.showResult(r.result); }, 'act'),   // the tracing itself (panels2.js), plus the case's written result if it has one this.btn(t('od_trop'), () => { const r = this.act({ type: 'order', what: 'troponin' }, t('od_trop')); if (r?.result) this.showResult(r.result); }, 'act'),
         this.btn(t('od_aspirin'), () => this.act({ type: 'order', what: 'aspirin', mg: 324 }, t('od_aspirin')), 'act'), this.btn(t('od_cath'), () => this.act({ type: 'order', what: 'cath_lab' }, t('od_cath')), 'act'), this.btn(t('od_call_help'), () => this.act({ type: 'order', what: 'call_help' }, t('od_call_help')), 'act'), this.btn(t('od_declare_cico'), () => this.act({ type: 'order', what: 'declare_cico' }, t('od_declare_cico')), 'act'), this.btn(t('od_ttm'), () => { this.act({ type: 'order', what: 'temperature_control' }); this.act({ type: 'thermal.device', target: 36 }, t('od_ttm')); }, 'act')),
       el('h4', { text: t('lab_title') }), el('div', { class: 'stack' }, ...LAB_KINDS.map(k => this.btn(t('lab_' + k), () => this.act({ type: 'lab.order', kind: k }, t('lab_' + k)), 'act', { dataset: { lab: k } }))),
       this.dom.labBox = el('div', { class: 'labs' }),
@@ -700,9 +785,9 @@ export class UI {
     const sig = `${p.labs.length}|${done.length}|${pending.map(l => Math.ceil(l.readyAt - p.t)).join(',')}`;
     if (sig === box.dataset.sig) return; box.dataset.sig = sig;
     const kids = pending.map(l => el('div', { class: 'lab-pend' }, el('span', { text: `⏳ ${t('lab_' + l.kind)} · ${t('lab_sampled')} ${mm(l.t)}` }), el('b', { text: mm(l.readyAt - p.t) })));
-    const rowsOf = { abg: ['ph', 'paco2', 'pao2', 'hco3', 'be', 'sao2', 'lactate', 'na', 'k', 'ica', 'glucose', 'fio2'], lactate: ['lactate'], chem: ['na', 'k', 'glucose'], cbc: ['hb', 'hct'] };
-    const unit = { ph: '', paco2: 'mmHg', pao2: 'mmHg', hco3: 'mmol/L', be: 'mmol/L', sao2: '%', lactate: 'mmol/L', na: 'mmol/L', k: 'mmol/L', ica: 'mmol/L', glucose: 'mmol/L', fio2: '', hb: 'g/dL', hct: '' };
-    const label = { ph: 'pH', paco2: 'PaCO₂', pao2: 'PaO₂', hco3: 'HCO₃⁻', be: t('lab_be'), sao2: 'SaO₂', lactate: t('lab_lact'), na: 'Na⁺', k: 'K⁺', ica: 'Ca²⁺ ' + t('lab_ion'), glucose: t('lab_glu'), fio2: 'FiO₂', hb: 'Hb', hct: 'Hct' };
+    const rowsOf = { abg: ['ph', 'paco2', 'pao2', 'hco3', 'be', 'sao2', 'lactate', 'na', 'k', 'cl', 'ag', 'ica', 'glucose', 'fio2'], lactate: ['lactate'], chem: ['na', 'k', 'mg', 'glucose', 'osm'], ketones: ['ketones'], cbg: ['glucose'], cbc: ['hb', 'hct', 'plt'], coag: ['inr', 'aptt', 'fib', 'plt'], cardiac: ['tnt', 'ntprobnp', 'ddimer'], renal: ['creat', 'urea'] };
+    const unit = { ph: '', paco2: 'mmHg', pao2: 'mmHg', hco3: 'mmol/L', be: 'mmol/L', sao2: '%', lactate: 'mmol/L', na: 'mmol/L', k: 'mmol/L', cl: 'mmol/L', ag: 'mmol/L', mg: 'mmol/L', osm: 'mOsm/kg', ketones: 'mmol/L', ica: 'mmol/L', glucose: 'mmol/L', plt: '×10⁹/L', inr: '', aptt: 's', fib: 'g/L', tnt: 'ng/L', ntprobnp: 'pg/mL', ddimer: 'mg/L', creat: 'µmol/L', urea: 'mmol/L', fio2: '', hb: 'g/dL', hct: '' };
+    const label = { ph: 'pH', paco2: 'PaCO₂', pao2: 'PaO₂', hco3: 'HCO₃⁻', be: t('lab_be'), sao2: 'SaO₂', lactate: t('lab_lact'), na: 'Na⁺', k: 'K⁺', cl: 'Cl⁻', ag: t('lab_ag'), mg: 'Mg²⁺', osm: t('lab_osm'), ketones: t('lab_ket'), ica: 'Ca²⁺ ' + t('lab_ion'), glucose: t('lab_glu'), plt: t('lab_plt'), inr: 'INR', aptt: t('lab_aptt'), fib: t('lab_fib'), tnt: 'hs-TnT', ntprobnp: 'NT-proBNP', ddimer: t('lab_dd'), creat: t('lab_creat'), urea: t('lab_urea'), fio2: 'FiO₂', hb: 'Hb', hct: 'Hct' };
     for (const kind of LAB_KINDS) {
       const cols = done.filter(l => l.kind === kind); if (!cols.length) continue;
       const sex = p.spec.sex === 'F' ? 'F' : 'M', rng = (k) => LAB_RANGES[k] || LAB_RANGES[`${k}_${sex}`];
@@ -884,10 +969,25 @@ export class UI {
   describe(ev) {
     const d = ev.drug && DRUGS[ev.drug] ? drugName(ev.drug, DRUGS[ev.drug].name) : '';
     switch (ev.type) {
-      case 'drug.bolus': return `${d} ${ev.amount} ${DRUGS[ev.drug]?.unit ?? ''}`;
+      case 'drug.bolus': return `${d} ${ev.amount} ${DRUGS[ev.drug]?.unit ?? ''}${ev.route && ev.route !== 'iv' ? ' ' + t('route_' + ev.route) : ''}`;
+      case 'instructor.inject': return `${t('lv_by')}: ${ev.what === 'marker' ? ev.text : t('lv_w_' + ev.what)}`;
+      case 'team.order': return `${t('tm_order')} → ${t('tm_role_' + (TEAM_ACTS[ev.act?.type] || 'nurse'))}: ${this.describe(ev.act) || ev.act?.type}`;
+      case 'team.correct': return t('tm_corrected');
+      case 'io.access': return t('px_io');
+      case 'vaporizer.set': return `${t('va_' + (ev.agent || 'sevoflurane'))} ${ev.percent} %`;
+      case 'n2o.set': return `N₂O ${ev.percent} %`;
+      case 'procedure.vagal': return t(ev.technique === 'standard' ? 'px_vagal_std' : 'px_vagal_mod');
+      case 'niv.set': return ev.mode === 'off' ? t('niv_off') : `${t('niv_' + ev.mode)} ${ev.mode === 'hfno' ? (ev.flow ?? '') + ' L/min' : ev.mode === 'bipap' ? (ev.ipap ?? '') + '/' + (ev.epap ?? '') : (ev.epap ?? '')} FiO2 ${ev.fio2 ?? ''}`;
+      case 'pacing.set': return ev.on ? `${t('pc_title')} ${ev.rate ?? ''}/min ${ev.mA ?? ''} mA` : `${t('pc_title')} - ${t('stop')}`;
+      case 'procedure.arterial_line': return t('px_aline') + (ev.us ? ' (US)' : '');
+      case 'procedure.central_line': return `${t('px_cvc')} ${t('px_site_' + ev.site)}` + (ev.us ? ' (US)' : '');
+      case 'procedure.ng_tube': return t('px_ng');
+      case 'procedure.urinary_catheter': return t('px_uc');
+      case 'exam.ecg12': return t('od_ecg12');
+      case 'team.confirm': return '';                                  // the action itself follows in the journal
       case 'drug.infusion': return `${d} ${t('infusion').toLowerCase()} ${fmt(ev.rate, 3)} /min`;
       case 'drug.stop': return `${d} - ${t('stop')}`;
-      case 'fluid.bolus': return `${t('fl_crystalloid')} ${Math.round(ev.volumeL * 1000)} mL / ${ev.minutes} min`;
+      case 'fluid.bolus': return `${t(ev.fluid === 'saline' ? 'fl_saline' : 'fl_balanced')} ${Math.round(ev.volumeL * 1000)} mL / ${ev.minutes} min`;
       case 'blood.transfuse': return t('fl_' + ev.kind);
       case 'airway.set': return `${t('aw_device')}: ${t({ none: 'aw_none', chin_lift: 'aw_chin', jaw_thrust: 'aw_jaw', opa: 'aw_opa', sga: 'aw_sga', ett: 'aw_intubate' }[ev.device] || ev.device)}`;
       case 'airway.intubate': return t('aw_intubate') + (ev.depthCm ? ` ${ev.depthCm} cm` : '');
@@ -936,8 +1036,10 @@ export class UI {
   refresh() {
     const p = this.sim.patient; if (!p) return;
     this.effects.tick(p);
-    if (this.panelOpen && this.tab === 'tab_airway') this._mechTick(p);
-    if (this.panelOpen && this.tab === 'tab_orders') this._labsTick(p);
+    signsTick(this);
+    if (this.panelOpen && this.tab === 'tab_airway') { this._mechTick(p); volTick(this); }
+    if (this.panelOpen && this.tab === 'tab_orders') { this._labsTick(p); scoresTick(this); }
+    if (this.panelOpen && this.tab === 'tab_circ') this._paceStatus?.();
     if (p.labs) { const n = p.labResults().length; if (n > (this._labsSeen ?? 0)) { this._labsSeen = n; const l = p.labResults()[n - 1]; this.toast(`${t('lab_back')}: ${t('lab_' + l.kind)}`); this.log(`${t('lab_back')}: ${t('lab_' + l.kind)} (${Object.entries(l.values).map(([k, v]) => k + ' ' + v).join(', ')})`); } }
     // the cuff re-inflates every 2.5 min once connected, like a monitor set to automatic
     if (p.flags.nibp && !this.sim.finished && this.sim.speed > 0 && p.t - (p.nibp?.t ?? -1e9) >= 150) this.sim.act({ type: 'nibp.cycle' });
@@ -996,40 +1098,56 @@ export class UI {
   }
 
   // ---------------------------------------------------------------- debrief
-  showDebrief(out) {
+  showDebrief(out, self = null) {
     const x = this.sim.scenarioId ? scenarioText(this.scenarios.find(s => s.id === this.sim.scenarioId)) : null;
     const sc = (out.server && out.server.score) || out.local;
     const ov = el('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': t('score_title') });
-    const box = el('div', { class: 'box' }, el('div', { class: 'phead' }, el('h2', { text: t('score_title') + (x ? ' · ' + x.title : '') }), el('button', { class: 'x', 'aria-label': t('close'), onclick: () => ov.remove(), text: '×' })));
+    const box = el('div', { class: 'box db-box' }, el('div', { class: 'phead' }, el('h2', { text: t('score_title') + (x ? ' · ' + x.title : '') }), el('button', { class: 'x', 'aria-label': t('close'), onclick: () => ov.remove(), text: '×' })));
     const v = out.server ? (out.server.verified ? t('verified') : t('unverified')) : t('offline');
     const scen = this.scenarios.find(s => s.id === this.sim.scenarioId);
     recordProgress({ area: scen ? (scen.kind === 'ACLS' ? 'resus' : scen.kind === 'Echo' ? 'echo' : scen.kind === 'Infectiology' ? 'inf' : 'chal') : 'lab', id: scen ? scen.id : 'free', title: x ? x.title : t('free_play'),
-      pct: sc ? sc.pct : null, grade: sc?.grade, verified: !!out.server?.verified, spec: this.sim.session?.spec });
+      pct: sc ? sc.pct : null, grade: sc?.grade, verified: !!out.server?.verified, spec: this.sim.session?.spec, selfPct: self?.pct ?? null });
+    const notes = {}, rec = { scen: x, sc, out, self, notes };
+    // 1. reactions: the learner speaks first
+    const reactions = el('div', {}, el('p', { class: 'muted', text: t('db_react_lead') }), reflect(notes, 'reactions', t('db_react_q')));
+    // 2. description: what happened, in time order
+    const keyBox = el('div', { class: 'db-keys' }, el('p', { class: 'muted small', text: t('tl_building') }));
+    const description = el('div', {}, x ? el('p', { class: 'summary', text: x.summary }) : null, el('h4', { text: t('rec_times') }), keyBox, reflect(notes, 'description', t('db_desc_q')));
+    // 3. analysis: score, self-assessment calibration, moments to discuss, criteria, replay timeline
+    const analysis = el('div', {});
     if (sc) {
       const pct = Math.max(0, Math.min(100, sc.pct)), C = 2 * Math.PI * 54, col = pct >= 80 ? 'var(--good)' : pct >= 60 ? 'var(--warn)' : 'var(--bad)';
       const ring = el('div', { class: 'ring', style: `--ring:${col}` });
       ring.innerHTML = `<svg viewBox="0 0 132 132" aria-hidden="true"><circle class="trk" cx="66" cy="66" r="54"/><circle class="val" cx="66" cy="66" r="54" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${C.toFixed(1)}"/></svg>`;
       ring.append(el('div', { class: 'lbl' }, el('b', { text: `${pct.toFixed(0)}%` }), el('span', { text: t('score_total') })));
       requestAnimationFrame(() => requestAnimationFrame(() => ring.querySelector('.val')?.setAttribute('stroke-dashoffset', (C * (1 - pct / 100)).toFixed(1))));
-      box.append(el('div', { class: 'db-head' }, ring, el('div', { class: 'db-meta' }, el('span', { class: 'grade', text: `${t('grade')} ${sc.grade}` }), el('span', { class: 'muted', text: `${sc.total} / ${sc.max} ${t('points')}` }), el('span', { class: out.server?.verified ? 'good small' : 'muted small', text: `${t('score_server')}: ${v}` }))));
-      box.append(el('div', {}, sc.items.map(i => { const f = i.weight ? i.points / i.weight : 0; return el('div', { class: 'crit' },
-        el('span', { class: 'cl', text: getLang() === 'fr' && CRITERION_FR[i.id] ? CRITERION_FR[i.id] : i.label }), el('span', { class: 'cp', text: `${i.points.toFixed(1)} / ${i.weight}` }),
-        el('span', { class: 'bar' }, el('i', { class: f >= 0.8 ? '' : f >= 0.4 ? 'mid' : 'low', style: `width:${(f * 100).toFixed(0)}%` })), el('span', { class: 'cd', text: i.detail })); })));
-      if (x) box.append(el('h4', { text: t('learning') }), el('ul', { class: 'muted' }, x.learning.map(l => el('li', { text: l }))));
-    } else box.append(el('p', { class: 'muted', text: `${t('score_server')}: ${v}` }));
+      analysis.append(el('div', { class: 'db-head' }, ring, el('div', { class: 'db-meta' }, el('span', { class: 'grade', text: `${t('grade')} ${sc.grade}` }), el('span', { class: 'muted', text: `${sc.total} / ${sc.max} ${t('points')}` }), el('span', { class: out.server?.verified ? 'good small' : 'muted small', text: `${t('score_server')}: ${v}` }))));
+    } else analysis.append(el('p', { class: 'muted', text: `${t('score_server')}: ${v}` }));
+    const cal = calibrationCard(self, sc); if (cal) analysis.append(cal);
+    const momBox = el('div', { class: 'db-moments' }, el('h4', { text: t('db_moments') }), el('p', { class: 'muted small', text: t('tl_building') }));
+    analysis.append(momBox);
+    if (sc) analysis.append(el('h4', { text: t('db_criteria') }), el('div', {}, sc.items.map(i => { const f = i.weight ? i.points / i.weight : 0; return el('div', { class: 'crit' },
+      el('span', { class: 'cl', text: getLang() === 'fr' && CRITERION_FR[i.id] ? CRITERION_FR[i.id] : i.label }), el('span', { class: 'cp', text: `${i.points.toFixed(1)} / ${i.weight}` }),
+      el('span', { class: 'bar' }, el('i', { class: f >= 0.8 ? '' : f >= 0.4 ? 'mid' : 'low', style: `width:${(f * 100).toFixed(0)}%` })), el('span', { class: 'cd', text: i.detail })); })));
     // replay timeline: rebuilt from the event log by the engine itself, so the curves are exactly what happened
     const tlBox = el('div', { class: 'db-tl' }, el('h4', { text: t('tl_title') }), el('p', { class: 'muted small', text: t('tl_building') }));
-    box.append(tlBox);
-    const rec = { scen: x, sc, out };
-    box.append(el('div', { class: 'db-actions' },
-      el('button', { class: 'ghost', onclick: () => this.printRecord(rec), text: '🖨 ' + t('rec_print') }),
-      el('button', { class: 'ghost', onclick: () => this.exportRecord(rec), text: t('rec_export') }),
-      el('button', { class: 'primary', onclick: () => ov.remove(), text: t('close') })));
+    analysis.append(tlBox);
+    // 4. summary: objectives and take-aways, then the record
+    const summary = el('div', {}, x ? [el('h4', { text: t('learning') }), el('ul', { class: 'muted' }, x.learning.map(l => el('li', { text: l })))] : null, reflect(notes, 'takeaways', t('db_sum_q')),
+      el('h4', { text: t('sbar_title') }), el('p', { class: 'muted small', text: t('sbar_t') }), el('div', { class: 'sbar' }, ...SBAR.map(k => reflect(notes, 'sbar_' + k, t('sbar_' + k)))),
+      el('div', { class: 'db-actions' },
+        el('button', { class: 'ghost', onclick: () => this.printRecord(rec), text: '🖨 ' + t('rec_print') }),
+        el('button', { class: 'ghost', onclick: () => this.exportRecord(rec), text: t('rec_export') }),
+        el('button', { class: 'primary', onclick: () => ov.remove(), text: t('close') })));
+    const P = pearls({ reactions, description, analysis, summary });
+    box.append(P.root);
     setTimeout(() => {
       const p = this.sim.patient, ss = this.sim.session; if (!p || !ss) return;
       try { rec.tl = buildTimeline({ spec: ss.spec, seed: ss.seed, scenario: this.sim.scenarioId, log: p.log, until: p.t }, SCENARIOS, 5); }
       catch (e) { tlBox.lastChild.textContent = String(e.message || e); return; }
-      this.drawTimeline(tlBox, rec.tl);
+      const mark = this.drawTimeline(tlBox, rec.tl), k = keyActionTimes(rec.tl.events);
+      keyBox.replaceChildren(el('table', { class: 'rec-crit' }, ...Object.entries(k).map(([n, s]) => el('tr', {}, el('td', { text: t('rec_k_' + n) }), el('td', { text: s == null ? '—' : mmss(s) })))));
+      momBox.lastChild.replaceWith(momentsList(rec.tl, k, (ev) => this.describe(ev), (s) => { P.show('analysis'); mark(s); }));
     }, 30);
     ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
     ov.append(box); document.body.append(ov);
@@ -1040,6 +1158,7 @@ export class UI {
     const cv = el('canvas', { class: 'tl-canvas', width: W, height: H }), read = el('div', { class: 'tl-read small' }, t('tl_hover'));
     const lanes = [{ keys: [['hr', '#3ee08f', t('vl_hr')], ['map', '#ff5d6c', t('vl_map')]], max: 200 }, { keys: [['spo2', '#4cc3ff', 'SpO₂']], max: 100 }, { keys: [['etco2', '#ffc23d', 'EtCO₂'], ['rr', '#e6e6e6', t('vl_rr')]], max: 60 }];
     const g = cv.getContext('2d'), lh = (H - 24) / lanes.length;
+    let markT = null;                                                    // a moment chosen in the debrief list
     const draw = (hx) => {
       g.clearRect(0, 0, W, H); g.font = '11px system-ui';
       lanes.forEach((ln, i) => {
@@ -1054,8 +1173,9 @@ export class UI {
       });
       g.fillStyle = 'rgba(255,255,255,.5)';
       for (let m = 0; m <= T / 60; m += Math.max(1, Math.round(T / 60 / 8))) g.fillText(`${m}′`, X(m * 60) - 4, H - 4);
-      for (const e of tl.events) { g.strokeStyle = e.ok ? 'rgba(176,124,255,.75)' : 'rgba(255,93,108,.6)'; g.lineWidth = 1; g.beginPath(); g.moveTo(X(e.t), 2); g.lineTo(X(e.t), H - 16); g.stroke(); }
-      if (hx != null) { g.strokeStyle = '#fff'; g.beginPath(); g.moveTo(hx, 2); g.lineTo(hx, H - 16); g.stroke(); }
+      for (const e of tl.events) { g.strokeStyle = e.type === 'instructor.inject' ? 'rgba(255,160,60,.95)' : e.ok ? 'rgba(176,124,255,.75)' : 'rgba(255,93,108,.6)'; g.lineWidth = 1; g.beginPath(); g.moveTo(X(e.t), 2); g.lineTo(X(e.t), H - 16); g.stroke(); }
+      if (markT != null) { g.fillStyle = 'rgba(255,211,77,.18)'; g.fillRect(X(markT) - 3, 2, 6, H - 18); g.strokeStyle = '#ffd34d'; g.lineWidth = 2; g.beginPath(); g.moveTo(X(markT), 2); g.lineTo(X(markT), H - 16); g.stroke(); }
+      if (hx != null) { g.strokeStyle = '#fff'; g.lineWidth = 1; g.beginPath(); g.moveTo(hx, 2); g.lineTo(hx, H - 16); g.stroke(); }
     };
     draw(null);
     cv.addEventListener('pointermove', (ev) => {
@@ -1067,6 +1187,7 @@ export class UI {
     });
     cv.addEventListener('pointerleave', () => { draw(null); read.textContent = t('tl_hover'); });
     box.replaceChildren(el('h4', { text: t('tl_title') }), el('p', { class: 'muted small', text: t('tl_note') }), cv, read);
+    return (s) => { markT = s; draw(null); cv.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); };
   }
   /** Competency record of the finished session (learner pseudonym, case, body, verified score, criteria, key action times). */
   _recordData(rec) {
@@ -1075,7 +1196,7 @@ export class UI {
       patient: ss?.spec, durationS: p ? Math.round(p.t) : null, score: sc ? { pct: Math.round(sc.pct), grade: sc.grade, points: sc.total, max: sc.max } : null,
       verified: !!rec.out.server?.verified, sessionId: ss?.id || null,
       criteria: sc ? sc.items.map(i => ({ label: getLang() === 'fr' && CRITERION_FR[i.id] ? CRITERION_FR[i.id] : i.label, points: +i.points.toFixed(1), weight: i.weight, detail: i.detail })) : [],
-      keyActionsS: k };
+      keyActionsS: k, selfAssessment: rec.self || null, reflection: rec.notes || {} };
   }
   exportRecord(rec) {
     const d = this._recordData(rec), a = el('a', { href: URL.createObjectURL(new Blob([JSON.stringify(d, null, 1)], { type: 'application/json' })), download: `tidal-record-${(d.learner || 'learner').replace(/[^\w-]+/g, '_')}-${d.date.slice(0, 10)}.json` });
@@ -1092,6 +1213,11 @@ export class UI {
       el('table', { class: 'rec-crit' }, el('tr', {}, el('th', { text: t('rec_criterion') }), el('th', { text: t('points') }), el('th', { text: t('rec_detail') })), ...d.criteria.map(c => el('tr', {}, el('td', { text: c.label }), el('td', { text: `${c.points} / ${c.weight}` }), el('td', { text: c.detail || '' })))),
       el('h2', { text: t('rec_times') }),
       el('table', { class: 'rec-crit' }, ...Object.entries(d.keyActionsS || {}).map(([k, v]) => el('tr', {}, el('td', { text: t('rec_k_' + k) }), el('td', { text: fmtT(v) })))),
+      d.selfAssessment ? el('h2', { text: t('db_self_title') }) : null,
+      d.selfAssessment ? el('p', { text: `${t('db_self_pct')}: ${d.selfAssessment.pct} % · ` + ANTS_CATEGORIES.map(k => `${t('db_a_' + k)} ${d.selfAssessment.ants?.[k] ?? '—'}/4`).join(' · ') }) : null,
+      ...['reactions', 'description', 'takeaways'].filter(k => d.reflection?.[k]).map(k => el('p', {}, el('b', { text: t('db_rec_' + k) + ': ' }), d.reflection[k])),
+      SBAR.some(k => d.reflection?.['sbar_' + k]) ? el('h2', { text: t('sbar_title') }) : null,
+      ...SBAR.filter(k => d.reflection?.['sbar_' + k]).map(k => el('p', {}, el('b', { text: t('sbar_' + k) + ': ' }), d.reflection['sbar_' + k])),
       el('p', { class: 'rec-foot', text: t('disclaimer') }));
     document.body.append(page);
     const done = () => { page.remove(); window.removeEventListener('afterprint', done); };

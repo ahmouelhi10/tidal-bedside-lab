@@ -61,7 +61,7 @@ export const DEMARCHE = {
         const shocks = evs(p, 'defib.shock'); if (!shocks.length) return 0;
         let ok = 0;
         for (const s of shocks) {
-          const rosc = p.arrest.events.some(e => e.type === 'rhythm' && e.t >= s.t && e.t <= s.t + 10 && !['VF', 'VT', 'VT_PULSELESS', 'PEA', 'ASYSTOLE'].includes(e.to));
+          const rosc = p.arrest.events.some(e => e.type === 'rhythm' && e.t >= s.t && e.t <= s.t + 10 && !['VF', 'VT', 'VT_PULSELESS', 'TORSADES', 'PEA', 'ASYSTOLE'].includes(e.to));
           if (rosc || evs(p, 'cpr.start', e => e.t >= s.t && e.t <= s.t + 10).length) ok++;
         }
         return ok / shocks.length;

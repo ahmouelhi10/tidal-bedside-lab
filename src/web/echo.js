@@ -37,8 +37,8 @@ const STEP_MEASURES = { plax: ['lvef'], psax: [], a4c: ['tapse'], subcostal: ['e
 const CALIPER_TARGETS = ['lvedd', 'rv_basal', 'tapse', 'effusion', 'ivc_max', 'ivc_min'];
 /** Vital signs shown while scanning: monitor key, label, css colour class, change that counts as a trend over 60 s. */
 const VITALS = [['hr', 'HR', 'hr', 5], ['map', 'ec_bp', 'co', 5], ['spo2', 'SpO₂', 'sp', 2], ['rr', 'ec_rr', 'rr', 3], ['etco2', 'EtCO₂', 'co', 3], ['temp', 'T°', '', 0.3]];
-const LAB_SHOW = { abg: ['ph', 'paco2', 'pao2', 'lactate', 'k', 'ica', 'glucose'], lactate: ['lactate'], chem: ['na', 'k', 'glucose'], cbc: ['hb', 'hct'] };
-const LAB_LABEL = { ph: 'pH', paco2: 'PaCO₂', pao2: 'PaO₂', lactate: 'Lact', na: 'Na⁺', k: 'K⁺', ica: 'Ca²⁺', glucose: 'Glu', hb: 'Hb', hct: 'Hct' };
+const LAB_SHOW = { abg: ['ph', 'paco2', 'pao2', 'lactate', 'k', 'ica', 'glucose'], lactate: ['lactate'], chem: ['na', 'k', 'glucose'], cbc: ['hb', 'hct', 'plt'], coag: ['inr', 'aptt', 'fib', 'plt'], cardiac: ['tnt', 'ntprobnp', 'ddimer'], renal: ['creat', 'urea'] };
+const LAB_LABEL = { ph: 'pH', paco2: 'PaCO₂', pao2: 'PaO₂', lactate: 'Lact', na: 'Na⁺', k: 'K⁺', ica: 'Ca²⁺', glucose: 'Glu', hb: 'Hb', hct: 'Hct', plt: 'Plq', inr: 'INR', aptt: 'TCA', fib: 'Fib', tnt: 'TnT', ntprobnp: 'BNP', ddimer: 'DD', creat: 'Créat', urea: 'Urée' };
 
 /** Cardiac cycle: LV size factor (1 = end-diastole at the R wave, 0 = end-systole). */
 function lvFill(ph) {
@@ -530,7 +530,7 @@ export class EchoLab {
       el('div', { class: 'ec-labv' }, ...LAB_SHOW[l.kind].filter(k => k in l.values).map(k => el('span', { class: l.flags[k] === 'H' ? 'hi' : l.flags[k] === 'L' ? 'lo' : '' }, el('i', { text: LAB_LABEL[k] }), `${l.values[k]}${l.flags[k] === 'H' ? '↑' : l.flags[k] === 'L' ? '↓' : ''}`)))));
     for (const l of pending) kids.push(el('div', { class: 'small muted', text: `⏳ ${t('lab_' + l.kind)} · ${mm(l.readyAt - p.t)}` }));
     if (!done.length && !pending.length) kids.push(el('p', { class: 'small muted', text: t('ec_pt_nolab') }));
-    kids.push(el('div', { class: 'ec-chips' }, ...['abg', 'chem', 'lactate', 'cbc'].map(k => el('button', { class: 'ec-chip', onclick: () => { this.ui.act({ type: 'lab.order', kind: k }, t('lab_' + k)); this._ptAt = -1; }, text: '+ ' + t('lab_' + k) }))));
+    kids.push(el('div', { class: 'ec-chips' }, ...['abg', 'chem', 'lactate', 'cbc', 'coag'].map(k => el('button', { class: 'ec-chip', onclick: () => { this.ui.act({ type: 'lab.order', kind: k }, t('lab_' + k)); this._ptAt = -1; }, text: '+ ' + t('lab_' + k) }))));
     box.replaceChildren(...kids);
   }
   _ecg() {

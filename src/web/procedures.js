@@ -79,7 +79,7 @@ export const PROCEDURES = [
         run: () => [{ type: 'defib.pads' }, { type: 'monitor.attach', items: { ecgLeads: true } }] },
       { id: 'rhythm', cam: 'default', en: 'Pause ≤ 5 s: analyse the rhythm', fr: 'Pause ≤ 5 s : analyser le rythme',
         why: { en: 'VF or pulseless VT = shockable. PEA or asystole = not shockable (CPR + epinephrine, look for the cause).', fr: 'FV ou TV sans pouls = choquable. AESP ou asystolie = non choquable (RCP + adrénaline, chercher la cause).' },
-        msg: ({ p }) => { const k = p.arrest.key, sh = ['VF', 'VT'].includes(k); return { en: `Rhythm: ${k} - ${sh ? 'shockable' : 'not shockable'}`, fr: `Rythme : ${k} - ${sh ? 'choquable' : 'non choquable'}` }; } },
+        msg: ({ p }) => { const k = p.arrest.key, sh = ['VF', 'VT_PULSELESS', 'TORSADES'].includes(k); return { en: `Rhythm: ${k} - ${sh ? 'shockable' : 'not shockable'}`, fr: `Rythme : ${k} - ${sh ? 'choquable' : 'non choquable'}` }; } },
       { id: 'charge', cam: 'default', en: 'Resume CPR and charge 200 J', fr: 'Reprendre la RCP et charger à 200 J',
         why: { en: 'Charge while compressions continue: the hands-off time is only the shock itself.', fr: 'Charger pendant les compressions : la seule pause est le choc lui-même.' },
         run: () => [{ type: 'defib.setEnergy', energy: 200 }, { type: 'defib.charge' }] },

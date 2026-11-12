@@ -23,6 +23,17 @@ class EcgGen {
       const a = clamp(c.vfAmp ?? 0.8, 0.05, 1.4);
       for (let i = 0; i < 4; i++) { this.vf[i] += TAU * (this.vfF[i] + 0.9 * Math.sin(this.t * (0.7 + i * 0.31))) * dt; v += Math.sin(this.vf[i] + i) * (0.5 - i * 0.08); }
       v *= a * (0.6 + 0.4 * Math.sin(this.t * 1.7 + 1));
+    } else if (key === 'TORSADES') {
+      const f = 4.2; this.vf[0] += TAU * f * dt;
+      v = 1.1 * Math.sin(this.vf[0]) * Math.sin(TAU * this.t / 2.2) + 0.15 * Math.sin(2 * this.vf[0] + 0.6);
+      if (!this._vtLast || this.t - this._vtLast > 1 / f) { this._vtLast = this.t; this.rBeat = true; }
+    } else if (key === 'AV_BLOCK2W') {
+      // 4:3 Wenckebach: P every pp, PR 160 -> 260 -> 340 ms, the fourth P is not conducted
+      const pp = 0.75 * rr, cyc = 4 * pp, PR = [0.16, 0.26, 0.34], c0 = Math.floor(this.t / cyc) * cyc, qw = c.bbb ? 1.7 : 1;
+      for (const base of [c0 - cyc, c0]) for (let i = 0; i < 4; i++) {
+        const tp = base + i * pp; v += 0.12 * g(this.t - tp, 0, 0.025);
+        if (i < 3) { const tau = this.t - (tp + PR[i]); v += 1.0 / Math.sqrt(qw) * g(tau, 0, 0.011 * qw) - 0.26 * g(tau, 0.026 * qw, 0.010 * qw) + 0.28 * g(tau, 0.24, 0.045); if (tau >= 0 && tau < dt) this.rBeat = true; }
+      }
     } else if (key === 'ASYSTOLE' || !key) {
       v = 0.02 * Math.sin(this.t * 0.9) + 0.015 * (rnd() - 0.5);
     } else if (key === 'VT_PULSE' || key === 'VT_PULSELESS') {
@@ -39,13 +50,22 @@ class EcgGen {
         const amp = key === 'PEA' ? 0.55 : 0.9;
         v = amp * g(tau, 0.03, 0.045) - 0.18 * g(tau, 0.12, 0.05) - 0.35 * amp * g(tau, 0.30, 0.07);
       } else {
-        v = 1.0 * g(tau, 0, 0.011) - 0.12 * g(tau, -0.028, 0.008) - 0.26 * g(tau, 0.026, 0.010) + (key === 'SVT' ? 0.10 : 0.28) * g(tau, Math.min(0.24, rr * 0.38), 0.045);
-        if (key !== 'AF' && key !== 'SVT') v += 0.12 * g(tn, -0.16, 0.025);
+        // electrolyte morphology (engine electrolytes.ecg()): peaked T, flat P / long PR, wide QRS, sine wave, U wave, long QT
+        const M = c.morph || {}, qw = 1 + (M.qrsWide || 0) + (c.bbb ? 0.7 : 0), tA = (key === 'SVT' ? 0.10 : 0.28) * (M.tAmp ?? 1), tW = 0.045 * (1 - 0.45 * (M.tNarrow || 0)), qt = M.qt || 1;
+        const tPos = Math.min(0.24 * qt, rr * 0.38 * qt);
+        v = 1.0 / Math.sqrt(qw) * g(tau, 0, 0.011 * qw) - 0.12 * g(tau, -0.028 * qw, 0.008 * qw) - 0.26 * g(tau, 0.026 * qw, 0.010 * qw) + tA * g(tau, tPos, tW);
+        if (M.u) v += 0.07 * M.u * g(tau, tPos + 0.12, 0.04);
+        const prX = key === 'AV_BLOCK1' ? 0.14 : 0;
+        if (key !== 'AF' && key !== 'SVT' && key !== 'FLUTTER') v += 0.12 * (M.pAmp ?? 1) * g(tn, -0.16 - (M.prS || 0) - prX, 0.025);
+        if (key === 'AV_BLOCK2') v += 0.12 * g(tau, rr / 2 - 0.08, 0.025);              // the blocked P wave between two conducted beats
+        if (key === 'FLUTTER') { const ph = (this.t * 5) % 1; v += -0.16 * (ph < 0.75 ? ph / 0.75 : (1 - ph) / 0.25) + 0.08; }   // sawtooth, 300/min
         if (key === 'AF') v += 0.035 * Math.sin(TAU * 7.3 * this.t) + 0.03 * (rnd() - 0.5);
+        if (M.sine) v = (1 - M.sine) * v + M.sine * 0.7 * Math.sin(TAU * (this.t - this.lastR) / rr);   // pre-terminal sine wave
       }
       if (key === 'AV_BLOCK3') { const pr = this.t % 0.8; v += 0.14 * g(pr, 0.2, 0.025); }
     }
     v += 0.012 * (rnd() - 0.5) + 0.02 * Math.sin(TAU * 0.25 * this.t);
+    if (c.seizure) v += 0.35 * (rnd() - 0.5) + 0.18 * Math.sin(TAU * 5.5 * this.t);   // muscle artefact while convulsing
     if (c.cprHz > 0) v += c.cprAmp * (Math.sin(TAU * c.cprHz * this.t) + 0.35 * Math.sin(TAU * 2 * c.cprHz * this.t + 1.1));
     if (c.shock > 0) v = c.shock * 3.0 * (c.shock > 0.5 ? 1 : -1) * (this.rnd() > 0.5 ? 1 : 0.4);
     return v;
@@ -104,7 +124,7 @@ export class Monitor {
     while (rem > 1e-6) {
       const h = Math.min(step, rem); rem -= h; this.t += h;
       this.shock = Math.max(0, this.shock - h);
-      const ctxE = { rhythm: key, hr: m.hr || p.circ.hr, vfAmp: p.arrest.vfAmp, cprHz, cprAmp: 0.55, shock: this.shock };
+      const ctxE = { rhythm: key, hr: m.hr || p.circ.hr, vfAmp: p.arrest.vfAmp, cprHz, cprAmp: 0.55, shock: this.shock, morph: p.lytes?.ecg?.(), bbb: p.bbb && !p.crises?.captured ? p.bbb : null, seizure: p.crises?.seizure && !p.drugs.effects({ inArrest: p.arrest.arrested }).paralyzed };
       const e = this.ecg.step(h, ctxE);
       if (this.ecg.rBeat && f.ecgLeads) { this.beats.push(this.t); this.flash = 1; if (this.onBeat && (perf || key === 'PEA')) this.onBeat(m.spo2); }
       this.beats = this.beats.filter(b => this.t - b < 2.5); this.compBeats = this.compBeats.filter(b => this.t - b < 2);
@@ -121,7 +141,8 @@ export class Monitor {
       let co2V = 0;
       if (capRR > 0) {
         this.breathPhase = (this.breathPhase + h * capRR / 60) % 1; const ph = this.breathPhase;
-        co2V = ph < 0.38 ? 0 : ph < 0.44 ? (ph - 0.38) / 0.06 * 0.92 : 0.92 + (ph - 0.44) / 0.56 * 0.10;
+        const obs = clamp(p.crises?.br ?? 0, 0, 1), L = 0.06 + 0.32 * obs, a = 0.92 - 0.35 * obs;   // bronchospasm: slow upstroke and a rising plateau ("shark fin")
+        co2V = ph < 0.38 ? 0 : ph < 0.38 + L ? a * (1 - Math.exp(-3 * (ph - 0.38) / L)) / (1 - Math.exp(-3)) : a + (1 - a) * (ph - 0.38 - L) / (0.62 - L);
         co2V *= etco2;
       }
       const vals = [e, plethV, abpV, co2V];

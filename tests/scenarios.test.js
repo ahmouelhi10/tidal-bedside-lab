@@ -7,10 +7,10 @@ import { scen, mk, runScript, aclsTeam } from './helpers/bots.js';
 import { expertRun, idleRun } from './helpers/experts.js';
 
 const IDS = Object.keys(SCENARIOS);
-const KINDS = new Set(['ACLS', 'Anaesthesia', 'Trauma', 'Echo', 'Infectiology']);
+const KINDS = new Set(['ACLS', 'Anaesthesia', 'Trauma', 'Echo', 'Infectiology', 'Emergency']);
 
 test('catalogue: every scenario is complete, serialisable and keyed consistently', () => {
-  assert.deepEqual(IDS.sort(), ['cico', 'echo_hypovolaemia', 'echo_lv_failure', 'echo_rv', 'echo_tamponade', 'hemorrhage', 'inf_cap', 'inf_esbl', 'inf_pyelo', 'inf_sab', 'obese_rsi', 'opioid_pea', 'stemi_vf', 'tension_ptx', 'tube_desat', 'witnessed_vf']);
+  assert.deepEqual(IDS.sort(), ['cico', 'echo_hypovolaemia', 'echo_lv_failure', 'echo_rv', 'echo_tamponade', 'hemorrhage', 'inf_cap', 'inf_esbl', 'inf_pyelo', 'inf_sab', 'obese_rsi', 'opioid_pea', 'stemi_vf', 'tension_ptx', 'tube_desat', 'witnessed_vf', 'anaphylaxis', 'mh_crisis', 'last_block', 'heart_block', 'torsades', 'dka', 'status_epilepticus', 'copd_exacerbation', 'svt', 'hyperkalaemia', 'hypoglycaemia', 'mobitz_brady'].sort());
   for (const id of IDS) {
     const s = SCENARIOS[id];
     assert.equal(s.id, id);

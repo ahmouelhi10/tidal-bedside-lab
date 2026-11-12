@@ -7,6 +7,8 @@ import { initLang, t } from './i18n.js';
 import { Bronchoscope } from './bronchoscope.js';
 import { HandsOn } from './handson.js';
 import { EchoLab } from './echo.js';
+import { selfAssess } from './debrief-ui.js';
+import { LiveLink } from './live.js';
 
 initLang();
 const root = document.getElementById('app');
@@ -27,6 +29,7 @@ try { scene = new Scene(glCanvas, monCanvas); } catch (e) {
 const ui = new UI(root, { sim, scene, monitor, sound, glCanvas, monCanvas });
 ui.bronch = new Bronchoscope({ sim, scene, ui });
 ui.echoLab = new EchoLab({ sim, scene, ui });
+ui.liveLink = new LiveLink({ sim, ui });
 scene.loadPatientAsset?.(); scene.loadInstruments?.();
 if (!noGl) ui.handsOn = new HandsOn({ scene, ui });
 scene.onAsset = () => { if (ui.panelOpen && ui.tab === 'tab_guide') ui.buildTabs(); };                          // realistic patient (assets/patient.glb); the procedural body stays until it is ready
@@ -43,7 +46,7 @@ sim.addEventListener('engineEvent', (e) => {
   if (x.type === 'rhythm') {
     ui.log(`${x.from} → ${x.to}`);
     if (x.to === 'NSR' || x.to === 'SINUS') ui.toast(t('ev_rosc'));
-    else if (['VF', 'VT', 'PEA', 'ASYSTOLE'].includes(x.to)) ui.toast(t('ev_arrest') + ': ' + x.to, true);
+    else if (['VF', 'VT_PULSELESS', 'TORSADES', 'PEA', 'ASYSTOLE'].includes(x.to)) ui.toast(t('ev_arrest') + ': ' + x.to, true);
   } else ui.log(x.type);
 });
 sim.addEventListener('action', (e) => { try { scene.gesture?.(e.detail.event, e.detail.result); } catch (err) { console.warn('gesture skipped:', err && err.message); }
@@ -58,7 +61,7 @@ ui.onPreview = (setup) => {
 };
 ui.onResume = () => { scene.setPatient(sim.session.spec, ui.liveTone); scene.setCamera('default'); ui.syncPins(); };
 ui.onStart = async (setup) => {
-  ui.bronch.stop(); ui.echoLab.stop();
+  ui.bronch.stop(); ui.echoLab.stop(); ui.liveLink.stop();
   await sim.start({ scenarioId: setup.scenarioId, spec: setup.spec, learner: setup.learner });
   ui.liveTone = setup.tone;
   scene.setPatient(sim.session.spec, setup.tone);
@@ -69,10 +72,11 @@ ui.onStart = async (setup) => {
 };
 ui.onFinish = async () => {
   if (!sim.patient || sim.finished) return;
-  ui.bronch.stop(); ui.echoLab.stop();
+  ui.bronch.stop(); ui.echoLab.stop(); ui.liveLink.stop();
   sim.setSpeed(0);
-  const out = await sim.finish();
-  ui.showDebrief(out);
+  const [out, self] = await Promise.all([sim.finish(), selfAssess()]);   // the learner rates themselves before seeing the score
+  if (self && out?.server && sim.session?.id) fetch(`/api/sessions/${sim.session.id}/self`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(self) }).catch(() => {});   // kept for validity studies
+  ui.showDebrief(out, self);
 };
 ui.onLang = () => { if (noGl) ui.dom.noGl.hidden = false; };
 
@@ -100,7 +104,7 @@ function loop(now) {
       scene.draw(dt, p);
       ui.updatePins();
       uiAcc += dt; if (uiAcc > 0.1) { uiAcc = 0; ui.refresh(); }
-      alarmCheck += dt; if (alarmCheck > 1) { alarmCheck = 0; if (p.flags.ecgLeads && ['VF', 'VT', 'ASYSTOLE'].includes(p.arrest.key) && sim.speed > 0) sound.alarm(now / 1000); }
+      alarmCheck += dt; if (alarmCheck > 1) { alarmCheck = 0; if (p.flags.ecgLeads && ['VF', 'VT_PULSELESS', 'TORSADES', 'ASYSTOLE'].includes(p.arrest.key) && sim.speed > 0) sound.alarm(now / 1000); }
     }
   } catch (err) { console.error(err); sim.setSpeed(0); ui.toast(String(err && err.message || err), true); }
   requestAnimationFrame(loop);

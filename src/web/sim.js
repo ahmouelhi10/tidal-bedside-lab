@@ -63,7 +63,7 @@ export class Sim extends EventTarget {
       if (this.trend.length > 400) this.trend.shift();
     }
     // surface engine notes and arrest events once
-    while (this.lastNoteIdx < p.notes.length) { const n = p.notes[this.lastNoteIdx++]; this.emit('note', n); }
+    while (this.lastNoteIdx < p.notes.length) { const n = p.notes[this.lastNoteIdx++]; if (!n.text.startsWith('instructor:')) this.emit('note', n); }   // the instructor's changes and markers stay hidden from the learner
     const ev = p.arrest.events;
     while (this._seenEvents < ev.length) { const e = ev[this._seenEvents++]; this.emit('engineEvent', e); }
   }
@@ -72,7 +72,7 @@ export class Sim extends EventTarget {
   act(event) {
     const p = this.patient; if (!p || this.finished) return { ok: false, error: 'no active session' };
     const r = p.dispatch(event);
-    this.emit('action', { event, result: r, t: p.t });
+    if (event.type !== 'instructor.inject') this.emit('action', { event, result: r, t: p.t });   // not announced to the learner: the patient simply changes
     return r;
   }
 

@@ -8,6 +8,8 @@ import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import { SCENARIOS, scenarioList } from '../engine/scenarios.js';
 import { EVENT_TYPES } from '../engine/patient.js';
+import { createLive } from './live.js';
+import { researchRows, validateSelf } from './research.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
@@ -136,6 +138,8 @@ export function createServer({ port = 8080, host = '0.0.0.0', dataDir = path.joi
     return a.length === b.length && crypto.timingSafeEqual(a, b);
   };
 
+  const live = createLive({ store, send, fail, readJson, info });
+  const salt = apiToken || crypto.randomBytes(16).toString('hex');   // learner pseudonyms in the research export (stable while API_TOKEN is)
   const publicView = (r) => ({ id: r.id, scenario: r.scenario, learner: r.learner, spec: r.spec, seed: r.seed, createdAt: r.createdAt, status: r.status, result: r.result ?? null });
 
   async function api(req, res, url) {
@@ -143,6 +147,12 @@ export function createServer({ port = 8080, host = '0.0.0.0', dataDir = path.joi
     const m = req.method;
     if (parts[1] === 'health' && parts.length === 2 && m === 'GET') return send(res, 200, { status: 'ok', version: VERSION, uptimeS: Math.round((Date.now() - started) / 1000), scenarios: Object.keys(SCENARIOS).length, node: process.version });
     if (parts[1] === 'scenarios' && parts.length === 2 && m === 'GET') return send(res, 200, scenarioList());
+    if (parts[1] === 'live' && parts.length >= 4) return live.handle(req, res, parts);   // live instructor channel (see live.js)
+    if (parts[1] === 'research' && parts[2] === 'export' && parts.length === 3 && m === 'GET') {   // de-identified rows for validity studies (research.js)
+      if (!authorised(req)) return fail(res, apiToken ? 401 : 403, apiToken ? 'bearer token required' : 'research export is disabled (set API_TOKEN)');
+      const { rows, csv } = researchRows(store.list(), salt);
+      return url.searchParams.get('format') === 'json' ? send(res, 200, rows) : send(res, 200, csv, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="tidal-research.csv"' });
+    }
     if (parts[1] === 'sessions') {
       if (parts.length === 2 && m === 'POST') {
         const b = await readJson(req);
@@ -182,6 +192,12 @@ export function createServer({ port = 8080, host = '0.0.0.0', dataDir = path.joi
         store.put(done); info('info', 'session submitted', { id, verified: result.verified, pct: out.score?.pct });
         return send(res, 200, publicView(done));
       }
+      if (parts.length === 4 && parts[3] === 'self' && m === 'POST') {   // the learner's self-assessment, once, after the case
+        if (rec.status !== 'submitted') return fail(res, 409, 'submit the session first');
+        if (rec.self) return fail(res, 409, 'self-assessment already recorded');
+        const v = validateSelf(await readJson(req)); if (!v.ok) return fail(res, 400, v.error);
+        store.put({ ...rec, self: v.self }); return send(res, 200, { ok: true });
+      }
       return fail(res, 405, 'method not allowed');
     }
     return fail(res, 404, 'not found');
@@ -213,7 +229,7 @@ export function createServer({ port = 8080, host = '0.0.0.0', dataDir = path.joi
     try {
       const url = new URL(req.url, 'http://localhost');
       if (url.pathname.startsWith('/api/')) {
-        if (rateLimited(ip)) return fail(res, 429, 'too many requests');
+        if (!url.pathname.startsWith('/api/live/') && rateLimited(ip)) return fail(res, 429, 'too many requests');   // the live channel has its own limits (live.js)
         await api(req, res, url);
       } else serveStatic(req, res, url);
     } catch (e) {
@@ -226,7 +242,7 @@ export function createServer({ port = 8080, host = '0.0.0.0', dataDir = path.joi
   return {
     server, store,
     listen: () => new Promise((resolve) => server.listen(port, host, () => resolve(server.address()))),
-    close: () => new Promise((resolve) => { server.close(() => resolve()); server.closeAllConnections?.(); }),
+    close: () => new Promise((resolve) => { live.close(); server.close(() => resolve()); server.closeAllConnections?.(); }),
   };
 }
 

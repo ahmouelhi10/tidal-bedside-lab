@@ -4,6 +4,7 @@
 //
 // Scoring is derived ONLY from the replay log / patient state. Every criterion cites a registry id (references.js);
 // criteria whose numeric target is a design choice say so (ref 'design') and are listed in docs/VALIDATION.md.
+import { TEAM_CRITERION } from './team.js';
 import { clamp } from './util.js';
 import { DEMARCHE, scoreDemarche } from './demarche.js';
 import { Ward, ABX, categorize } from './infection.js';
@@ -34,7 +35,7 @@ export const criteria = {
     const d = tc - t0; return { frac: lerpScore(d, targetS, targetS * 4), detail: `${d.toFixed(0)} s` };
   }),
   firstShock: (targetS = 120) => C('t_first_shock', `First shock within ${targetS} s of VF/pVT onset`, 14, 'design', p => {
-    const t0 = arrestT0(p); if (t0 === null || !['VF', 'VT_PULSELESS'].includes(p.arrest.events.find(e => e.type === 'rhythm' && e.t >= t0)?.to)) return null;
+    const t0 = arrestT0(p); if (t0 === null || !['VF', 'VT_PULSELESS', 'TORSADES'].includes(p.arrest.events.find(e => e.type === 'rhythm' && e.t >= t0)?.to)) return null;
     const s = first(p.shockLog); if (!s) return { frac: 0, detail: 'no shock delivered' };
     const d = s.t - t0; return { frac: lerpScore(d, targetS, targetS * 3), detail: `${d.toFixed(0)} s` };
   }),
@@ -68,7 +69,7 @@ export const criteria = {
   avoidClass3: () => C('avoid_class3', 'No Class 3 (No Benefit) drugs: vasopressin, routine calcium / bicarbonate', 8, 'aha2025_part9', p => {
     const t0 = arrestT0(p); if (t0 === null) return null;
     const hk = p.arrest.causes.hyperkalemia === true || p.arrest.causes.hyperkalemia === false;     // true/false both mean the cause existed
-    const bad = [].concat(drugsGiven(p, 'vasopressin'), hk ? [] : drugsGiven(p, 'calciumChloride'), hk ? [] : p.drugs.log.filter(d => d.key === 'sodiumBicarbonate')).filter(d => d.t >= t0);
+    const bad = [].concat(drugsGiven(p, 'vasopressin'), hk ? [] : drugsGiven(p, 'calciumChloride'), hk ? [] : drugsGiven(p, 'calciumGluconate'), hk ? [] : p.drugs.log.filter(d => d.key === 'sodiumBicarbonate')).filter(d => d.t >= t0);
     return { frac: bad.length ? Math.max(0, 1 - 0.5 * bad.length) : 1, detail: bad.length ? `given: ${bad.map(b => b.key).join(', ')}` : 'none given' };
   }),
   airwayVent: () => C('airway_vent', 'Oxygen + ventilation: advanced airway or BVM; waveform capnography on', 8, 'aha2025_part9', p => {
@@ -440,8 +441,9 @@ SCENARIOS.echo_tamponade = {
 };
 SCENARIOS.echo_rv = {
   id: 'echo_rv', title: 'Focused echo: sudden breathlessness after surgery', difficulty: 'advanced', durationS: 900, kind: 'Echo',
-  summary: 'A 61-year-old man, 6 days after hip surgery, suddenly breathless and tachycardic. Look at the right ventricle as carefully as the left, measure TAPSE, and decide.',
+  summary: 'A 61-year-old man, 6 days after hip surgery, suddenly breathless and tachycardic. His left calf is swollen and tender. Look at the right ventricle as carefully as the left, measure TAPSE, and decide.',
   spec: { sex: 'M', age: 61, heightCm: 176, weightKg: 88, rvLoad: 0.7, causes: [] },
+  history: { recentSurgery: true, dvtSigns: true },
   init(p) { echoInit(p); },
   timeline: [],
   score: echoScore([]),
@@ -611,7 +613,7 @@ export const scenarioList = () => Object.values(SCENARIOS).map(({ id, title, dif
 export function scoreSession(p, scenario = p.scenario) {
   if (!scenario?.score) return { items: [], total: 0, max: 0, pct: 0, grade: '-' };
   const items = [];
-  for (const c of scenario.score()) {
+  for (const c of [...scenario.score(), TEAM_CRITERION]) {           // closed-loop communication counts once the learner led the team
     const r = c.eval(p); if (r === null || r === undefined) continue;
     items.push({ id: c.id, label: c.label, weight: c.weight, ref: c.ref, frac: +clamp(r.frac, 0, 1).toFixed(3), points: +(clamp(r.frac, 0, 1) * c.weight).toFixed(2), detail: r.detail });
   }
@@ -619,3 +621,331 @@ export function scoreSession(p, scenario = p.scenario) {
   const pct = max ? total / max * 100 : 0;
   return { items, total: +total.toFixed(1), max, pct: +pct.toFixed(1), grade: pct >= 90 ? 'A' : pct >= 80 ? 'B' : pct >= 70 ? 'C' : pct >= 60 ? 'D' : 'F' };
 }
+
+
+// ----------------------------------------------------------------------------- anaesthesia and emergency crises (crises.js)
+const ventilatedStart = (p, { rate = 12 } = {}) => {
+  p.flags.ecgLeads = p.flags.spo2Probe = p.flags.nibp = p.flags.capnography = p.flags.ivAccess = p.flags.tempProbe = true;
+  p.airway = { device: 'ett', patency: 1, intubated: true };
+  p.vent = { mode: 'ctrl', rate, vt: Math.round(7 * p.body.pbw), fio2: 0.5, peep: 5, seal: 0.97, efficiency: 1 };
+  p.drugs.bolus('propofol', 120, 0); p.drugs.infusion('propofol', 6);
+  p.nibp = { sbp: 118, dbp: 70, t: 0, valid: true };
+};
+const firstDrugAfter = (p, keys, t0) => p.drugs.log.find(d => keys.includes(d.key) && d.t >= t0) || null;
+const timedCrit = (id, label, w, ref, keys, t0Of, full, zero) => C(id, label, w, ref, p => {
+  const t0 = t0Of(p); if (t0 == null) return null;
+  const d = firstDrugAfter(p, keys, t0); if (!d) return { frac: 0, detail: 'not given' };
+  return { frac: lerpScore(d.t - t0, full, zero), detail: `${d.key} ${Math.round(d.t - t0)} s after onset` };
+});
+
+SCENARIOS.anaphylaxis = {
+  id: 'anaphylaxis', title: 'Anaphylaxis at induction', difficulty: 'intermediate', durationS: 1200, kind: 'Anaesthesia',
+  summary: 'A 38-year-old woman (165 cm, 64 kg) has just been induced and intubated for a laparoscopy. One minute after the antibiotic and the muscle relaxant her pressure falls, the airway pressure rises and her chest is flushed. Recognise it and treat it.',
+  spec: { sex: 'F', age: 38, heightCm: 165, weightKg: 64, causes: [] },
+  startMonitored: true,
+  init(p) { ventilatedStart(p); p.drugs.bolus('rocuronium', 40, 0); },
+  timeline: [{ t: 60, run: p => { p.crises.trigger('anaphylaxis', p.t); p.anaOnset = p.t; } }],
+  track(p) { if (p.anaOnset != null) p.minMap = Math.min(p.minMap ?? 200, p.circ.mapArt); },
+  score: () => [
+    timedCrit('ana_adrenaline', 'Adrenaline (IM 0.5 mg or IV titrated 50 mcg) within 5 min of onset', 30, 'rcuk2021_anaph', ['epinephrine'], p => p.anaOnset, 120, 300),
+    C('ana_fluids', 'Fluid challenge >= 1 L', 15, 'rcuk2021_anaph', p => { const v = p.vol.totalCrystalloid; return { frac: Math.min(1, v / 1.0), detail: `${(v * 1000).toFixed(0)} mL crystalloid` }; }),
+    C('ana_map', 'Lowest MAP after onset (65 full marks, 40 none)', 15, 'design', p => ({ frac: lerpScore(65 - (p.minMap ?? 100), 0, 25), detail: `nadir ${(p.minMap ?? 100).toFixed(0)} mmHg` })),
+    criteria.survival('Alive with MAP >= 65 at the end'),
+  ],
+  learning: ['Anaphylaxis under anaesthesia: sudden hypotension, high airway pressure (bronchospasm), flushing or no skin sign at all. Neuromuscular blockers and antibiotics are the usual triggers (NAP6).', 'Adrenaline is the treatment: 0.5 mg IM, or under anaesthesia 50 mcg IV boluses titrated to effect, then an infusion if it keeps coming back.', 'Give fluid fast: the capillaries leak and the patient is empty.', 'Antihistamines and steroids are no longer part of the emergency treatment.'],
+};
+
+SCENARIOS.mh_crisis = {
+  id: 'mh_crisis', title: 'Malignant hyperthermia', difficulty: 'advanced', durationS: 1800, kind: 'Anaesthesia',
+  summary: 'A 24-year-old man (180 cm, 78 kg), intubated with succinylcholine and maintained on sevoflurane for an appendicectomy. Twenty minutes in, the EtCO2 keeps rising despite more ventilation and he is getting tachycardic. Find the cause and treat it.',
+  spec: { sex: 'M', age: 24, heightCm: 180, weightKg: 78, causes: [], mhSusceptible: true },
+  startMonitored: true,
+  init(p) {
+    ventilatedStart(p); p.drugs.stop('propofol'); p.drugs.bolus('succinylcholine', 120, 0); p.crises.mhAt = 0;
+    p.volatile.set(2.2); p.volatile.fa = 1.8; p.volatile.p = [1.75, 1.2, 0.15];   // 20 min of sevoflurane maintenance at ~0.9 MAC
+  },
+  timeline: [],
+  track(p) { if (p.mhRecognisedT == null && p.resp.etco2 > 55) p.mhRecognisedT = p.t; p.maxTemp = Math.max(p.maxTemp ?? 0, p.therm.tc); },
+  score: () => [
+    C('mh_dantrolene', 'Dantrolene >= 2.5 mg/kg within 10 min of EtCO2 > 55', 35, 'hopkins2021', p => {
+      const t0 = p.mhRecognisedT; if (t0 == null) return null;
+      const tot = drugsGiven(p, 'dantrolene').reduce((s, d) => s + d.amount, 0), d = drugsGiven(p, 'dantrolene')[0];
+      if (!d || tot < 2.5 * p.body.weightKg) return { frac: d ? 0.3 : 0, detail: `${tot.toFixed(0)} mg in total` };
+      return { frac: lerpScore(d.t - t0, 600, 1200), detail: `${tot.toFixed(0)} mg, first ${Math.round(d.t - t0)} s after EtCO2 > 55` };
+    }),
+    C('mh_trigger_off', 'Vaporiser off within 5 min of EtCO2 > 55 (hypnosis kept with propofol)', 10, 'hopkins2021', p => { const t0 = p.mhRecognisedT; if (t0 == null) return null; const e = p.log.find(x => x.type === 'vaporizer.set' && x.percent === 0 && x.t >= t0); return { frac: e ? lerpScore(e.t - t0, 300, 900) : 0, detail: e ? `${Math.round(e.t - t0)} s` : 'sevoflurane left on' }; }),
+    C('mh_cool', 'Active cooling started', 10, 'hopkins2021', p => ({ frac: p.log.some(e => e.type === 'thermal.device' && e.target != null && e.target < 37) ? 1 : 0, detail: '' })),
+    C('mh_vent', 'Minute ventilation increased (rate x1.5 or more)', 10, 'hopkins2021', p => ({ frac: p.vent.rate >= 18 ? 1 : 0, detail: `rate ${p.vent.rate}/min` })),
+    C('mh_temp', 'Peak core temperature (38.5 full marks, 40 none)', 15, 'design', p => ({ frac: lerpScore((p.maxTemp ?? 37) - 38.5, 0, 1.5), detail: `peak ${(p.maxTemp ?? 37).toFixed(1)} C` })),
+    criteria.survival(),
+  ],
+  learning: ['The earliest sign is an unexplained rise in EtCO2 despite more ventilation, with tachycardia; temperature rises later.', 'Stop the volatile, hyperventilate with 100 % oxygen, call for help and give dantrolene 2.5 mg/kg, repeated every 10 min until it settles.', 'Cool actively, treat hyperkalaemia and watch for arrhythmias and rhabdomyolysis.'],
+};
+
+SCENARIOS.last_block = {
+  id: 'last_block', title: 'Local anaesthetic toxicity after a nerve block', difficulty: 'advanced', durationS: 1200, kind: 'Anaesthesia',
+  summary: 'A 70-year-old woman (158 cm, 55 kg) is having a femoral nerve block with bupivacaine for a hip fracture. Shortly after the injection she becomes confused and stops answering. Treat what is happening.',
+  spec: { sex: 'F', age: 70, heightCm: 158, weightKg: 55, causes: [] },
+  startMonitored: true,
+  init(p) { p.flags.ecgLeads = p.flags.spo2Probe = p.flags.nibp = p.flags.ivAccess = true; p.nibp = { sbp: 132, dbp: 76, t: 0, valid: true }; },
+  timeline: [{ t: 20, run: p => { p.drugs.bolus('bupivacaine', 110, p.t); p.lastT0 = p.t; } }],
+  track(p) { if (p.lastSignT == null && (p.crises.seizure || p.arrest.arrested || p.crises.laCv > 0.6)) p.lastSignT = p.t; },
+  score: () => [
+    timedCrit('last_lipid', 'Lipid emulsion 20 % (1.5 mL/kg) within 3 min of the first sign', 35, 'neal2018', ['lipid'], p => p.lastSignT, 60, 300),
+    C('last_airway', 'Oxygen / airway support', 15, 'neal2018', p => ({ frac: p.log.some(e => ['o2.mask', 'airway.set', 'airway.intubate', 'vent.set'].includes(e.type)) ? 1 : 0, detail: '' })),
+    C('last_no_vaso', 'No vasopressin (avoid in LAST)', 10, 'neal2018', p => ({ frac: drugsGiven(p, 'vasopressin').length ? 0 : 1, detail: '' })),
+    criteria.survival(),
+  ],
+  learning: ['Confusion, seizures, then arrhythmias and cardiovascular collapse shortly after a local anaesthetic: think LAST.', 'Stop injecting, call for help, oxygenate, treat seizures, and give lipid emulsion 20 %: 1.5 mL/kg over 2-3 min, then 0.25 mL/kg/min.', 'In cardiac arrest use smaller adrenaline doses (< 1 mcg/kg), avoid vasopressin, and keep CPR going: recovery can take long.'],
+};
+
+SCENARIOS.heart_block = {
+  id: 'heart_block', title: 'Complete heart block with shock', difficulty: 'intermediate', durationS: 1200, kind: 'ACLS',
+  summary: 'A 78-year-old man (172 cm, 74 kg) with high blood pressure and type 2 diabetes has had dizzy spells all day and is now grey and drowsy. The monitor shows a very slow rhythm. Stabilise him.',
+  spec: { sex: 'M', age: 78, heightCm: 172, weightKg: 74, causes: [], rhythm: 'AV_BLOCK3' },
+  history: { hypertension: true, diabetes: true },
+  startMonitored: true,
+  init(p) { p.flags.ecgLeads = p.flags.spo2Probe = p.flags.nibp = true; p.nibp = { sbp: 78, dbp: 42, t: 0, valid: true }; },
+  timeline: [],
+  track(p) { if (p.pacedT == null && p.crises.captured) p.pacedT = p.t; },
+  score: () => [
+    C('hb_pads', 'Pads on within 2 min', 10, 'erc2025', p => { const e = p.log.find(x => x.type === 'defib.pads'); return { frac: e ? lerpScore(e.t, 120, 360) : 0, detail: e ? `${Math.round(e.t)} s` : 'no pads' }; }),
+    C('hb_capture', 'Paced with capture within 8 min', 35, 'erc2025', p => ({ frac: p.pacedT == null ? 0 : lerpScore(p.pacedT, 480, 900), detail: p.pacedT == null ? 'no capture' : `capture at ${Math.round(p.pacedT)} s` })),
+    C('hb_analgesia', 'Analgesia or sedation for pacing', 10, 'erc2025', p => ({ frac: ['morphine', 'fentanyl', 'midazolam', 'ketamine'].some(k => drugsGiven(p, k).length) ? 1 : 0, detail: '' })),
+    criteria.survival(),
+  ],
+  learning: ['Bradycardia with shock, syncope, ischaemia or heart failure needs treatment now: atropine 500 mcg (repeat to 3 mg), then pacing or an adrenaline/isoprenaline infusion.', 'Atropine rarely works in complete heart block below the AV node: go to pacing early.', 'Transcutaneous pacing: pads, demand mode, rate 60-70, increase the current until each spike gives a QRS AND a pulse. It hurts: give analgesia and sedation.'],
+};
+
+// ----------------------------------------------------------------------------- torsades de pointes (crises.js, cpr.js)
+SCENARIOS.torsades = {
+  id: 'torsades', title: 'Torsades de pointes', difficulty: 'advanced', durationS: 1500, kind: 'ACLS',
+  summary: 'A 66-year-old woman (162 cm, 60 kg) takes sotalol for atrial fibrillation and treatment for high blood pressure, and has had diarrhoea for three days. She is on the monitor in the emergency department with a slow pulse when she suddenly loses consciousness. Recognise the rhythm, treat it and stop it coming back.',
+  spec: { sex: 'F', age: 66, heightCm: 162, weightKg: 60, causes: [], rhythm: 'SINUS_BRADY' },
+  history: { hypertension: true },
+  startMonitored: true,
+  init(p) {
+    p.flags.ecgLeads = p.flags.spo2Probe = p.flags.nibp = p.flags.ivAccess = true; p.nibp = { sbp: 124, dbp: 70, t: 0, valid: true };
+    p.crises.qtDrug = 120; p.lytes.kBase = 2.9; p.lytes.mgBase = 0.55;   // sotalol and hypokalaemia: QTc ~ 570 ms (REF drew2010)
+  },
+  timeline: [{ t: 75, run: p => { if (!p.arrest.arrested) { p.arrest.arrest('TORSADES', p.t); p.tdpCount = (p.tdpCount || 0) + 1; } } }],
+  track(p) {
+    if (p.tdpT0 == null && p.arrest.key === 'TORSADES') p.tdpT0 = p.t;
+    if (p.arrest.key === 'TORSADES') p.lastTdpT = p.t;
+  },
+  score: () => [
+    C('tdp_mg', 'Magnesium sulfate 2 g IV within 5 min of the first run', 35, 'drew2010', p => {
+      const t0 = p.tdpT0; if (t0 == null) return null;
+      const doses = drugsGiven(p, 'magnesium'), tot = doses.reduce((s, d) => s + d.amount, 0);
+      if (tot < 2) return { frac: 0, detail: `${tot} g in total` };
+      let acc = 0, at = null; for (const d of doses) { acc += d.amount; if (acc >= 2) { at = d.t; break; } }
+      return { frac: lerpScore(at - t0, 300, 900), detail: `2 g reached ${Math.round(at - t0)} s after the first run` };
+    }),
+    C('tdp_no_amio', 'No amiodarone (it lengthens the QT)', 10, 'drew2010', p => ({ frac: drugsGiven(p, 'amiodarone').length ? 0 : 1, detail: '' })),
+    C('tdp_rate', 'Heart rate raised (isoprenaline or overdrive pacing)', 15, 'drew2010', p => ({ frac: drugsGiven(p, 'isoprenaline').length || p.log.some(e => (e.type === 'drug.infusion' && e.drug === 'isoprenaline' && e.rate > 0) || (e.type === 'pacing.set' && e.on)) ? 1 : 0, detail: '' })),
+    C('tdp_quiet', 'No torsades in the last 5 min', 15, 'design', p => ({ frac: p.lastTdpT == null || p.t - p.lastTdpT >= 300 ? 1 : 0, detail: p.lastTdpT == null ? '' : `last run at ${Math.round(p.lastTdpT)} s` })),
+    criteria.survival(),
+  ],
+  learning: ['Torsades de pointes is a polymorphic VT whose QRS axis twists around the baseline, on a long QT. Pulseless or sustained: defibrillate.', 'Give magnesium sulfate 2 g IV even if the magnesium level is normal; it stops recurrences without shortening the QT.', 'Correct potassium (aim 4.5-5), stop every QT-prolonging drug (here sotalol), and avoid amiodarone.', 'Recurrent runs after pauses: raise the heart rate with isoprenaline or overdrive pacing.'],
+};
+
+// ----------------------------------------------------------------------------- diabetic ketoacidosis (metabolic.js)
+const firstEv = (p, pred) => p.log.find(pred) || null;
+SCENARIOS.dka = {
+  id: 'dka', title: 'Diabetic ketoacidosis', difficulty: 'intermediate', durationS: 14400, kind: 'Emergency',
+  summary: 'A 22-year-old woman (165 cm, 55 kg) with type 1 diabetes has been vomiting for two days and stopped her insulin because she was not eating. She is drowsy, breathing deeply and dry. Confirm the diagnosis and run the first four hours of treatment.',
+  spec: { sex: 'F', age: 22, heightCm: 165, weightKg: 55, causes: [], dka: true, ketones: 5.5, glucose: 28, potassium: 3.6, dehydrationL: 3.5 },
+  history: { diabetes: true },
+  startMonitored: true,
+  init(p) { p.flags.ecgLeads = p.flags.spo2Probe = p.flags.nibp = true; p.nibp = { sbp: 98, dbp: 70, t: 0, valid: true }; },
+  timeline: [],
+  track(p) { p.minK = Math.min(p.minK ?? 9, p.lytes.k); if (p.ket0 == null) p.ket0 = p.keto.ketones; },
+  score: () => [
+    C('dka_tests', 'Capillary ketones and a blood gas within 15 min', 10, 'jbds2023', p => {
+      const k = firstEv(p, e => e.type === 'lab.order' && e.kind === 'ketones'), g = firstEv(p, e => e.type === 'lab.order' && e.kind === 'abg');
+      return { frac: k && g ? lerpScore(Math.max(k.t, g.t), 900, 2700) : k || g ? 0.4 : 0, detail: `${k ? 'ketones ' + Math.round(k.t / 60) + ' min' : 'no ketones'}, ${g ? 'gas ' + Math.round(g.t / 60) + ' min' : 'no gas'}` };
+    }),
+    C('dka_fluid', 'IV fluid >= 1 L started within 30 min', 15, 'jbds2023', p => { const e = firstEv(p, x => x.type === 'fluid.bolus'); return { frac: e ? lerpScore(e.t, 1800, 3600) : 0, detail: e ? `${Math.round(e.t / 60)} min` : 'no fluid' }; }),
+    C('dka_insulin', 'Fixed-rate insulin 0.1 U/kg/h within 1 h, no insulin bolus', 20, 'jbds2023', p => {
+      const e = firstEv(p, x => x.type === 'drug.infusion' && x.drug === 'insulin' && x.rate > 0); if (!e) return { frac: 0, detail: 'no insulin infusion' };
+      const uKgH = e.rate * 60 / p.body.weightKg, ok = uKgH >= 0.08 && uKgH <= 0.12, bolus = drugsGiven(p, 'insulin').length > 0;
+      return { frac: (ok ? 1 : 0.5) * lerpScore(e.t, 3600, 7200) * (bolus ? 0.6 : 1), detail: `${uKgH.toFixed(2)} U/kg/h at ${Math.round(e.t / 60)} min${bolus ? ', insulin bolus given' : ''}` };
+    }),
+    C('dka_potassium', 'Potassium replaced, K never below 3.5', 15, 'jbds2023', p => {
+      const given = drugsGiven(p, 'potassiumChloride').reduce((s, d) => s + d.amount, 0);
+      return { frac: (p.minK >= 3.5 ? 0.7 : 0) + (given > 0 ? 0.3 : 0), detail: `lowest K ${p.minK.toFixed(1)}, ${given} mmol KCl` };
+    }),
+    C('dka_glucose10', 'Glucose 10 % added once glucose < 14', 10, 'jbds2023', p => {
+      if (p.lytes.glucose >= 14 && !p.log.some(e => e.type === 'drug.infusion' && e.drug === 'glucose')) return null;
+      return { frac: p.log.some(e => e.type === 'drug.infusion' && e.drug === 'glucose' && e.rate > 0) || p.lytes.glucose >= 14 ? 1 : 0, detail: `glucose ${p.lytes.glucose.toFixed(1)}` };
+    }),
+    C('dka_ketones', 'Ketones falling >= 0.5 mmol/L/h', 15, 'jbds2023', p => { const h = p.t / 3600, fall = (p.ket0 - p.keto.ketones) / Math.max(h, 0.1); return { frac: lerpScore(0.5 - fall, 0, 0.4), detail: `${fall.toFixed(2)} mmol/L/h` }; }),
+    criteria.survival(),
+  ],
+  learning: ['DKA: ketones >= 3 mmol/L (or ketonuria 2+), glucose > 11 or known diabetes, and HCO3 < 15 or pH < 7.3.', 'Fluids first (0.9 % saline 1 L in the first hour), then a fixed-rate insulin infusion of 0.1 U/kg/h, without a bolus.', 'Insulin and the correction of the acidosis drive potassium into the cells: add 40 mmol/L potassium to the fluid once K is below 5.5 and check it hourly.', 'When glucose falls below 14 mmol/L, keep the insulin running and add glucose 10 % at 125 mL/h: the target is the ketones, not the glucose.'],
+};
+
+// ----------------------------------------------------------------------------- status epilepticus (crises.js)
+const benzoDoses = (p) => p.drugs.log.filter(d => (d.key === 'midazolam' && d.amount >= 5) || (d.key === 'lorazepam' && d.amount >= 2) || (d.key === 'diazepam' && d.amount >= 5));
+SCENARIOS.status_epilepticus = {
+  id: 'status_epilepticus', title: 'Status epilepticus', difficulty: 'intermediate', durationS: 2700, kind: 'Emergency',
+  summary: 'A 34-year-old man (178 cm, 80 kg) with epilepsy ran out of his tablets. The paramedics bring him in still fitting: the seizure started about 5 minutes ago. He has no IV access yet. Stop the seizure and keep him safe.',
+  spec: { sex: 'M', age: 34, heightCm: 178, weightKg: 80, causes: [] },
+  startMonitored: true,
+  init(p) { p.flags.spo2Probe = p.flags.ecgLeads = true; p.crises.trigger('seizure', -300); },
+  timeline: [],
+  track(p) { if (p.seStopT == null && !p.crises.se.active) p.seStopT = p.t; if (p.crises.se.active) p.seStopT = null; },
+  score: () => [
+    C('se_benzo', 'First benzodiazepine within 5 min (IM midazolam 10 mg, IV lorazepam 4 mg or IV diazepam 10 mg)', 25, 'glauser2016', p => {
+      const d = p.drugs.log.find(x => (x.key === 'midazolam' && x.amount >= 10) || (x.key === 'lorazepam' && x.amount >= 4) || (x.key === 'diazepam' && x.amount >= 10));
+      return d ? { frac: lerpScore(d.t, 300, 900), detail: `${d.key} ${d.amount} mg at ${Math.round(d.t)} s` } : { frac: 0, detail: 'no adequate benzodiazepine dose' };
+    }),
+    C('se_two_benzo', 'No more than two benzodiazepine doses', 10, 'glauser2016', p => { const n = benzoDoses(p).length; return { frac: n <= 2 ? 1 : 0, detail: `${n} doses` }; }),
+    C('se_second', 'Second-line drug by 20 min if the seizure continues (levetiracetam 60 mg/kg, max 4.5 g)', 20, 'esett2019', p => {
+      const b = benzoDoses(p)[0]; const stillAt = (t) => p.crises.se.active || (p.seStopT != null && p.seStopT > t) || p.notes.some(n => n.text === 'seizure stopped' && n.t > t);
+      if (!b || !stillAt(b.t + 600)) return null;
+      const l = p.drugs.log.find(x => x.key === 'levetiracetam' && x.amount >= Math.min(4500, 40 * p.body.weightKg));
+      return l ? { frac: lerpScore(l.t, 1200, 2400), detail: `levetiracetam ${l.amount} mg at ${Math.round(l.t / 60)} min` } : { frac: 0, detail: 'no second-line drug' };
+    }),
+    C('se_glucose', 'Glucose checked within 15 min', 10, 'glauser2016', p => { const e = p.log.find(x => x.type === 'lab.order' && ['abg', 'chem'].includes(x.kind)); return { frac: e ? lerpScore(e.t, 900, 1800) : 0, detail: e ? `${Math.round(e.t / 60)} min` : 'not checked' }; }),
+    C('se_oxygen', 'Oxygen within 5 min', 10, 'glauser2016', p => { const e = p.log.find(x => ['o2.mask', 'niv.set', 'vent.set'].includes(x.type)); return { frac: e ? lerpScore(e.t, 300, 900) : 0, detail: e ? `${Math.round(e.t)} s` : 'none' }; }),
+    C('se_stopped', 'Seizure stopped by 30 min', 15, 'glauser2016', p => { const t = p.crises.se.active ? null : p.seStopT; return { frac: t == null ? 0 : lerpScore(t, 1200, 2400), detail: t == null ? 'still seizing' : `stopped at ${Math.round(t / 60)} min` }; }),
+    criteria.survival(),
+  ],
+  learning: ['A seizure lasting 5 minutes is status epilepticus: treat it, do not wait.', 'First line: a benzodiazepine, IM midazolam 10 mg if there is no IV line, or IV lorazepam 4 mg; repeat once after 5-10 min if it continues.', 'Benzodiazepines work less well the longer the seizure lasts. By 20 minutes give a second-line drug: levetiracetam 60 mg/kg (max 4.5 g), fosphenytoin or valproate.', 'Check glucose, give oxygen, protect the airway. Still fitting at 40 minutes: anaesthesia and intubation (refractory status).'],
+};
+
+// ----------------------------------------------------------------------------- COPD exacerbation with hypercapnic respiratory failure (respiratory.js)
+SCENARIOS.copd_exacerbation = {
+  id: 'copd_exacerbation', title: 'COPD exacerbation', difficulty: 'intermediate', durationS: 5400, kind: 'Emergency',
+  summary: 'A 71-year-old man (172 cm, 68 kg) with severe COPD has been more breathless for three days with more sputum. He is sitting up, using his neck muscles, and drowsy. Give the right oxygen, treat the airway obstruction, and decide on ventilatory support.',
+  spec: { sex: 'M', age: 71, heightCm: 172, weightKg: 68, causes: [], copd: 1 },
+  startMonitored: true,
+  preRunS: 2400,
+  init(p) { p.flags.spo2Probe = p.flags.ecgLeads = p.flags.nibp = true; p.crises.asthma = 0.75; },
+  timeline: [],
+  track(p) { if (p.flags.spo2Probe) { p.highO2S = (p.highO2S ?? 0) + (p.o2 && p.resp.spo2 > 96 ? p.dt : 0); p.inTargetS = (p.inTargetS ?? 0) + (p.t > 900 && p.resp.spo2 >= 88 && p.resp.spo2 <= 94 ? p.dt : 0); } },
+  score: () => [
+    C('copd_target', 'SpO2 kept at 88-92 % after the first 15 min (titrated oxygen)', 15, 'beasley2017_o2', p => ({ frac: Math.min(1, (p.inTargetS ?? 0) / Math.max(1, p.t - 900) / 0.7), detail: `${Math.round(100 * (p.inTargetS ?? 0) / Math.max(1, p.t - 900))} % of the time in 88-94 %` })),
+    C('copd_no_high_o2', 'No high-concentration oxygen (SpO2 > 96 % on oxygen < 10 min)', 15, 'beasley2017_o2', p => ({ frac: lerpScore((p.highO2S ?? 0) / 60, 10, 30), detail: `${Math.round((p.highO2S ?? 0) / 60)} min above 96 %` })),
+    C('copd_bronchodilator', 'Nebulised salbutamol within 10 min', 10, 'gold2024', p => { const d = drugsGiven(p, 'salbutamol')[0]; return { frac: d ? lerpScore(d.t, 600, 1800) : 0, detail: d ? `${Math.round(d.t / 60)} min` : 'none' }; }),
+    C('copd_steroid', 'Systemic corticosteroid given', 5, 'gold2024', p => ({ frac: drugsGiven(p, 'hydrocortisone').length || drugsGiven(p, 'prednisolone').length ? 1 : 0, detail: '' })),
+    C('copd_gas', 'Blood gas within 15 min', 10, 'davidson2016_niv', p => { const e = p.log.find(x => x.type === 'lab.order' && x.kind === 'abg'); return { frac: e ? lerpScore(e.t, 900, 2400) : 0, detail: e ? `${Math.round(e.t / 60)} min` : 'none' }; }),
+    C('copd_niv', 'Bilevel NIV started within 60 min for a persistent respiratory acidosis', 20, 'davidson2016_niv', p => { const e = p.log.find(x => x.type === 'niv.set' && x.mode === 'bipap'); return { frac: e ? lerpScore(e.t, 3600, 5400) : 0, detail: e ? `BiPAP ${e.ipap}/${e.epap} at ${Math.round(e.t / 60)} min` : 'no NIV' }; }),
+    C('copd_ph', 'pH >= 7.30 at the end', 15, 'davidson2016_niv', p => ({ frac: lerpScore(7.30 - p.resp.pH, 0, 0.08), detail: `pH ${p.resp.pH.toFixed(2)}` })),
+    criteria.survival(),
+  ],
+  learning: ['In COPD at risk of CO2 retention, aim for SpO2 88-92 % with a 24-28 % Venturi mask: high-concentration oxygen raises the PaCO2 (less hypoxic vasoconstriction, Haldane effect, less hypoxic drive).', 'Treat the obstruction: nebulised salbutamol (with ipratropium), prednisolone 30-40 mg, antibiotics if the sputum is purulent.', 'Check a blood gas early. If pH < 7.35 and PaCO2 > 6.5 kPa (49 mmHg) persist after medical treatment, start bilevel NIV (IPAP 15 rising to 20+, EPAP 4-5) and recheck the gas within 1-2 h.'],
+};
+
+// ----------------------------------------------------------------------------- cases that use the existing engine
+const ecg12At = (p) => p.log.find(e => (e.type === 'order' && e.what === 'ecg12') || e.type === 'exam.ecg12') || null;
+const ecg12Crit = (ref, within = 300) => C('ecg12', `12-lead ECG within ${within / 60} min`, 10, ref, p => { const e = ecg12At(p); return { frac: e ? lerpScore(e.t, within, within * 3) : 0, detail: e ? `${Math.round(e.t)} s` : 'no 12-lead' }; });
+
+SCENARIOS.svt = {
+  id: 'svt', title: 'Narrow-complex tachycardia', difficulty: 'beginner', durationS: 1200, kind: 'ACLS',
+  summary: 'A 32-year-old woman (165 cm, 60 kg) has had a fast regular heartbeat for 40 minutes. She is anxious but talking, with a pressure of 112/70. Make the diagnosis and bring her back to sinus rhythm safely.',
+  spec: { sex: 'F', age: 32, heightCm: 165, weightKg: 60, causes: [], rhythm: 'SVT' },
+  startMonitored: true,
+  init(p) { p.flags.ecgLeads = p.flags.spo2Probe = p.flags.nibp = true; p.nibp = { sbp: 112, dbp: 70, t: 0, valid: true }; },
+  timeline: [],
+  track(p) { if (p.svtEndT == null && p.arrest.key === 'NSR') p.svtEndT = p.t; },
+  score: () => [
+    ecg12Crit('erc2025'),
+    C('svt_vagal', 'Vagal manoeuvre first (modified Valsalva)', 15, 'appelboam2015', p => {
+      const v = p.log.find(e => e.type === 'procedure.vagal'), a = drugsGiven(p, 'adenosine')[0];
+      if (!v) return { frac: 0, detail: 'no vagal manoeuvre' };
+      return { frac: (a && a.t < v.t ? 0.3 : 1) * (v.technique === 'standard' ? 0.6 : 1), detail: `${v.technique || 'modified'} at ${Math.round(v.t)} s` };
+    }),
+    C('svt_adenosine', 'Adenosine 6 mg rapid IV bolus, then 12 mg (and 18 mg) if needed', 25, 'erc2025', p => {
+      const doses = drugsGiven(p, 'adenosine'); if (p.svtEndT != null && !doses.length) return null;   // a vagal manoeuvre was enough
+      if (!doses.length) return { frac: 0, detail: 'no adenosine' };
+      const first = doses[0], esc = doses.length < 2 || doses[1].amount >= 12;
+      return { frac: (first.amount === 6 ? 1 : 0.6) * (esc ? 1 : 0.6), detail: doses.map(d => d.amount + ' mg').join(', ') };
+    }),
+    C('svt_no_early_shock', 'No shock while she is stable and adenosine has not been tried', 15, 'erc2025', p => {
+      const s = p.log.find(e => e.type === 'defib.shock'); if (!s) return { frac: 1, detail: '' };
+      return { frac: drugsGiven(p, 'adenosine').filter(d => d.t < s.t).length >= 2 ? 1 : 0, detail: `shock at ${Math.round(s.t)} s` };
+    }),
+    C('svt_converted', 'Sinus rhythm within 10 min', 25, 'erc2025', p => ({ frac: p.svtEndT == null ? 0 : lerpScore(p.svtEndT, 600, 1200), detail: p.svtEndT == null ? 'still in SVT' : `sinus at ${Math.round(p.svtEndT)} s` })),
+    criteria.survival(),
+  ],
+  learning: ['Regular narrow-complex tachycardia without adverse features (shock, syncope, ischaemia, heart failure): vagal manoeuvres first. The modified Valsalva (strain 15 s, then lie flat with the legs raised) works about 2.5 times as often as the standard one.', 'Then adenosine 6 mg as a rapid bolus with a flush into a large vein, then 12 mg, then 18 mg. Warn the patient: a few seconds of chest discomfort and a pause on the monitor.', 'Synchronised cardioversion only if she becomes unstable or the drugs fail.'],
+};
+
+SCENARIOS.hyperkalaemia = {
+  id: 'hyperkalaemia', title: 'Severe hyperkalaemia', difficulty: 'intermediate', durationS: 3600, kind: 'Emergency',
+  summary: 'A 64-year-old man (175 cm, 80 kg) with chronic kidney disease on an ACE inhibitor feels weak. His potassium on the point-of-care gas is 7.0 mmol/L. Protect his heart and bring the potassium down.',
+  spec: { sex: 'M', age: 64, heightCm: 175, weightKg: 80, causes: [], potassium: 7.0 },
+  history: { hypertension: true },
+  startMonitored: true,
+  init(p) { p.flags.ecgLeads = p.flags.spo2Probe = p.flags.nibp = true; p.nibp = { sbp: 146, dbp: 84, t: 0, valid: true }; },
+  timeline: [],
+  track(p) { p.minGlu = Math.min(p.minGlu ?? 99, p.lytes.glucose); },
+  score: () => [
+    ecg12Crit('renal_hyperk2023'),
+    C('hk_calcium', 'IV calcium within 10 min (calcium chloride 10 % 10 mL or gluconate 10 % 30 mL)', 20, 'renal_hyperk2023', p => {
+      const d = p.drugs.log.find(x => (x.key === 'calciumChloride' && x.amount >= 500) || (x.key === 'calciumGluconate' && x.amount >= 1500));
+      return d ? { frac: lerpScore(d.t, 600, 1200), detail: `${d.key} ${d.amount} mg at ${Math.round(d.t / 60)} min` } : { frac: 0, detail: 'no calcium' };
+    }),
+    C('hk_insulin', 'Insulin 10 U with glucose 25 g within 20 min', 20, 'renal_hyperk2023', p => {
+      const proc = p.log.find(e => e.type === 'procedure.treat_hyperkalemia'); if (proc) return { frac: lerpScore(proc.t, 1200, 2400), detail: `insulin-glucose at ${Math.round(proc.t / 60)} min` };
+      const ins = drugsGiven(p, 'insulin').find(d => d.amount >= 8); if (!ins) return { frac: 0, detail: 'no insulin' };
+      const glu = drugsGiven(p, 'glucose').some(d => d.amount >= 20 && Math.abs(d.t - ins.t) <= 600) || p.log.some(e => e.type === 'drug.infusion' && e.drug === 'glucose' && e.rate > 0);
+      return { frac: lerpScore(ins.t, 1200, 2400) * (glu ? 1 : 0.3), detail: `insulin at ${Math.round(ins.t / 60)} min${glu ? '' : ', without glucose'}` };
+    }),
+    C('hk_salbutamol', 'Nebulised salbutamol 10-20 mg', 10, 'renal_hyperk2023', p => { const d = drugsGiven(p, 'salbutamol').reduce((s, x) => s + x.amount, 0); return { frac: Math.min(1, d / 10), detail: `${d} mg` }; }),
+    C('hk_recheck', 'Potassium rechecked', 10, 'renal_hyperk2023', p => { const n = p.log.filter(e => e.type === 'lab.order' && ['abg', 'chem'].includes(e.kind)).length; return { frac: n >= 1 ? 1 : 0, detail: `${n} samples` }; }),
+    C('hk_no_hypo', 'No hypoglycaemia (glucose >= 4 throughout)', 10, 'renal_hyperk2023', p => ({ frac: (p.minGlu ?? 5) >= 4 ? 1 : (p.minGlu ?? 5) >= 3 ? 0.4 : 0, detail: `lowest glucose ${(p.minGlu ?? 5).toFixed(1)}` })),
+    criteria.survival('No cardiac arrest; alive and stable at the end'),
+  ],
+  learning: ['K >= 6.5 is severe: get a 12-lead and put him on a monitor. Peaked T waves, flat P waves and a widening QRS warn of arrest.', 'Calcium first if the ECG is abnormal: it protects the heart within minutes but does not lower the potassium.', 'Shift potassium into cells: insulin 10 U with glucose 25 g (falls ~0.6-1 mmol/L in 30-60 min) and nebulised salbutamol 10-20 mg. Then remove it (dialysis, binders) and stop the cause.', 'Insulin can cause hypoglycaemia for hours: check glucose regularly.'],
+};
+
+SCENARIOS.hypoglycaemia = {
+  id: 'hypoglycaemia', title: 'Hypoglycaemia', difficulty: 'beginner', durationS: 2700, kind: 'Emergency',
+  summary: 'A 68-year-old woman (160 cm, 70 kg) with type 2 diabetes started on long-acting insulin last week. Her daughter found her drowsy and sweaty; she is not making sense. Find the cause and treat it so that it stays treated.',
+  spec: { sex: 'F', age: 68, heightCm: 160, weightKg: 70, causes: [], glucose: 1.8 },
+  history: { diabetes: true, hypertension: true },
+  startMonitored: true,
+  init(p) { p.flags.ecgLeads = p.flags.spo2Probe = p.flags.nibp = true; p.nibp = { sbp: 152, dbp: 86, t: 0, valid: true }; },
+  timeline: [],
+  track(p) { if (p.t > 300) p.minGluLate = Math.min(p.minGluLate ?? 99, p.lytes.glucose); },
+  score: () => [
+    C('hy_cbg', 'Capillary glucose within 5 min', 15, 'jbds_hypo2022', p => { const e = p.log.find(x => x.type === 'lab.order' && ['cbg', 'abg', 'chem'].includes(x.kind)); return { frac: e ? lerpScore(e.t, 300, 900) : 0, detail: e ? `${Math.round(e.t)} s` : 'not checked' }; }),
+    C('hy_treat', 'IV glucose 15-20 g or glucagon 1 mg within 10 min', 25, 'jbds_hypo2022', p => {
+      const d = p.drugs.log.find(x => (x.key === 'glucose' && x.amount >= 10) || (x.key === 'glucagon' && x.amount >= 0.5));
+      return d ? { frac: lerpScore(d.t, 600, 1200) * (d.key === 'glucose' && d.amount > 30 ? 0.7 : 1), detail: `${d.key} ${d.amount} at ${Math.round(d.t / 60)} min` } : { frac: 0, detail: 'not treated' };
+    }),
+    C('hy_recheck', 'Glucose rechecked within 15 min of treatment', 15, 'jbds_hypo2022', p => {
+      const d = p.drugs.log.find(x => x.key === 'glucose' || x.key === 'glucagon'); if (!d) return null;
+      const e = p.log.find(x => x.type === 'lab.order' && ['cbg', 'abg', 'chem'].includes(x.kind) && x.t > d.t); return { frac: e ? lerpScore(e.t - d.t, 900, 1800) : 0, detail: e ? `${Math.round((e.t - d.t) / 60)} min after` : 'no recheck' };
+    }),
+    C('hy_sustain', 'Kept up (long-acting insulin): glucose infusion or repeat dose, no relapse below 4', 25, 'jbds_hypo2022', p => {
+      const inf = p.log.some(e => e.type === 'drug.infusion' && e.drug === 'glucose' && e.rate > 0), lo = p.minGluLate ?? 99;
+      return { frac: (lo >= 4 ? 0.7 : lo >= 3 ? 0.3 : 0) + (inf ? 0.3 : 0), detail: `lowest after 5 min ${lo === 99 ? '-' : lo.toFixed(1)}${inf ? ', infusion started' : ''}` };
+    }),
+    criteria.survival(),
+  ],
+  learning: ['Anyone drowsy, confused or fitting: check the glucose. Hypoglycaemia is < 4 mmol/L.', 'Unconscious or cannot swallow: IV glucose 15-20 g (150-200 mL of 10 % or 75-100 mL of 20 %), or glucagon 1 mg IM without IV access. Recheck after 10-15 min.', 'With long-acting insulin or a sulfonylurea it comes back: start a glucose infusion and keep checking.'],
+};
+
+SCENARIOS.mobitz_brady = {
+  id: 'mobitz_brady', title: 'Bradycardia with Mobitz II block', difficulty: 'intermediate', durationS: 1500, kind: 'ACLS',
+  summary: 'A 72-year-old man (176 cm, 78 kg) felt faint twice this morning. His pulse is slow and his pressure low. Assess the rhythm, treat it, and protect him from asystole.',
+  spec: { sex: 'M', age: 72, heightCm: 176, weightKg: 78, causes: [], rhythm: 'AV_BLOCK2' },
+  history: { hypertension: true },
+  startMonitored: true,
+  init(p) { p.flags.ecgLeads = p.flags.spo2Probe = p.flags.nibp = true; p.nibp = { sbp: 84, dbp: 48, t: 0, valid: true }; },
+  timeline: [],
+  track(p) { if (p.supportT == null && (p.crises.captured || p.log.some(e => e.type === 'drug.infusion' && ['isoprenaline', 'epinephrine'].includes(e.drug) && e.rate > 0))) p.supportT = p.t; },
+  score: () => [
+    ecg12Crit('erc2025'),
+    C('mb_atropine', 'Atropine 500 mcg IV for adverse features', 10, 'erc2025', p => { const d = drugsGiven(p, 'atropine')[0]; return { frac: d ? lerpScore(d.t, 300, 900) : 0, detail: d ? `${d.amount} mcg at ${Math.round(d.t)} s` : 'no atropine' }; }),
+    C('mb_pads', 'Pads on (risk of asystole)', 10, 'erc2025', p => { const e = p.log.find(x => x.type === 'defib.pads'); return { frac: e ? lerpScore(e.t, 300, 900) : 0, detail: e ? `${Math.round(e.t)} s` : 'no pads' }; }),
+    C('mb_support', 'Pacing with capture or an isoprenaline / adrenaline infusion within 10 min', 30, 'erc2025', p => ({ frac: p.supportT == null ? 0 : lerpScore(p.supportT, 600, 1200), detail: p.supportT == null ? 'no interim measure' : `at ${Math.round(p.supportT / 60)} min` })),
+    C('mb_analgesia', 'Analgesia or sedation if paced', 10, 'erc2025', p => { if (!p.crises.captured && !p.log.some(e => e.type === 'pacing.set' && e.on)) return null; return { frac: ['morphine', 'fentanyl', 'midazolam', 'ketamine'].some(k => drugsGiven(p, k).length) ? 1 : 0, detail: '' }; }),
+    criteria.survival(),
+  ],
+  learning: ['Bradycardia with adverse features (shock, syncope, ischaemia, heart failure): atropine 500 mcg IV, repeat up to 3 mg.', 'Mobitz II, complete heart block, a recent pause > 3 s or asystole are a risk of asystole: start an interim measure even if atropine helps, pacing or isoprenaline 5 mcg/min or adrenaline 2-10 mcg/min, and call for transvenous pacing.', 'The block is below the AV node in Mobitz II, so atropine changes little.'],
+};
