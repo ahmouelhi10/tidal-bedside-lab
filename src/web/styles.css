@@ -126,6 +126,8 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; text-ali
 /* ---------------------------------------------------------------- left: briefing + action panel */
 .hud-left { position: absolute; z-index: 5; left: 14px; top: 64px; bottom: 130px; width: min(392px, 38vw); display: flex; flex-direction: column; gap: var(--s2); pointer-events: none; }
 .hud-left > * { pointer-events: auto; }
+/* wide screens: the centred dock does not reach the left panel, so the panel can use the full height */
+@media (min-width: 1440px) and (min-height: 521px) { .hud-left:not(.ward-mode) { bottom: 34px; } }
 .card, .hud-panel { background: var(--surface); backdrop-filter: var(--blur); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow); }
 .card { padding: 12px 14px; }
 .card h3:first-child { margin-top: 0; }
@@ -163,6 +165,8 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; text-ali
 .row2 { grid-template-columns: 1fr 1fr; } .row3 { grid-template-columns: 1fr 1fr auto; } .row4 { grid-template-columns: repeat(4, 1fr); }
 .stack { display: grid; gap: 6px; margin: var(--s2) 0; }
 .stack > button { text-align: left; justify-content: flex-start; }
+.stack.grid2 { grid-template-columns: 1fr 1fr; }   /* blood products and bleeding control side by side: the fluids panel fits a short window */
+.stack.grid2 > button { line-height: 1.25; }
 .bmi { font-size: 12px; font-weight: 600; color: var(--accent); align-self: center; padding: 6px 10px; border-radius: 999px; background: var(--accent-soft); justify-self: start; }
 .bmi.bad { color: var(--bad); background: var(--bad-soft); }
 .summary { margin: 6px 0; line-height: 1.5; color: var(--text-2); }

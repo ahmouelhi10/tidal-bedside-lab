@@ -662,7 +662,7 @@ export class UI {
     const vol = el('input', { type: 'number', id: 'inFluidVol', value: 500, min: 50, max: 3000, step: 50 }), mins = el('input', { type: 'number', id: 'inFluidMin', value: 15, min: 1, max: 120, step: 1 });
     const kind = el('select', { id: 'selFluid', 'aria-label': t('fl_kind') }, el('option', { value: 'balanced', text: t('fl_balanced') }), el('option', { value: 'saline', text: t('fl_saline') }));
     P.append(el('h4', { text: t('fl_crystalloid') }), el('div', { class: 'row3' }, el('label', { class: 'f' }, el('span', { text: t('fl_volume') }), vol), el('label', { class: 'f' }, el('span', { text: t('fl_minutes') }), mins), this.btn(t('fl_give'), () => this.act({ type: 'fluid.bolus', volumeL: Number(vol.value) / 1000, minutes: Number(mins.value), fluid: kind.value }, `${vol.value} mL ${t('fl_' + kind.value)}`), 'act')), el('label', { class: 'f' }, el('span', { text: t('fl_kind') }), kind),
-      el('div', { class: 'stack' },
+      el('div', { class: 'stack grid2' },
         this.btn(t('fl_prbc'), () => this.act({ type: 'blood.transfuse', kind: 'prbc' }, t('fl_prbc')), 'act'), this.btn(t('fl_whole'), () => this.act({ type: 'blood.transfuse', kind: 'whole' }, t('fl_whole')), 'act'), this.btn(t('fl_ffp'), () => this.act({ type: 'blood.transfuse', kind: 'ffp' }, t('fl_ffp')), 'act'), this.btn(t('fl_plt'), () => this.act({ type: 'blood.transfuse', kind: 'platelets' }, t('fl_plt')), 'act'), this.btn(t('fl_cryo'), () => this.act({ type: 'blood.transfuse', kind: 'cryo' }, t('fl_cryo')), 'act'),
         this.btn(t('fl_tourniquet'), () => this.act({ type: 'bleed.control' }, t('fl_tourniquet')), 'act danger'), this.btn(t('fl_bicarb'), () => this.act({ type: 'bicarb.bolus', mEq: 50 }, t('fl_bicarb')), 'act')));
   }
