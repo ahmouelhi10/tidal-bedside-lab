@@ -126,10 +126,10 @@ export class Respiratory {
       const sCo2 = 2.0 * dep.slope * (this.vco2Rest / 196) * (1 - 0.5 * this.copd) * (1 - 0.7 * exac);   // L/min/mmHg (hypercapnic response, UNVERIFIED); blunted in COPD
       // metabolic acidosis drives breathing: PaCO2 falls ~1.2-1.5 mmHg per mmol/L of lost HCO3 (Winter: 1.5 x HCO3 + 8, REF albert1967)
       const metDeficit = Math.max(0, -(this.hco3Metab - COPD_HCO3 * this.copd));
-      const B = 36.75 + dep.shift + COPD_PACO2_RISE * this.copd - WINTER_SLOPE * metDeficit;   // apnoeic threshold (UNVERIFIED)
+      const B = 36.75 + dep.shift + COPD_PACO2_RISE * this.copd - WINTER_SLOPE * metDeficit - 9 * (c.dyspnoea ?? 0);   // stiff, wet lungs drive fast breathing (J receptors, REF textbook; size REF design)   // apnoeic threshold (UNVERIFIED)
       const ve = Math.max(0, sCo2 * (this.paco2 - B) + 0.25 * hypox * dep.hypoxic * (1 - 0.6 * exac)) * (this.awakeTone * 0.0 + 1);
       const patency = clamp(c.airwayPatency ?? 1, 0, 1);
-      rr = clamp(14 * Math.sqrt(Math.max(ve, 0.01) / (6.5 * this.vco2Rest / 196)), 0, 40);   // resting rate ~14/min whatever the body size (REF textbook: adult 12-20/min); scaled to the resting CO2 output
+      rr = clamp(14 * Math.sqrt(Math.max(ve, 0.01) / (6.5 * this.vco2Rest / 196)) * (1 + 0.6 * (c.dyspnoea ?? 0)), 0, 40);   // resting rate ~14/min whatever the body size (REF textbook: adult 12-20/min); scaled to the resting CO2 output
       this.drive = ve;
       this.ve = ve * patency * (1 + 0.03 * (c.niv?.ps ?? 0));                         // pressure support adds tidal volume (REF design)
       vt = rr > 0 ? (this.ve * 1000) / Math.max(rr, 1) : 0;
@@ -176,8 +176,12 @@ export class Respiratory {
     let paco2Target, E;
     if (vaGross > 20) {
       const kappa = (qb * 863) / (vaGross * phi);
-      paco2Target = this.pv * kappa / (1 + kappa);
-      E = qb * (this.pv - paco2Target);
+      const pcap = this.pv * kappa / (1 + kappa);                   // end-capillary PCO2 of the blood that does cross the lungs
+      E = qb * (this.pv - pcap);
+      // with almost no pulmonary blood flow (arrest without CPR) arterial blood stagnates: a sample reads close to the venous CO2,
+      // not the washed-out alveolar gas (REF weil1986: arterial hypocapnia during CPR, venous hypercapnia; REF design below 5 % flow)
+      const wFlow = clamp(q / (0.05 * this.q0), 0, 1);
+      paco2Target = pcap * wFlow + this.pv * (1 - wFlow);
     } else { paco2Target = this.pv; E = 0; }
     this.paco2 = lag(this.paco2, paco2Target, dt, 10);
     this.pv += ((this.vco2Eff - E) * dtm) / this.cb;
@@ -215,7 +219,7 @@ export class Respiratory {
     // acid-base
     this.hco3Metab = -0.8 * (this.lactate - 1) + (c.bicarbMmol ?? 0) + COPD_HCO3 * this.copd;   // chronic CO2 retention: renal HCO3 retention (~0.35 per mmHg, REF textbook)
     this.hco3 = clamp(24 + 0.1 * (this.paco2 - 40) + this.hco3Metab, 2, 60);
-    this.pH = phHH(this.hco3, this.paco2);
+    this.pH = clamp(phHH(this.hco3, this.paco2), 6.5, 8.0);   // measuring range of a blood-gas analyser; beyond it the patient is not alive anyway (REF textbook)
     this.pao2 = this.paO2virtual / bohrShift(this.pH, this.paco2, T);
     // pulse oximeter: pure delay + first order lag; finger default 28 s delay (30-40 s band), slower when perfusion is poor
     const perfIdx = clamp(q / this.q0, 0.05, 1);

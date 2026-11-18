@@ -4,8 +4,28 @@
     {
       "name": "tidal-bedside-lab",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["src/server/server.js"],
+      "runtimeArgs": [
+        "src/server/server.js"
+      ],
       "port": 8080
+    },
+    {
+      "name": "tidal-echo",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "-e",
+        "import('./src/server/server.js').then(m=>m.createServer({port:8093,host:'127.0.0.1'}).listen())"
+      ],
+      "port": 8093
+    },
+    {
+      "name": "tidal-infect",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "-e",
+        "import('./src/server/server.js').then(m=>m.createServer({port:8094,host:'127.0.0.1'}).listen())"
+      ],
+      "port": 8094
     }
   ]
 }

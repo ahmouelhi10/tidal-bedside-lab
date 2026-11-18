@@ -44,9 +44,12 @@ class EcgGen {
         this.lastR = this.nextR; this.rBeat = true;
         const jitter = key === 'AF' ? (rnd() - 0.5) * 0.7 * rr : 0;
         this.nextR = this.lastR + Math.max(0.2, rr + jitter);
+        this.nBeat = (this.nBeat || 0) + 1;
       }
       const tau = this.t - this.lastR, tn = this.t - this.nextR;
-      if (wide) {
+      if (c.bigeminy && this.nBeat % 2 === 1) {                     // ventricular bigeminy: every other beat a wide extrasystole without P wave
+        v = -1.0 * g(tau, 0.05, 0.04) + 0.45 * g(tau, 0.32, 0.07);
+      } else if (wide) {
         const amp = key === 'PEA' ? 0.55 : 0.9;
         v = amp * g(tau, 0.03, 0.045) - 0.18 * g(tau, 0.12, 0.05) - 0.35 * amp * g(tau, 0.30, 0.07);
       } else {
@@ -124,7 +127,7 @@ export class Monitor {
     while (rem > 1e-6) {
       const h = Math.min(step, rem); rem -= h; this.t += h;
       this.shock = Math.max(0, this.shock - h);
-      const ctxE = { rhythm: key, hr: m.hr || p.circ.hr, vfAmp: p.arrest.vfAmp, cprHz, cprAmp: 0.55, shock: this.shock, morph: p.lytes?.ecg?.(), bbb: p.bbb && !p.crises?.captured ? p.bbb : null, seizure: p.crises?.seizure && !p.drugs.effects({ inArrest: p.arrest.arrested }).paralyzed };
+      const ctxE = { rhythm: key, hr: m.hr || p.circ.hr, vfAmp: p.arrest.vfAmp, cprHz, cprAmp: 0.55, shock: this.shock, morph: p.lytes?.ecg?.(), bbb: p.bbb && !p.crises?.captured ? p.bbb : null, seizure: p.crises?.seizure && !p.drugs.effects({ inArrest: p.arrest.arrested }).paralyzed, bigeminy: (p.ecgx || []).includes('bigeminy') && p.arrest.info.perfusing };
       const e = this.ecg.step(h, ctxE);
       if (this.ecg.rBeat && f.ecgLeads) { this.beats.push(this.t); this.flash = 1; if (this.onBeat && (perf || key === 'PEA')) this.onBeat(m.spo2); }
       this.beats = this.beats.filter(b => this.t - b < 2.5); this.compBeats = this.compBeats.filter(b => this.t - b < 2);

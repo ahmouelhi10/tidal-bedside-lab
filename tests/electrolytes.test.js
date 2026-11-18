@@ -42,7 +42,7 @@ test('insulin-glucose in hyperkalaemia: K falls 0.5-1.2 mmol/L at 60 min, glucos
 test('calcium chloride 1 g raises ionised calcium transiently', () => {
   const p = mk(), c0 = p.lytes.ica;
   p.dispatch({ type: 'iv.access' });
-  p.dispatch({ type: 'drug.bolus', drug: 'calciumChloride', amount: 1000 });
+  p.dispatch({ type: 'drug.bolus', drug: 'calciumChloride', amount: 6.8 });
   const rise = peak(p, 'ica', 120) - c0;
   assert.ok(rise >= 0.1 && rise <= 0.5, `iCa +${rise.toFixed(2)} mmol/L`);
   p.run(1800);
@@ -85,4 +85,14 @@ test('electrolyte state is part of the replay hash and replays identically', () 
   const q = replay({ spec: a.spec, seed: 4, scenario: null, log: a.log.map(e => ({ ...e })), until: a.t }, SCENARIOS);
   assert.equal(q.stateHash(), a.stateHash());
   assert.equal(q.lytes.ica, a.lytes.ica);
+});
+
+test('calcium is carried as mmol of elemental calcium: the same mmol of either salt acts the same; mg-sized amounts are rejected', async () => {
+  const { DRUGS, CALCIUM, CA_MAX_BOLUS_MMOL } = await import('../src/engine/drugs.js');
+  for (const k of Object.keys(CALCIUM)) { assert.equal(DRUGS[k].unit, 'mmol'); assert.equal(DRUGS[k].concUnit, 'mmol/L'); assert.ok(CALCIUM[k].presetMmol > 0 && CALCIUM[k].presetMmol <= CA_MAX_BOLUS_MMOL && CALCIUM[k].mmolPerMl > 0); }
+  const give = (drug, amount) => { const p = mk(); p.dispatch({ type: 'iv.access' }); const r = p.dispatch({ type: 'drug.bolus', drug, amount }); p.run(90); return { p, r }; };
+  const a = give('calciumChloride', 6.8), b = give('calciumGluconate', 6.8);
+  assert.ok(Math.abs(a.p.lytes.ica - b.p.lytes.ica) < 1e-9 && a.p.lytes.shield === b.p.lytes.shield && Math.abs(a.p.circ.mapArt - b.p.circ.mapArt) < 1e-6, 'identical effect per mmol');
+  const half = give('calciumChloride', 3.4); assert.ok(half.p.lytes.shield < a.p.lytes.shield && half.p.lytes.ica < a.p.lytes.ica, 'dose-dependent');
+  for (const bad of [1000, 3000, 0, -1]) { const x = give('calciumChloride', bad); assert.equal(x.r.ok, false, `amount ${bad}`); assert.equal(x.p.lytes.shield, 0); }
 });

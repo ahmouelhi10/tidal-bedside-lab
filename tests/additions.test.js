@@ -19,7 +19,7 @@ test('blood gas: chloride 98-106 and anion gap 8-16 when healthy; lactic acidosi
 });
 
 test('calcium gluconate 3 g acts like calcium chloride 1 g; potassium chloride runs over an hour; glucagon raises glucose', () => {
-  const a = mk(), b = mk(); a.dispatch({ type: 'drug.bolus', drug: 'calciumChloride', amount: 1000 }); b.dispatch({ type: 'drug.bolus', drug: 'calciumGluconate', amount: 3000 }); a.run(120); b.run(120);
+  const a = mk(), b = mk(); a.dispatch({ type: 'drug.bolus', drug: 'calciumChloride', amount: 6.8 }); b.dispatch({ type: 'drug.bolus', drug: 'calciumGluconate', amount: 6.6 }); a.run(120); b.run(120);
   assert.ok(Math.abs(a.lytes.shield - b.lytes.shield) < 0.05 && Math.abs(a.lytes.ica - b.lytes.ica) < 0.05, `shield ${a.lytes.shield.toFixed(2)} vs ${b.lytes.shield.toFixed(2)}, iCa ${a.lytes.ica.toFixed(2)} vs ${b.lytes.ica.toFixed(2)}`);
   const k = mk({ weightKg: 70 }), k0 = k.lytes.k; k.dispatch({ type: 'drug.bolus', drug: 'potassiumChloride', amount: 20 }); k.run(300);
   assert.ok(k.lytes.k - k0 < 0.05, 'no bolus effect: it runs over 60 min'); k.run(3600);
@@ -73,7 +73,7 @@ test('atrial flutter 2:1 at ~150, slowed by adenosine and beta-blockade, convert
 
 test('new drugs and rhythms replay to the same hash', () => {
   const p = mk({}, { seed: 9 });
-  for (const e of [{ type: 'drug.bolus', drug: 'calciumGluconate', amount: 3000 }, { type: 'drug.bolus', drug: 'potassiumChloride', amount: 10 }, { type: 'drug.bolus', drug: 'glucagon', amount: 1, route: 'im' }, { type: 'drug.bolus', drug: 'midazolam', amount: 3 }, { type: 'drug.bolus', drug: 'flumazenil', amount: 200 }, { type: 'instructor.inject', what: 'flutter' }, { type: 'drug.bolus', drug: 'adenosine', amount: 6 }]) { p.dispatch(e); p.run(20); }
+  for (const e of [{ type: 'drug.bolus', drug: 'calciumGluconate', amount: 6.6 }, { type: 'drug.bolus', drug: 'potassiumChloride', amount: 10 }, { type: 'drug.bolus', drug: 'glucagon', amount: 1, route: 'im' }, { type: 'drug.bolus', drug: 'midazolam', amount: 3 }, { type: 'drug.bolus', drug: 'flumazenil', amount: 200 }, { type: 'instructor.inject', what: 'flutter' }, { type: 'drug.bolus', drug: 'adenosine', amount: 6 }]) { p.dispatch(e); p.run(20); }
   p.run(200);
   const q = replay({ spec: p.spec, seed: 9, scenario: null, log: p.log.map(e => ({ ...e })), until: p.t }, {});
   assert.equal(q.stateHash(), p.stateHash());

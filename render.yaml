@@ -1,0 +1,15 @@
+# Render Blueprint: one web service built from the Dockerfile (see docs/DEPLOYMENT.md).
+# On the free plan there is no persistent disk: saved sessions in /data are lost when the service restarts or sleeps.
+services:
+  - type: web
+    name: tidal-bedside-lab
+    runtime: docker
+    plan: free
+    branch: main
+    autoDeploy: true
+    healthCheckPath: /api/health
+    envVars:
+      - key: TRUST_PROXY        # Render's proxy sets X-Forwarded-For, so each learner gets their own rate limit
+        value: "1"
+      - key: API_TOKEN          # instructor endpoints; Render generates a random value, readable in the dashboard
+        generateValue: true

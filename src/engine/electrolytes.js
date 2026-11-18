@@ -23,8 +23,10 @@ const SUX_PEAK_FRACTION = 0.774;                                     // peak of 
 export const INSULIN_K_DROP = 0.95;                                 // target of the shift; with the decay below the drop at 60 min is ~0.8 mmol/L
 const INSULIN_TAU_MIN = 15, INSULIN_OFF_MIN = 300;                       // onset and decay time constants, min. REF harel2016, design
 
-/** Calcium chloride: 1 g = 6.8 mmol Ca2+ (MW 147, dihydrate); about half of plasma calcium is ionised. REF textbook */
-const CA_MG_PER_MMOL = 147, IONISED_FRACTION = 0.5;
+/** About half of plasma calcium is ionised (REF textbook). Calcium doses and concentrations are mmol of elemental calcium;
+ *  CA_FULL_SHIELD_MMOL is the dose that gives full membrane protection (6.8 mmol = 10 mL of calcium chloride 10 %; REF design). */
+const IONISED_FRACTION = 0.5;
+export const CA_FULL_SHIELD_MMOL = 6.8;
 
 /** Citrate of each blood product unit chelates ionised Ca2+; the liver clears it in minutes, slower when cold.
  *  Hypocalcaemia is near universal in massive transfusion (REF giancarelli2016); drop per unit and clearance REF design */
@@ -50,6 +52,9 @@ export class Electrolytes {
     const hk = (spec.causes || []).includes('hyperkalemia');
     this.kBase = spec.potassium ?? (hk ? K_ARREST : BASELINE.k);
     this.na = spec.sodium ?? BASELINE.na;
+    // total body water: 60 % of weight in men, 50 % in women, 5 % less over 65 (REF adrogue2000)
+    this.tbw = body.weightKg * ((spec.sex === 'F' ? 0.5 : 0.6) - (spec.age > 65 ? 0.05 : 0));
+    this.na0 = this.na; this.naLow = this.na;   // starting value and the lowest value since, to judge the correction rate
     this.icaBase = spec.ionisedCalcium ?? BASELINE.ica;
     this.gluBase = spec.glucose ?? BASELINE.glucose;
     this.mgBase = spec.magnesium ?? BASELINE.mg; this.mgExtra = 0;   // serum magnesium (mmol/L) and the excess from magnesium sulfate
@@ -78,10 +83,15 @@ export class Electrolytes {
   /** magnesium sulfate (g): 4.06 mmol Mg2+ per g, spread in extracellular water, then into cells and the urine (REF textbook) */
   magnesiumGrams(g) { this.mgExtra += clamp(g, 0, 10) * MG_MMOL_PER_G / (ECF_L_PER_KG * this.weightKg); }
   get mg() { return this.mgBase + this.mgExtra; }
+  /** an infused fluid mixes into total body water: the Adrogue-Madias change, applied as it runs (REF adrogue2000) */
+  fluid(naMmolL, litres) { if (litres <= 0) return; this.na = (this.na * this.tbw + naMmolL * litres) / (this.tbw + litres); this.tbw += litres; }
+  /** rise since the lowest value: the osmotic demyelination limit is 10 mmol/L in 24 h (REF spasovski2014) */
+  get naRise() { return this.na - this.naLow; }
   /** glucagon (mg) */
   glucagonMg(mg) { this.gcg += clamp(mg, 0, 2); }
   /** calcium chloride bolus (mg) */
-  calcium(mg) { this.shield = Math.min(1, this.shield + clamp(mg, 0, 3000) / 1000); }
+  /** IV calcium, mmol of elemental calcium (any salt). */
+  calcium(mmol) { this.shield = Math.min(1, this.shield + clamp(mmol, 0, 3 * CA_FULL_SHIELD_MMOL) / CA_FULL_SHIELD_MMOL); }
   /** K as the heart feels it: calcium offsets part of the excess (it does not lower the plasma value) */
   get kEff() { return this.k - (this.k > 5.0 ? CA_SHIELD_K * this.shield : 0); }
   arrestHazard() { return hyperkHazard(this.kEff); }
@@ -94,7 +104,7 @@ export class Electrolytes {
       qrsWide: 1.8 * smooth(7.0, 8.5, k), sine: smooth(8.5, 9.4, k), u: lo, qt: 1 + 0.35 * smooth(1.05, 0.7, this.ica) };
   }
 
-  /** ctx: {hco3, cacl2 (plasma calcium chloride, mg/L), coreC} */
+  /** ctx: {hco3, caMmolL (plasma rise in total calcium from IV calcium, mmol/L), coreC} */
   step(dt, ctx) {
     const m = dt / 60;
     const toPlasma = this.suxGut * (1 - Math.exp(-m / SUX_ABS_MIN));    // peak at ~2.5 min (REF label_succ_k, design)
@@ -102,6 +112,7 @@ export class Electrolytes {
     this.ins += (this.insTarget - this.ins) * (1 - Math.exp(-m / INSULIN_TAU_MIN));
     this.insTarget *= Math.exp(-m / INSULIN_OFF_MIN);
     this.dex *= Math.exp(-m / DEX_TAU_MIN);
+    this.naLow = Math.min(this.naLow, this.na);
     this.mgExtra *= Math.exp(-m / MG_TAU_MIN);
     if (this.kQueue > 0) { const d = Math.min(this.kQueue, this.kRate * m); this.kQueue -= d; this.kBase = Math.min(8.5, this.kBase + d * KCL_RISE_PER_MMOL * 70 / this.weightKg); }
     this.gcgEff += (this.gcg - this.gcgEff) * (1 - Math.exp(-m / GCG_ONSET_MIN)); this.gcg *= Math.exp(-m / GCG_OFF_MIN);
@@ -111,9 +122,9 @@ export class Electrolytes {
     const shift = -K_PER_01_PH * (pHmet - 7.40) / 0.1;
     const beta2 = 0.6 * (ctx.salbutamol > 0 ? 1 / (1 + Math.pow(1.2 / ctx.salbutamol, 1.5)) : 0);   // nebulised salbutamol shifts K into cells, ~0.6 mmol/L (REF allon1989)
     this.k = clamp(this.kBase + shift + this.sux - this.ins - beta2, 1.5, 9.5);
-    this.ica = clamp(this.icaBase + IONISED_FRACTION * (ctx.cacl2 || 0) / CA_MG_PER_MMOL - this.citrate, 0.4, 2.0);
+    this.ica = clamp(this.icaBase + IONISED_FRACTION * (ctx.caMmolL || 0) - this.citrate, 0.4, 2.0);
     const insGlu = INSULIN_GLU_DROP * this.ins / INSULIN_K_DROP;          // insulin lowers glucose in step with its potassium effect (REF design)
     this.glucose = clamp(this.gluBase + this.dex + GCG_GLU * Math.min(1, this.gcgEff) - insGlu, 1.0, 40);
   }
-  hashVec() { return [this.kBase, this.suxGut, this.sux, this.insTarget, this.ins, this.dex, this.citrate, this.shield, this.kQueue, this.kRate, this.gcg, this.gcgEff, this.mgBase, this.mgExtra]; }
+  hashVec() { return [this.kBase, this.suxGut, this.sux, this.insTarget, this.ins, this.dex, this.citrate, this.shield, this.kQueue, this.kRate, this.gcg, this.gcgEff, this.mgBase, this.mgExtra, this.na, this.tbw, this.naLow]; }
 }

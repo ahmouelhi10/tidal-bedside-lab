@@ -78,7 +78,7 @@ test('hyperkalaemia: ECG changes in the textbook order, calcium removes them and
   assert.equal(hyperkHazard(6.8), 0);
   assert.ok(hyperkHazard(8.0) > 4 * hyperkHazard(7.1));
   const p = mk({ potassium: 7.8 }), k0 = p.lytes.k;
-  p.dispatch({ type: 'iv.access' }); p.dispatch({ type: 'drug.bolus', drug: 'calciumChloride', amount: 1000 }); p.run(30);
+  p.dispatch({ type: 'iv.access' }); p.dispatch({ type: 'drug.bolus', drug: 'calciumChloride', amount: 6.8 }); p.run(30);
   assert.ok(Math.abs(p.lytes.k - k0) < 0.2, 'calcium does not lower the potassium');
   assert.ok(p.lytes.kEff < 6.5 && p.lytes.ecg().qrsWide === 0 && p.lytes.arrestHazard() === 0, 'but protects the heart');
 });

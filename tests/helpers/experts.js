@@ -97,10 +97,20 @@ export function expertRun(p, id) {
     }
     case 'status_epilepticus': {                                                                     // O2, IM midazolam, IV line, glucose, lorazepam at 6 min, levetiracetam at 11 min, propofol at 25 min
       runScript(p, [[10, { type: 'o2.mask', fio2: 0.85, seal: 0.9 }], [30, { type: 'drug.bolus', drug: 'midazolam', amount: 10, route: 'im' }], [60, { type: 'iv.access' }], [90, { type: 'lab.order', kind: 'abg' }]], 360);
-      if (p.crises.se.active) p.dispatch({ type: 'drug.bolus', drug: 'lorazepam', amount: 4 });
-      p.run(300); if (p.crises.se.active) p.dispatch({ type: 'drug.bolus', drug: 'levetiracetam', amount: 4500 });
-      p.run(840); if (p.crises.se.active) { p.dispatch({ type: 'drug.bolus', drug: 'propofol', amount: 150 }); p.dispatch({ type: 'drug.infusion', drug: 'propofol', rate: 8 }); p.dispatch({ type: 'airway.set', device: 'jaw_thrust' }); }
-      p.run(2700 - p.t); return p;
+      // react whenever the seizure is (still or again) active: second benzodiazepine, then levetiracetam, then propofol
+      let step = 0, next = p.t;
+      while (p.t < 2700) {
+        if (step === 1 && p.notes.some(n => n.text === 'seizure recurred') && !p.drugs.log.some(d => d.key === 'levetiracetam')) next = p.t;   // a recurrence after benzodiazepines: load the second-line drug now
+        if (step === 1 && next === p.t && !p.crises.se.active && p.notes.some(n => n.text === 'seizure recurred')) { p.dispatch({ type: 'drug.bolus', drug: 'levetiracetam', amount: 4500 }); step = 2; next = p.t + 840; }
+        if (p.crises.se.active && p.t >= next && step < 3) {
+          if (step === 0) p.dispatch({ type: 'drug.bolus', drug: 'lorazepam', amount: 4 });
+          else if (step === 1) p.dispatch({ type: 'drug.bolus', drug: 'levetiracetam', amount: 4500 });
+          else { p.dispatch({ type: 'drug.bolus', drug: 'propofol', amount: 150 }); p.dispatch({ type: 'drug.infusion', drug: 'propofol', rate: 8 }); p.dispatch({ type: 'airway.set', device: 'jaw_thrust' }); }
+          step++; next = p.t + (step === 1 ? 300 : 840);
+        }
+        p.run(10);
+      }
+      return p;
     }
     case 'copd_exacerbation':                                                                        // Venturi 28 %, salbutamol + ipratropium, steroid, gas, BiPAP
     {
@@ -123,7 +133,7 @@ export function expertRun(p, id) {
       p.run(1200 - p.t); return p;
     }
     case 'hyperkalaemia':                                                                            // ECG, calcium, insulin-glucose, salbutamol, recheck, glucose infusion against hypoglycaemia
-      runScript(p, [[20, { type: 'iv.access' }], [40, { type: 'order', what: 'ecg12' }], [60, { type: 'drug.bolus', drug: 'calciumGluconate', amount: 3000 }], [120, { type: 'drug.bolus', drug: 'insulin', amount: 10 }],
+      runScript(p, [[20, { type: 'iv.access' }], [40, { type: 'order', what: 'ecg12' }], [60, { type: 'drug.bolus', drug: 'calciumGluconate', amount: 6.6 }], [120, { type: 'drug.bolus', drug: 'insulin', amount: 10 }],
         [125, { type: 'drug.bolus', drug: 'glucose', amount: 25 }], [150, { type: 'drug.bolus', drug: 'salbutamol', amount: 10 }], [600, { type: 'drug.infusion', drug: 'glucose', rate: 50 * 0.1 / 60 }], [1800, { type: 'lab.order', kind: 'abg' }]], 3600);
       return p;
     case 'hypoglycaemia':                                                                            // check, IV glucose 20 g, recheck, glucose 10 % infusion
@@ -134,9 +144,56 @@ export function expertRun(p, id) {
       runScript(p, [[20, { type: 'defib.pads' }], [30, { type: 'iv.access' }], [45, { type: 'order', what: 'ecg12' }], [60, { type: 'drug.bolus', drug: 'atropine', amount: 500 }],
         [300, { type: 'drug.bolus', drug: 'fentanyl', amount: 50 }], [330, { type: 'pacing.set', on: true, rate: 70, mA: 100 }]], 1500);
       return p;
+    case 'hyponatraemia': {                                                                         // measure, 150 mL 3 % saline, recheck, repeat until +5, then stop
+      runScript(p, [[20, { type: 'iv.access' }], [40, { type: 'lab.order', kind: 'abg' }], [240, { type: 'fluid.bolus', volumeL: 0.15, minutes: 20, fluid: 'saline3' }]], 250);
+      const na0 = p.lytes.na;
+      for (let k = 0; k < 2; k++) { p.run(1500); p.dispatch({ type: 'lab.order', kind: 'abg' }); p.run(60); if (p.lytes.na - na0 < 4.5) p.dispatch({ type: 'fluid.bolus', volumeL: 0.15, minutes: 20, fluid: 'saline3' }); }
+      if (p.crises.se.active) p.dispatch({ type: 'drug.bolus', drug: 'lorazepam', amount: 4 });
+      p.run(5400 - p.t); return p;
+    }
+    case 'pulmonary_oedema':                                                                         // upright, CPAP, 12-lead, nitrate, furosemide
+      runScript(p, [[10, { type: 'position.set', headUp: true }], [30, { type: 'iv.access' }], [60, { type: 'niv.set', mode: 'cpap', epap: 8, fio2: 0.6 }], [90, { type: 'order', what: 'ecg12' }],
+        [150, { type: 'drug.infusion', drug: 'nitroglycerin', rate: 50 }], [200, { type: 'drug.bolus', drug: 'furosemide', amount: 40 }]], 2700);
+      return p;
+    case 'hypertensive_emergency': {                                                                 // 12-lead, arterial line, labetalol titrated to -20..-25 %
+      runScript(p, [[20, { type: 'iv.access' }], [40, { type: 'order', what: 'ecg12' }], [120, { type: 'procedure.arterial_line', us: true }]], 180);
+      const m0 = p.circ.mapArt; let next = p.t, i = 0; const doses = [20, 40, 40, 40, 40, 40];
+      while (p.t < 3600) { if (p.t >= next && i < doses.length && p.circ.mapArt > 0.79 * m0) { p.dispatch({ type: 'drug.bolus', drug: 'labetalol', amount: doses[i++] }); next = p.t + 600; } p.run(30); }
+      return p;
+    }
+    case 'variceal_bleed': {                                                                         // terlipressin, antibiotic, restrictive transfusion, endoscopy
+      runScript(p, [[20, { type: 'iv.access' }], [40, { type: 'lab.order', kind: 'cbc' }], [60, { type: 'drug.bolus', drug: 'terlipressin', amount: 2 }], [90, { type: 'drug.bolus', drug: 'ceftriaxone', amount: 1000 }],
+        [100, { type: 'fluid.bolus', volumeL: 0.5, minutes: 15 }]], 120);
+      let scoped = 0;
+      while (p.t < 2700) { p.run(30); if (p.vol.hb < 7) p.dispatch({ type: 'blood.transfuse', kind: 'prbc' }); if (p.t >= 900 && scoped < 3 && !p.varix.controlled && p.t >= 900 + scoped * 300) { p.dispatch({ type: 'procedure.endoscopy' }); scoped++; } }
+      return p;
+    }
     case 'torsades':                                                                                 // pads, magnesium on the long QT, isoprenaline, then ALS for any run
       runScript(p, [[15, { type: 'defib.pads' }], [25, { type: 'order', what: 'ecg12' }], [40, { type: 'drug.bolus', drug: 'magnesium', amount: 2 }], [55, { type: 'drug.infusion', drug: 'isoprenaline', rate: 5 }]], 60);
       return aclsTeam(p, { endT: 1500, reaction: 5 });
+    case 'spinal_hypotension': {                                                                     // check the block, modest co-load, early vasopressor boluses, ephedrine if slow
+      runScript(p, [[20, { type: 'fluid.bolus', volumeL: 0.5, minutes: 15 }], [240, { type: 'neuraxial.assess' }]], 30);
+      let next = 0;
+      while (p.t < 1500) { p.run(15); const r = p.circ.mapArt / (p.mapRef ?? p.circ.MAP0);
+        if (p.t >= next && r < 0.88) { p.dispatch(p.circ.hr < 55 ? { type: 'drug.bolus', drug: 'ephedrine', amount: 6 } : { type: 'drug.bolus', drug: 'phenylephrine', amount: 100 }); next = p.t + 60; } }
+      return p;
+    }
+    case 'high_spinal': {                                                                            // oxygen, pressor and atropine, ventilate, intubate with sedation, support
+      runScript(p, [[30, { type: 'o2.mask', fio2: 1.0, seal: 0.9 }], [40, { type: 'position.set', headUp: false }]], 45);
+      let next = 0, vent = false, tube = false;
+      while (p.t < 1200) { p.run(10);
+        if (!vent && (p.neuraxial.seg < 5.5 || p.resp.spo2 < 92)) { vent = true; p.dispatch({ type: 'vent.set', settings: { mode: 'ctrl', rate: 12, vt: 550, fio2: 1.0, peep: 5, seal: 0.9 } }); p.dispatch({ type: 'drug.bolus', drug: 'ketamine', amount: 50 }); p.dispatch({ type: 'drug.bolus', drug: 'rocuronium', amount: 85 }); tube = p.t + 70; }
+        if (tube && p.t >= tube && !p.airway.intubated) { const r = p.dispatch({ type: 'airway.intubate' }); if (r.ok) p.run(30), p.dispatch({ type: 'vent.set', settings: { mode: 'ctrl', rate: 12, vt: 550, fio2: 0.6, peep: 5, seal: 0.97 } }); }
+        if (p.t >= next) { const r = p.circ.mapArt / (p.mapRef ?? p.circ.MAP0);
+          if (p.circ.hr < 50) { p.dispatch({ type: 'drug.bolus', drug: 'atropine', amount: 600 }); next = p.t + 60; }
+          else if (r < 0.85) { p.dispatch(p.circ.hr < 65 ? { type: 'drug.bolus', drug: 'ephedrine', amount: 9 } : { type: 'drug.bolus', drug: 'phenylephrine', amount: 100 }); next = p.t + 45; } } }
+      return p;
+    }
+    case 'pacu_ponv':                                                                                // oxygen, forced-air warming, rescue antiemetic at the first nausea, pethidine
+      runScript(p, [[20, { type: 'o2.mask', fio2: 0.4, seal: 0.6 }], [40, { type: 'thermal.device', target: 38, maxWatts: 50 }]], 70);
+      while (p.t < 3600) { p.run(15); if (p.ponv.nausea > 0.45 && !p.drugs.log.some(d => d.key === 'ondansetron')) p.dispatch({ type: 'drug.bolus', drug: 'ondansetron', amount: 4 });
+        if (p.t > 900 && p.therm.shivering > 0.3 && !p.drugs.log.some(d => d.key === 'pethidine')) p.dispatch({ type: 'drug.bolus', drug: 'pethidine', amount: 25 }); }
+      return p;
     default: throw new Error('no expert for ' + id);
   }
 }

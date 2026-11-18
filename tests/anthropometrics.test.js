@@ -82,3 +82,25 @@ test('Mifflin REE reference value', () => {
   near(A.reeMifflin('M', 40, 70, 175), 10 * 70 + 6.25 * 175 - 5 * 40 + 5, 1e-9, 'male');
   near(A.reeMifflin('F', 40, 60, 165), 10 * 60 + 6.25 * 165 - 5 * 40 - 161, 1e-9, 'female');
 });
+
+test('blood volume has no step between the normal-weight and obesity formulas: smooth in weight, never more per kg as weight rises', () => {
+  for (const sex of ['F', 'M']) for (const h of [140, 150, 165, 175, 190, 210]) {
+    let prev = null, prevSlope = null;
+    for (let w = 35; w <= 250; w += 0.25) {
+      const bmi = A.bmiOf(w, h); if (bmi < 15 || bmi > 65) continue;
+      const bv = A.describeBody({ sex, heightCm: h, weightKg: w }).bloodVolume;
+      if (prev) {
+        const slope = (bv - prev.bv) / 0.25;                                  // L per kg gained
+        assert.ok(slope > 0.015 && slope < 0.05, `${sex} ${h} cm ${w} kg: slope ${slope.toFixed(4)} L/kg`);
+        assert.ok(bv / w <= prev.bv / prev.w + 1e-9, `${sex} ${h} cm ${w} kg: mL/kg rises with weight`);
+        if (prevSlope !== null) assert.ok(Math.abs(slope - prevSlope) < 0.002, `${sex} ${h} cm ${w} kg: kink, slope ${prevSlope.toFixed(4)} -> ${slope.toFixed(4)}`);
+        prevSlope = slope;
+      }
+      prev = { bv, w };
+    }
+  }
+  // the published formulas are untouched outside the hand-over window
+  const [lo, hi] = A.BV_BLEND_BMI, h = 170, wAt = (bmi) => bmi * 1.7 * 1.7;
+  near(A.bloodVolumeBlend('F', wAt(lo - 2), h), A.bloodVolumeNadler('F', wAt(lo - 2), h), 1e-9, 'Nadler below the window');
+  near(A.bloodVolumeBlend('M', wAt(hi + 5), h), A.bloodVolumeLemmens(wAt(hi + 5), h), 1e-9, 'Lemmens above the window');
+});

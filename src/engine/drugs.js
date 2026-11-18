@@ -71,14 +71,15 @@ const midazolamAlbrecht = b => b.age < 65
   ? { V1: 7.9, k10: 0.399 / 7.9, k12: 0.19, k13: 0.065, k21: 0.06, k31: 0.0083, ke0: 0.11 }
   : { V1: 8.5, k10: 0.388 / 8.5, k12: 0.10, k13: 0.066, k21: 0.051, k31: 0.0069, ke0: 0.08 };                    // REF opentiva
 const etomidateKaneda = () => ({ V1: 4.45, k10: 0.1416, k12: 0.7101, k13: 0, k21: 0.0422, k31: 0, ke0: 0.447 });  // REF opentiva
-const rocuroniumWierda = b => ({ V1: 0.044 * b.weightKg, k10: 0.1, k12: 0.21, k13: 0.028, k21: 0.13, k31: 0.01, ke0: 0.107 }); // REF opentiva (library ke0; with c50 1.2 / gamma 3.5 gives 90% twitch depression at ~60 s for 1.2 mg/kg)
-const succinylcholineEmpirical = (b, act = 1) => ({ V1: 0.065 * b.weightKg, k10: 1.0 * act, k12: 0, k13: 0, k21: 0.1, k31: 0, ke0: 0.3 }); // REF label_succ (hydrolysis reproduces "<2 ug/mL by 2.5 min"); design otherwise
+const rocuroniumWierda = b => ({ V1: 0.044 * b.weightKg, k10: 0.1, k12: 0.21, k13: 0.028, k21: 0.13, k31: 0.01, ke0: 0.107 }); // REF opentiva (library ke0; potency in DRUGS.rocuronium)
+export const SUG_KREV = 1.5;   // per min: effect-site rocuronium unbinding once sugammadex has cleared the plasma (REF design, calibrated to label reversal times)
+const succinylcholineEmpirical = (b, act = 1) => ({ V1: 0.065 * b.weightKg, k10: 1.0 * act, k12: 0, k13: 0, k21: 0.1, k31: 0, ke0: 0.2 }); // REF label_succ (hydrolysis reproduces "<2 ug/mL by 2.5 min"); design otherwise
 const dexmedetomidineHannivoort = b => { const w = b.weightKg / 70, s = Math.pow(w, 0.75), V1 = 1.78 * w, V2 = 30.3 * w, V3 = 52 * w; return fromClear(V1, V2, V3, 0.686 * s, 2.98 * s, 0.602 * s, 0.0428); }; // REF opentiva
 // single-compartment ACLS / vasoactive drugs (design values; REF design). Concentration in ng/mL when dose in mcg.
 /** flumazenil: concentration (ng/mL) that halves the effective midazolam concentration (REF design: 0.5 mg reverses a sedating dose for ~45 min) */
 const FLU_K = 3;
 /** neostigmine: half-maximal effect (ng/mL) and the rocuronium C50 shift at full effect (REF design, calibrated: 50 mcg/kg takes a TOF count of 2 to a ratio >= 0.9 in 10-20 min (~15), not a deep block) */
-const NEO_C50 = 15, NEO_SHIFT = 3;
+const NEO_C50 = 15, NEO_SHIFT = 2;
 /** sevoflurane hypnosis: potency in MAC multiples on the additive hypnotic scale (REF design, see effects()) */
 const SEVO_HYP_C50 = 0.72, SEVO_HYP_G = 1.3;
 const oneComp = (V1, tHalfMin, ke0 = 5) => ({ V1, k10: Math.LN2 / tHalfMin, k12: 0, k13: 0, k21: 0.1, k31: 0, ke0 });
@@ -95,6 +96,18 @@ export const IV_TRANSIT_S = 15;
  * DRUGS: unit = dose unit; pk(b, ctx) -> params; pd = pharmacodynamic parameters (c50 in the concentration unit of the model).
  * `kind` drives the effect mapping in DrugSystem.effects().
  */
+/** Calcium is carried as mmol of elemental calcium in the engine, the event log and the UI, whatever the salt: the two salts
+ *  then differ only in how many mL deliver a given dose. The presentation strengths and the default doses below are the ONLY
+ *  place they are set; they await clinical review (docs/CLINICAL_REVIEW.md item 9: sources give 5 or about 7 mmol per 10 mL
+ *  ampoule of calcium chloride). Present values keep the previous behaviour: calcium chloride dihydrate 10 % = 0.68 mmol/mL
+ *  (10 mL = 6.8 mmol), calcium gluconate 10 % = 0.22 mmol/mL (30 mL = 6.6 mmol). REF textbook, design */
+export const CALCIUM = Object.freeze({
+  calciumChloride:  Object.freeze({ mmolPerMl: 0.68, presetMmol: 6.8, stepMmol: 3.4 }),
+  calciumGluconate: Object.freeze({ mmolPerMl: 0.22, presetMmol: 6.6, stepMmol: 2.2 }),
+});
+export const CA_MAX_BOLUS_MMOL = 30;   // an amount above this is a unit error (mg typed as mmol), rejected by the engine (REF design)
+const CA_C50_MMOL_L = 0.17;            // plasma rise giving half of the inotropic and pressor effect (was 25 mg/L of calcium chloride; REF design)
+
 export const DRUGS = {
   propofol:       { name: 'Propofol', unit: 'mg', concUnit: 'ug/mL', ref: 'eleveld2018', kind: 'hypnotic', c50: 3.08, gamma: 2.5, ventC50: 1.16, ventGamma: 3, ventEmax: 0.97, hemoC50: 2.0, hemoGamma: 3 },   // ventC50 fitted to REF nieuwenhuijs2003: Ce 1 ug/mL depresses ventilation at a fixed PetCO2 of 55 mmHg by 44.3 +/- 3.9 % (gamma / Emax stay design)
   etomidate:      { name: 'Etomidate', unit: 'mg', concUnit: 'ug/mL', ref: 'opentiva', kind: 'hypnotic', c50: 0.40, gamma: 2.5, ventC50: 0.5, ventGamma: 3, ventEmax: 0.3, hemoC50: 0.5, hemoGamma: 2, hemoSvr: 0.05, hemoInot: 0.0 },
@@ -103,8 +116,8 @@ export const DRUGS = {
   dexmedetomidine:{ name: 'Dexmedetomidine', unit: 'mcg', concUnit: 'ng/mL', ref: 'opentiva', kind: 'hypnotic', c50: 3.0, gamma: 2, emax: 0.45, ventC50: 3, ventGamma: 2, ventEmax: 0.1, brady: 0.25, bradyC50: 0.6 },
   remifentanil:   { name: 'Remifentanil', unit: 'mcg', concUnit: 'ng/mL', ref: 'minto1997', kind: 'opioid', c50: 2.0, gamma: 2, ventC50: 0.92, ventGamma: 2, ventEmax: 0.98, brady: 0.25, svrDrop: 0.10 },
   fentanyl:       { name: 'Fentanyl', unit: 'mcg', concUnit: 'ng/mL', ref: 'opentiva', kind: 'opioid', c50: 2.0, gamma: 2, ventC50: 1.3, ventGamma: 2, ventEmax: 0.98, brady: 0.15, svrDrop: 0.05 },
-  rocuronium:     { name: 'Rocuronium', unit: 'mg', concUnit: 'ug/mL', ref: 'opentiva', kind: 'nmb', c50: 1.2, gamma: 3.5 },
-  succinylcholine:{ name: 'Succinylcholine', unit: 'mg', concUnit: 'ug/mL', ref: 'label_succ', kind: 'nmb', c50: 1.2, gamma: 3.0, fasc: true },
+  rocuronium:     { name: 'Rocuronium', unit: 'mg', concUnit: 'ug/mL', ref: 'opentiva', kind: 'nmb', c50: 1.05, gamma: 4 },   // calibrated (REF design): 0.6 mg/kg ~98 % block in ~2 min, 25 % recovery ~34 min; 1.2 mg/kg > 92 % in ~47 s, ~56 min (label: 31 and 73 min)
+  succinylcholine:{ name: 'Succinylcholine', unit: 'mg', concUnit: 'ug/mL', ref: 'label_succ', kind: 'nmb', c50: 0.7, gamma: 3.0, fasc: true },   // calibrated (REF design): 1 mg/kg ~96 % block, > 90 % at ~45 s, 25 % recovery in ~7 min (REF naguib2003)
   sugammadex:     { name: 'Sugammadex', unit: 'mg', concUnit: 'ug/mL', ref: 'label_sugammadex', kind: 'reversal' },
   naloxone:       { name: 'Naloxone', transit: true, unit: 'mcg', concUnit: 'ng/mL', ref: 'design', kind: 'antagonist', kn: 1.0 },
   epinephrine:    { name: 'Epinephrine', transit: true, unit: 'mcg', concUnit: 'ng/mL', ref: 'aha2025_part9', kind: 'pressor', tHalf: 2.5, vPerKg: 0.15, a1C50: 6, b1C50: 1.5, chronoC50: 1.0, hrAdd: 60, svrEmax: 0.70, inotEmax: 0.9, venEmax: 0.15, escape: 20 },
@@ -116,16 +129,22 @@ export const DRUGS = {
   amiodarone:     { name: 'Amiodarone', transit: true, unit: 'mg', concUnit: 'ug/mL', ref: 'aha2025_part9', kind: 'antiarrhythmic', tHalf: 600, vPerKg: 1.0, c50: 2.0, hypoSvr: 0.12 },
   lidocaine:      { name: 'Lidocaine', transit: true, unit: 'mg', concUnit: 'ug/mL', ref: 'aha2025_part9', kind: 'antiarrhythmic', tHalf: 100, vPerKg: 1.0, c50: 2.5, hypoSvr: 0 },
   adenosine:      { name: 'Adenosine', transit: true, unit: 'mg', concUnit: 'ug/mL', ref: 'label_adenosine', kind: 'av_block', tHalf: 0.17, vPerKg: 0.2 },   // t1/2 < 10 s in whole blood (REF label_adenosine); rhythm effect in Patient._adenosine
-  calciumChloride:{ name: 'Calcium chloride', transit: true, unit: 'mg', concUnit: 'mg/L', ref: 'aha2025_part9', kind: 'inotrope', tHalf: 6, vPerKg: 0.2, c50: 25, inotEmax: 0.3, svrEmax: 0.15 },
+  calciumChloride:{ name: 'Calcium chloride', transit: true, unit: 'mmol', concUnit: 'mmol/L', ref: 'aha2025_part9', kind: 'inotrope', tHalf: 6, vPerKg: 0.2, c50: CA_C50_MMOL_L, inotEmax: 0.3, svrEmax: 0.15 },   // amounts are mmol of elemental calcium (see CALCIUM)
   // ---- crisis, emergency and anaesthesia drugs (crises.js reads their concentrations). Single compartment with the
   //      half-life and volume of distribution of the label or a standard pharmacology text; potencies (c50) are design values
   //      calibrated to the clinical effect sizes tested in tests/crises.test.js (REF design, textbook unless another id is given).
-  calciumGluconate:{ name: 'Calcium gluconate 10 %', transit: true, unit: 'mg', concUnit: 'mg/L', ref: 'ers2021_special', kind: 'inotrope', tHalf: 6, vPerKg: 0.2, c50: 77, inotEmax: 0.3, svrEmax: 0.15 },   // 1 g = 2.2 mmol Ca2+, a third of 1 g calcium chloride (6.8 mmol): 30 mL of 10 % ~ 10 mL of calcium chloride 10 % (REF ers2021_special, textbook)
+  calciumGluconate:{ name: 'Calcium gluconate', transit: true, unit: 'mmol', concUnit: 'mmol/L', ref: 'ers2021_special', kind: 'inotrope', tHalf: 6, vPerKg: 0.2, c50: CA_C50_MMOL_L, inotEmax: 0.3, svrEmax: 0.15 },   // 1 g = 2.2 mmol Ca2+, a third of 1 g calcium chloride (6.8 mmol): 30 mL of 10 % ~ 10 mL of calcium chloride 10 % (REF ers2021_special, textbook)
   lorazepam:      { name: 'Lorazepam', transit: true, unit: 'mg', concUnit: 'mg/L', ref: 'label_lorazepam', kind: 'hypnotic', tHalf: 840, vPerKg: 1.3, ke0: 0.25, c50: 0.06, gamma: 2, emax: 0.6, ventC50: 0.08, ventGamma: 2, ventEmax: 0.5 },   // 4 mg IV (0.1 mg/kg); long anticonvulsant action; potencies REF design
   diazepam:       { name: 'Diazepam', transit: true, unit: 'mg', concUnit: 'mg/L', ref: 'label_diazepam', kind: 'hypnotic', tHalf: 60, vPerKg: 1.1, ke0: 1.0, c50: 0.25, gamma: 2, emax: 0.6, ventC50: 0.3, ventGamma: 2, ventEmax: 0.5 },   // fast onset, the anticonvulsant effect fades with redistribution (~20-30 min); tHalf is the redistribution phase (REF design)
   levetiracetam:  { name: 'Levetiracetam', transit: true, unit: 'mg', concUnit: 'mg/L', ref: 'esett2019', kind: 'none', tHalf: 420, vPerKg: 0.6, ke0: 0.1 },   // 60 mg/kg (max 4500 mg) over 10 min, second line (REF esett2019)
   ipratropium:    { name: 'Ipratropium (nebulised)', unit: 'mg', concUnit: 'mg', ref: 'gold2024', kind: 'bronchodilator', tHalf: 120, vPerKg: 1 / 80, c50: 0.25, hrAdd: 0, ke0: 0.4 },   // airway compartment like salbutamol; slower onset (REF textbook)
   prednisolone:   { name: 'Prednisolone', unit: 'mg', concUnit: 'n/a', ref: 'gold2024', kind: 'direct' },   // 30-40 mg for 5 days in a COPD exacerbation; no effect within the time of a case
+  terlipressin:   { name: 'Terlipressin', transit: true, unit: 'mg', concUnit: 'mg/L', ref: 'baveno7', kind: 'pressor', tHalf: 240, vPerKg: 0.7, a1C50: 0.03, b1C50: 1e9, chronoC50: 1e9, hrAdd: 0, svrEmax: 0.30, inotEmax: 0, venEmax: 0 },   // 2 mg IV every 4 h: splanchnic and systemic vasoconstriction lasting hours (REF baveno7); the portal effect is in patient.js
+  ceftriaxone:    { name: 'Ceftriaxone', unit: 'mg', concUnit: 'n/a', ref: 'baveno7', kind: 'direct' },   // antibiotic prophylaxis in variceal bleeding (1 g); no effect within the time of a case
+  ondansetron:    { name: 'Ondansetron', transit: true, unit: 'mg', concUnit: 'mg/L', ref: 'gan2020', kind: 'none', tHalf: 210, vPerKg: 2.0, ke0: 0.15 },   // 5-HT3 antagonist, 4 mg: antiemetic effect read by ponv.js
+  droperidol:     { name: 'Droperidol', transit: true, unit: 'mg', concUnit: 'mg/L', ref: 'gan2020', kind: 'none', tHalf: 130, vPerKg: 2.0, ke0: 0.1 },    // D2 antagonist, 0.625-1.25 mg
+  dexamethasone:  { name: 'Dexamethasone', transit: true, unit: 'mg', concUnit: 'mg/L', ref: 'gan2020', kind: 'none', tHalf: 240, vPerKg: 0.8, ke0: 0.012 },   // 4-8 mg at induction; slow onset (1-2 h): prophylaxis, not rescue (REF gan2020)
+  pethidine:      { name: 'Pethidine (meperidine)', transit: true, unit: 'mg', concUnit: 'mg/L', ref: 'kranke2002', kind: 'opioid', tHalf: 210, vPerKg: 4.0, ke0: 0.12, c50: 0.25, gamma: 2, ventC50: 0.35, ventGamma: 2, ventEmax: 0.9, brady: 0.05, svrDrop: 0.08 },   // 25 mg IV stops postoperative shivering (REF kranke2002); about 1/10 of morphine's potency (REF textbook)
   flumazenil:     { name: 'Flumazenil', transit: true, unit: 'mcg', concUnit: 'ng/mL', ref: 'label_flumazenil', kind: 'none', tHalf: 50, vPerKg: 1.0, ke0: 1.0 },   // benzodiazepine antagonist; half-life ~1 h, shorter than midazolam: re-sedation (REF label_flumazenil)
   neostigmine:    { name: 'Neostigmine', transit: true, unit: 'mcg', concUnit: 'ng/mL', ref: 'label_neostigmine', kind: 'none', tHalf: 77, vPerKg: 0.7, ke0: 0.15 },   // cholinesterase inhibitor; peak reversal ~10 min; cannot reverse a deep block (ceiling); muscarinic bradycardia unless an anticholinergic is given (REF label_neostigmine)
   potassiumChloride:{ name: 'Potassium chloride (over 1 h)', unit: 'mmol', concUnit: 'n/a', ref: 'textbook', kind: 'direct' },   // never a bolus: each dose runs over 60 min (peripheral maximum ~10-20 mmol/h)
@@ -141,8 +160,8 @@ export const DRUGS = {
   morphine:       { name: 'Morphine', transit: true, unit: 'mg', concUnit: 'mg/L', ref: 'textbook', kind: 'opioid', tHalf: 150, vPerKg: 3.5, ke0: 0.03, c50: 0.025, gamma: 2, ventC50: 0.03, ventGamma: 2, ventEmax: 0.9, brady: 0.10, svrDrop: 0.12 },   // 10 mg IV raises PaCO2 ~4 mmHg (REF textbook; size REF design)
   esmolol:        { name: 'Esmolol', transit: true, unit: 'mg', concUnit: 'mg/L', ref: 'label_esmolol', kind: 'betablocker', tHalf: 9, vPerKg: 3.4, c50: 0.15, chronoMax: 0.45, inotMax: 0.20, avMax: 0.45 },
   metoprolol:     { name: 'Metoprolol', transit: true, unit: 'mg', concUnit: 'mg/L', ref: 'esc_af2024', kind: 'betablocker', tHalf: 210, vPerKg: 4.0, c50: 0.015, chronoMax: 0.45, inotMax: 0.15, avMax: 0.45 },
-  labetalol:      { name: 'Labetalol', transit: true, unit: 'mg', concUnit: 'mg/L', ref: 'textbook', kind: 'betablocker', tHalf: 330, vPerKg: 9.0, c50: 0.015, chronoMax: 0.15, inotMax: 0.05, avMax: 0.2, svrDrop: 0.25 },
-  urapidil:       { name: 'Urapidil', transit: true, unit: 'mg', concUnit: 'mg/L', ref: 'textbook', kind: 'vasodilator', tHalf: 180, vPerKg: 0.8, c50: 0.3, venEmax: 0.10, svrEmax: 0.30, baroHrDrop: 0.9 },   // central 5-HT1A action blunts the reflex tachycardia (REF textbook)
+  labetalol:      { name: 'Labetalol', transit: true, unit: 'mg', concUnit: 'mg/L', ref: 'textbook', kind: 'betablocker', tHalf: 330, vPerKg: 9.0, c50: 0.03, chronoMax: 0.15, inotMax: 0.05, avMax: 0.2, svrDrop: 0.42, baroDrop: 0.7 },   // dose-titratable: 20 mg lowers MAP a little, 100-200 mg cumulative by ~20-25 % (REF esc_htn2018; sizes REF design)
+  urapidil:       { name: 'Urapidil', transit: true, unit: 'mg', concUnit: 'mg/L', ref: 'textbook', kind: 'vasodilator', tHalf: 180, vPerKg: 0.8, c50: 0.3, venEmax: 0.10, svrEmax: 0.38, baroHrDrop: 0.9, baroDrop: 0.6 },   // central 5-HT1A action blunts the reflex tachycardia (REF textbook)
   furosemide:     { name: 'Furosemide', transit: true, unit: 'mg', concUnit: 'mg/L', ref: 'textbook', kind: 'none', tHalf: 90, vPerKg: 0.15, ke0: 0.1 },
   tranexamicAcid: { name: 'Tranexamic acid', transit: true, unit: 'mg', concUnit: 'mg/L', ref: 'crash2_2010', kind: 'none', tHalf: 120, vPerKg: 0.18 },
   heparin:        { name: 'Heparin (unfractionated)', transit: true, unit: 'units', concUnit: 'units/L', ref: 'textbook', kind: 'none', tHalf: 90, vPerKg: 0.07 },
@@ -227,7 +246,7 @@ export class DrugSystem {
       const bind = Math.min(this.sug.capacity, tot * f);
       if (tot > 0) { const s = (tot - bind) / tot; m.a = m.a.map(x => x * s); m.cumulativeOut += bind; }
       this.sug.capacity -= bind;
-      m.ce = Math.min(m.ce, m.c1 * 1.0);
+      if (m.ce > m.c1) m.ce += (m.c1 - m.ce) * (1 - Math.exp(-SUG_KREV * dtMin));   // rocuronium leaves the receptor along the gradient the binding creates
     }
   }
   /** Aggregate pharmacodynamics. ctx: {inArrest:boolean} */
@@ -270,13 +289,13 @@ export class DrugSystem {
         if (d.escape) escape += d.escape * ch;                            // beta-1 stimulation speeds a ventricular escape rhythm (complete heart block); atropine does not (REF erc2025; size REF design)
         if (d.b2Svr) svr *= 1 - d.b2Svr * PD(cc, d.b2C50, 1.3);          // beta-2 vasodilation (dobutamine)
       } else if (d.kind === 'betablocker') {
-        const e = PD(c, d.c50, 1.3); chrono *= 1 - d.chronoMax * e; inot *= 1 - d.inotMax * e; avSlow = Math.max(avSlow, d.avMax * e); if (d.svrDrop) svr *= 1 - d.svrDrop * e;
+        const e = PD(c, d.c50, 1.3); chrono *= 1 - d.chronoMax * e; inot *= 1 - d.inotMax * e; avSlow = Math.max(avSlow, d.avMax * e); if (d.svrDrop) svr *= 1 - d.svrDrop * e; if (d.baroDrop) { baro *= 1 - d.baroDrop * e; baroHr *= 1 - d.baroDrop * e; }   // alpha + beta blockade: the reflex cannot fight the fall in pressure
       } else if (d.kind === 'bronchodilator') {
         const e = PD(c, d.c50, 1.5); hrAdd += d.hrAdd * e; if (d.svrDrop) svr *= 1 - d.svrDrop * e;
       } else if (d.kind === 'vagolytic') {
         hrAdd += d.hrAdd * PD(c, d.c50, d.gamma ?? 1.5);
       } else if (d.kind === 'vasodilator') {
-        const e = PD(c, d.c50, 1.3); ven -= d.venEmax * e; svr *= 1 - d.svrEmax * e; if (d.baroHrDrop) baroHr *= 1 - d.baroHrDrop * e;
+        const e = PD(c, d.c50, 1.3); ven -= d.venEmax * e; svr *= 1 - d.svrEmax * e; if (d.baroHrDrop) baroHr *= 1 - d.baroHrDrop * e; if (d.baroDrop) baro *= 1 - d.baroDrop * e;
       } else if (d.kind === 'antiarrhythmic') {
         svr *= 1 - d.hypoSvr * PD(c, d.c50, 1.5);
       } else if (d.kind === 'inotrope') {

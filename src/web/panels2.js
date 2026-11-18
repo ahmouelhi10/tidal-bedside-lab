@@ -28,7 +28,23 @@ export function procExtra(ui, P) {
       el('div', { class: 'row2' }, ui.btn(t('px_aline'), () => ui.act({ type: 'procedure.arterial_line', us: usA.i.checked }, t('px_aline')), 'act'), usA.node),
       el('div', { class: 'row2' }, ui.btn(t('px_cvc'), () => ui.act({ type: 'procedure.central_line', site: site.value, us: usC.i.checked }, t('px_cvc')), 'act'), el('div', {}, site, usC.node)),
       ui.btn(t('px_ng'), () => ui.act({ type: 'procedure.ng_tube' }, t('px_ng')), 'act'),
+      ui.btn(t('px_endoscopy'), () => { const r = ui.act({ type: 'procedure.endoscopy' }, t('px_endoscopy')); if (r) ui.toast(t(r.controlled ? 'px_endo_ok' : r.note ? 'px_endo_none' : 'px_endo_fail')); }, 'act'),
       ui.btn(t('px_uc'), () => ui.act({ type: 'procedure.urinary_catheter' }, t('px_uc')), 'act'))));
+  regionalExtra(ui, P);
+}
+
+/** Regional anaesthesia: spinal, epidural test dose and top-up, block height check (neuraxial.js). */
+function regionalExtra(ui, P) {
+  const dose = el('select', { 'aria-label': t('px_spinal_dose') }, ...[5, 7.5, 10, 12.5, 15].map(v => el('option', { value: v, text: `${v} mg`, selected: v === 10 })));
+  const vol = el('select', { 'aria-label': t('px_epi_vol') }, ...[5, 10, 15, 20].map(v => el('option', { value: v, text: `${v} mL`, selected: v === 10 })));
+  const blockTxt = (r) => (r.sensory === 'none' ? t('px_noblock') : t('px_block', { s: r.sensory, b: r.bromage }));
+  P.append(el('details', {}, el('summary', { text: t('px_regional') }),
+    el('div', { class: 'stack' },
+      el('p', { class: 'muted small', text: t('px_regional_help') }),
+      el('div', { class: 'row2' }, ui.btn(t('px_spinal'), () => ui.act({ type: 'neuraxial.spinal', amount: Number(dose.value) }, `${t('px_spinal')} ${dose.value} mg`), 'act'), el('label', { class: 'f' }, el('span', { text: t('px_spinal_dose') }), dose)),
+      ui.btn(t('px_epi_test'), () => ui.act({ type: 'neuraxial.epidural', action: 'test' }, t('px_epi_test')), 'act', { title: t('px_epi_test_t') }),
+      el('div', { class: 'row2' }, ui.btn(t('px_epi_topup'), () => ui.act({ type: 'neuraxial.epidural', action: 'topup', volumeMl: Number(vol.value) }, `${t('px_epi_topup')} ${vol.value} mL`), 'act'), el('label', { class: 'f' }, el('span', { text: t('px_epi_vol') }), vol)),
+      ui.btn(t('px_assess'), () => { const r = ui.act({ type: 'neuraxial.assess' }); if (r?.ok) ui.toast(blockTxt(r)); }, 'act'))));
 }
 
 /** CPR / defibrillator tab: transcutaneous pacing. */
@@ -62,8 +78,15 @@ export function signsTick(ui) {
   const p = ui.sim.patient; if (!p) return;
   let b = document.getElementById('signsBanner');
   if (!b) { b = el('div', { id: 'signsBanner', class: 'signs', role: 'status', 'aria-live': 'polite' }); document.body.append(b); }
-  const seizing = p.crises?.seizure && !p.drugs.effects({ inArrest: p.arrest.arrested }).paralyzed;
-  const txt = seizing ? t('sg_seizure') : '';
+  const fx = p.drugs.effects({ inArrest: p.arrest.arrested }), seizing = p.crises?.seizure && !fx.paralyzed, out = [];
+  if (seizing) out.push(t('sg_seizure'));
+  if (!p.arrest.arrested && !fx.paralyzed) {
+    const v = p.ponv?.vomits ?? [];
+    if (v.length && p.t - v[v.length - 1] < 25) out.push(t('sg_vomit')); else if ((p.ponv?.nausea ?? 0) > 0.5) out.push(t('sg_nausea'));
+    if ((p.therm?.shivering ?? 0) > 0.25) out.push(t('sg_shiver'));
+    const n = p.neuraxial; if (n?.active && n.seg < 9 && !n.out.loc) out.push(t('sg_breath'));
+  }
+  const txt = out.join(' · ');
   if (b.textContent !== txt) { b.textContent = txt; b.hidden = !txt; }
 }
 
@@ -98,6 +121,8 @@ export function scoresTick(ui) {
   const s = scores(p), f = (v) => (v == null ? '—' : v);
   const uo = p.flags.urineCath && p.t > (p.urineT0 ?? 0) + 60 ? Math.round((p.vol.urine + p.vol.urineBasal - (p.urine0 ?? 0)) * 1000 / ((p.t - p.urineT0) / 3600) / p.body.weightKg * 10) / 10 : null;
   const rows = [['GCS', f(s.gcs)], ['NEWS2', f(s.news2)], ['qSOFA', f(s.qsofa)], [t('sc_si'), f(s.shockIndex)], ['PVC / CVP', p.flags.cvc ? Math.round(p.circ.rap) + ' mmHg' : '—'], [t('sc_uo'), uo == null ? '—' : uo + ' mL/kg/h']];
+  const ap = p.ponv?.apfel(p.drugs); if (ap) rows.push([t('sc_apfel'), `${ap.score}/4 · ${Math.round(ap.risk * 100)} %`]);
+  if (p.neuraxial?.active) rows.push([t('sc_block'), `${p.neuraxial.sensory} · Bromage ${p.neuraxial.bromage}`]);
   const tof = trainOfFour(p); rows.push([t('sc_tof'), tof.count + '/4' + (tof.ratio != null && !tof.depolarising ? ' · ' + Math.round(tof.ratio * 100) + ' %' : '')]);
   const sig = rows.map(r => r[1]).join('|'); if (box.dataset.sig === sig) return; box.dataset.sig = sig;
   box.replaceChildren(el('div', { class: 'score-grid' }, ...rows.map(([k, v]) => el('div', {}, el('i', { text: k }), el('b', { text: String(v) })))));
@@ -129,13 +154,18 @@ export function showEcg12(ui) {
   for (let x = 0; x < W; x += 5) { g.fillStyle = x % 25 ? 'rgba(240,120,120,.18)' : 'rgba(220,80,80,.45)'; g.fillRect(x, 0, 1, H); }
   for (let y = 0; y < H; y += 5) { g.fillStyle = y % 25 ? 'rgba(240,120,120,.18)' : 'rgba(220,80,80,.45)'; g.fillRect(0, y, W, 1); }
   const mm = 5, gauss = (x, c, w) => Math.exp(-((x - c) ** 2) / (2 * w * w));
-  const AXIS = { I: 0.8, II: 1.0, III: 0.5, aVR: -0.9, aVL: 0.3, aVF: 0.75, V1: -0.6, V2: -0.3, V3: 0.4, V4: 1.1, V5: 1.0, V6: 0.8 };
+  const X = new Set(e.x || []), TINV = new Set(e.tinv || []);
+  const AXIS = X.has('lahb') ? { I: 0.85, II: -0.35, III: -0.9, aVR: -0.3, aVL: 1.05, aVF: -0.65, V1: -0.6, V2: -0.4, V3: 0.2, V4: 0.8, V5: 0.8, V6: 0.6 }   // left anterior hemiblock: axis about -60 degrees
+    : { I: 0.8, II: 1.0, III: 0.5, aVR: -0.9, aVL: 0.3, aVF: 0.75, V1: -0.6, V2: -0.3, V3: 0.4, V4: 1.1, V5: 1.0, V6: 0.8 };
   const rr = 60 / Math.max(25, e.rate || 60), M = e.morph, qw = 1 + (M.qrsWide || 0), arrest = !isPerfusing(e.rhythm);
   const beat = (lead, tau, abs = tau, noP = false) => {                                       // mV at time tau (s) after the R wave
     const a = AXIS[lead], st = e.st[lead] / 10;
     if (arrest) return e.rhythm === 'VF' ? 0.3 * Math.sin(tau * 31) * Math.sin(tau * 7.3) : e.rhythm === 'TORSADES' ? 1.1 * Math.sin(abs * 26.4) * Math.sin(abs * 2.86) * Math.sign(a || 1) : 0;
     let qrs = a / Math.sqrt(qw) * gauss(tau, 0, 0.011 * qw) - 0.15 * Math.abs(a) * gauss(tau, 0.03 * qw, 0.01 * qw);
+    if (X.has('lvh')) qrs *= ['I', 'aVL', 'V5', 'V6'].includes(lead) ? 2.3 : ['V1', 'V2'].includes(lead) ? 2.4 : 1.3;   // tall R laterally, deep S in V1-V2
+    if (X.has('wpw')) qrs += 0.32 * a * gauss(tau, -0.035, 0.018);      // delta wave: a slurred upstroke straight after a short PR
     let tDir = Math.sign(a || 1);                                       // T direction: normally with the QRS
+    if (TINV.has(lead)) tDir = -Math.abs(tDir) * (X.has('wellens') && ['V2', 'V3'].includes(lead) ? 1.8 : 1.2);
     if (e.bbb === 'L') {                                                // broad notched R in I, aVL, V5-V6; QS in V1-V3; ST-T discordant (REF surawicz2009)
       const left = ['I', 'aVL', 'V5', 'V6'].includes(lead), right = ['V1', 'V2', 'V3'].includes(lead);
       qrs = left ? 0.75 * (gauss(tau, 0.015, 0.022) + gauss(tau, 0.075, 0.025)) : right ? -1.1 * gauss(tau, 0.05, 0.035) : 0.5 * a * (gauss(tau, 0.02, 0.025) + gauss(tau, 0.07, 0.025));
@@ -149,7 +179,8 @@ export function showEcg12(ui) {
     const tw = 0.28 * (M.tAmp ?? 1) * tDir * Math.min(1, Math.abs(a) + 0.3) * gauss(tau, Math.min(0.26, rr * 0.38) * M.qt, 0.045 * (1 - 0.45 * (M.tNarrow || 0)));
     if (e.rhythm === 'FLUTTER') { const ph = (abs * 5) % 1, saw = ph < 0.75 ? ph / 0.75 : (1 - ph) / 0.25, fl = ['II', 'III', 'aVF'].includes(lead) ? -0.18 : lead === 'V1' ? 0.1 : -0.05; return qrs + stSeg + tw + fl * (saw - 0.5); }
     if (noP) return qrs + stSeg + tw;
-    const blockedP = e.rhythm === 'AV_BLOCK2' ? 0.12 * Math.sign(a || 1) * gauss(tau, rr / 2 - 0.08, 0.025) : 0;
+    const prDep = X.has('pericarditis') ? (lead === 'aVR' ? 0.05 : -0.05) * gauss(tau, -0.07, 0.03) : 0;   // PR depression (elevation in aVR)
+    const blockedP = prDep + (e.rhythm === 'AV_BLOCK2' ? 0.12 * Math.sign(a || 1) * gauss(tau, rr / 2 - 0.08, 0.025) : 0);
     const pw = blockedP + (e.rhythm === 'AF' ? 0.03 * Math.sin(tau * 45) : e.rhythm === 'SVT' ? 0 : 0.12 * (M.pAmp ?? 1) * Math.sign(a || 1) * gauss(tau, -0.16 - (M.prS || 0), 0.025));
     const sine = M.sine ? M.sine * 0.6 * Math.sin(2 * Math.PI * tau / rr) : 0;
     return (1 - (M.sine || 0)) * (qrs + stSeg + tw + pw) + sine;
@@ -158,9 +189,11 @@ export function showEcg12(ui) {
   const wenck = (lead, s) => { const pp = 0.75 * rr, cyc = 4 * pp, PR = [0.16, 0.26, 0.34], c0 = Math.floor(s / cyc) * cyc, a = AXIS[lead]; let v = 0;
     for (const base of [c0 - cyc, c0]) for (let i = 0; i < 4; i++) { const tp = base + i * pp; v += 0.12 * Math.sign(a || 1) * gauss(s - tp, 0, 0.025); if (i < 3) { const tau = s - tp - PR[i]; if (tau > -0.1 && tau < 0.6) v += beat(lead, tau, s, true); } }
     return v; };
+  // ventricular extrasystole: wide bizarre complex without a P wave, T opposite to the QRS, a little early
+  const pvc = (lead, tau) => { const a = AXIS[lead], s = Math.sign(a || 1), t2 = tau + 0.08; return -s * 1.1 * gauss(t2, 0.05, 0.04) + 0.5 * s * gauss(t2, 0.34, 0.07); };
   const trace = (lead, x0, y0, secs) => {
     g.strokeStyle = '#111'; g.lineWidth = 1.3; g.beginPath();
-    for (let i = 0; i <= secs * 25 * mm; i++) { const s = i / (25 * mm), ph = ((s + 0.35) % rr) - (rr > 0.6 ? 0.25 : rr * 0.4), y = y0 - (e.rhythm === 'AV_BLOCK2W' ? wenck(lead, s) : beat(lead, ph, s)) * 10 * mm; i ? g.lineTo(x0 + i, y) : g.moveTo(x0 + i, y); }
+    for (let i = 0; i <= secs * 25 * mm; i++) { const s = i / (25 * mm), ph = ((s + 0.35) % rr) - (rr > 0.6 ? 0.25 : rr * 0.4), y = y0 - (e.rhythm === 'AV_BLOCK2W' ? wenck(lead, s) : X.has('bigeminy') && Math.floor((s + 0.35) / rr) % 2 === 1 ? pvc(lead, ph) : beat(lead, ph, s)) * 10 * mm; i ? g.lineTo(x0 + i, y) : g.moveTo(x0 + i, y); }
     g.stroke(); g.fillStyle = '#111'; g.font = '600 13px system-ui'; g.fillText(lead, x0 + 4, y0 - 40);
   };
   const order = [['I', 'aVR', 'V1', 'V4'], ['II', 'aVL', 'V2', 'V5'], ['III', 'aVF', 'V3', 'V6']];

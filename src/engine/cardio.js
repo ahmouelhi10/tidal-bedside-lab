@@ -104,7 +104,7 @@ export class Circulation {
       const itp = c.itp ?? 0;
       this.rap = Math.max(-2, this.pms - itp - flow * this.Rvr) + itp;
       this.svr = this.SVR0 * (c.arrestTone ?? 1) * svrFx;
-      const mapT = flow * this.svr + this.rap;
+      const mapT = Math.max(0, flow * this.svr + this.rap);   // never below zero, even when the filling pressure falls in a vasoplegic arrest
       this.mapArt = lag(this.mapArt, mapT, dt, flow > 0.05 ? this.tau.art : 6);
       const amp = flow > 0.05 ? (c.cprAmp ?? 0) : 0;
       this.dbp = Math.max(this.rap, this.mapArt - 0.25 * amp);

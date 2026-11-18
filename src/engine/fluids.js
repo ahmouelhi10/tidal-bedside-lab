@@ -5,6 +5,11 @@
 import { clamp } from './util.js';
 import { NORMAL, PRODUCTS, coagStatus, OOZE_MAX, RESERVE, RESERVE_TAU_MIN } from './coag.js';
 
+/** sodium content of each fluid (mmol/L): balanced crystalloid (Plasma-Lyte / Hartmann average), 0.9 % saline, 3 % saline,
+ *  glucose 5 % (REF textbook) */
+export const FLUID_NA = Object.freeze({ crystalloid: 137, saline: 154, saline3: 513, glucose5: 0 });
+/** glucose 5 %: the glucose is metabolised, the water spreads through total body water, ~1/12 stays in the plasma (REF textbook) */
+const FREE_WATER_PLASMA = 0.08;
 /** the chloride load of saline is excreted over ~6 h (time constant, REF design) */
 const SALINE_CLEAR_MIN = 360;
 /** osmotic diuresis: L/min of urine per mmol/L of glucose above the renal threshold (~200 mL/h at 28 mmol/L, REF design) */
@@ -25,7 +30,7 @@ export class Volumes {
     this.rates = { crystalloid: 0, bleed: 0 };           // L/min
     this.infusions = [];                                 // {remaining L, rate L/min, kind}
     this.urine = 0; this.urineBasal = 0; this.totalCrystalloid = 0; this.totalBlood = 0; this.totalLost = 0;
-    this.salineLoad = 0;                                 // 0.9 % saline still acting (mL/kg), cleared by the kidneys over hours
+    this.salineLoad = 0; this.delivered = [];                                 // 0.9 % saline still acting (mL/kg), cleared by the kidneys over hours
     // clotting factors (activity x plasma L), fibrinogen (g) and platelets (x10^9): carried by the blood, diluted by fluids (coag.js)
     this.fAmt = NORMAL.factors * this.vp0; this.fibAmt = NORMAL.fib * this.vp0; this.pltAmt = NORMAL.plt * bv;
     this.coagFn = 1;
@@ -48,9 +53,14 @@ export class Volumes {
   step(dt, ctx = {}) {
     const dtm = dt / 60;
     let inflow = 0;
+    this.delivered = [];                                 // [kind, litres] infused this step (sodium balance in electrolytes.js)
     for (const f of this.infusions) {
       const dv = Math.min(f.remaining, f.rate * dtm);
-      f.remaining -= dv; inflow += dv; this.totalCrystalloid += dv; if (f.kind === 'saline') this.salineLoad += dv * 1000 / this.body.weightKg;
+      f.remaining -= dv; this.totalCrystalloid += dv;
+      inflow += dv * (f.kind === 'glucose5' ? FREE_WATER_PLASMA : 1);           // glucose 5 % is free water: most of it moves into the cells
+      if (f.kind === 'saline') this.salineLoad += dv * 1000 / this.body.weightKg;
+      if (f.kind === 'saline3') this.salineLoad += 3.33 * dv * 1000 / this.body.weightKg;   // 3 % carries 3.3 times the chloride of 0.9 %
+      this.delivered.push([f.kind, dv]);
     }
     this.infusions = this.infusions.filter(f => f.remaining > 1e-9);
     this.salineLoad *= Math.exp(-dtm / SALINE_CLEAR_MIN);

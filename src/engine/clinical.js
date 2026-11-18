@@ -1,6 +1,7 @@
 // Bedside diagnostics computed from the patient: the 12-lead ECG, cardiac and renal blood tests, and the clinical scores
 // (NEWS2, qSOFA, GCS, shock index). Read-only: nothing here changes the physiology.
 import { clamp } from './util.js';
+import { DRUGS } from './drugs.js';
 
 const LEADS = Object.freeze(['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6']);
 /** Leads facing each coronary territory, and their reciprocal leads (REF thygesen2018: ST elevation >= 1 mm in two contiguous
@@ -29,7 +30,16 @@ export function ecg12(p) {
   const bbb = supra && !p.crises?.captured ? p.bbb : null;
   let qrs = Math.round(90 * (1 + 0.45 * (m.qrsWide || 0)));
   if (bbb) { qrs = Math.max(qrs, 140); findings.push(bbb === 'L' ? 'lbbb' : 'rbbb'); if (bbb === 'L') for (const l of ['V1', 'V2', 'V3']) st[l] += 1.0; }   // LBBB: discordant ST elevation in V1-V3 (REF sgarbossa1996)
-  return { rhythm: key, rate: Math.round(p.monitor.hr ?? p.circ.hr), qtc, qrs, bbb, morph: m, st, findings };
+  // ECG features on top of the rhythm (REF surawicz2009, thygesen2018; drawing amplitudes REF design)
+  const X = supra && !p.arrest.arrested ? new Set(p.ecgx || []) : new Set(), tinv = new Set();
+  if (X.has('nstemi')) { for (const l of ['I', 'aVL', 'V4', 'V5', 'V6']) { st[l] -= 1.5; tinv.add(l); } findings.push('nstemi'); }   // ST depression >= 0.5-1 mm with T inversion (REF thygesen2018)
+  if (X.has('pericarditis')) { for (const l of ['I', 'II', 'aVL', 'aVF', 'V2', 'V3', 'V4', 'V5', 'V6']) st[l] += 1.5; st.aVR -= 1.0; st.V1 -= 0.5; findings.push('pericarditis'); }   // diffuse concave ST elevation, PR depression, ST depression in aVR
+  if (X.has('wpw')) { qrs = Math.max(qrs, 125); m.prS = (m.prS || 0) - 0.07; findings.push('wpw'); }   // PR < 120 ms, delta wave, QRS >= 110-120 ms
+  if (X.has('lvh')) { for (const l of ['I', 'aVL', 'V5', 'V6']) { st[l] -= 1.0; tinv.add(l); } findings.push('lvh'); }   // Sokolow-Lyon > 3.5 mV with lateral strain
+  if (X.has('lahb')) findings.push('lahb');                                    // axis about -60 degrees, qR in I and aVL, rS in II, III, aVF
+  if (X.has('wellens')) { for (const l of ['V2', 'V3']) tinv.add(l); findings.push('wellens'); }   // deep symmetric T inversion in V2-V3: critical LAD stenosis
+  if (X.has('bigeminy')) findings.push('bigeminy');
+  return { rhythm: key, rate: Math.round(p.monitor.hr ?? p.circ.hr), qtc, qrs, bbb, morph: m, st, findings, x: [...X], tinv: [...tinv] };
 }
 
 /** Cardiac and renal laboratory values (REF design dynamics; reference limits cited in labs.js; NT-proBNP rises with age (roughly doubling
@@ -38,8 +48,9 @@ export function cardiacValues(p) {
   const s = p.snapshot(), lv = clamp(p.lv, 0.05, 1.3);
   // high-sensitivity troponin T rises from ~1 h after the infarct onset and climbs over hours (REF thygesen2018); shocks
   // and CPR add myocardial injury (REF design)
-  const ageH = p.stElevation ? (p.t + (p.infarctAgeS ?? 2400)) / 3600 : 0;
-  const mi = p.stElevation ? 3000 * (1 - Math.exp(-Math.max(0, ageH - 1) / 6)) : 0;
+  const infarct = p.stElevation || (p.ecgx || []).includes('nstemi'), peak = p.stElevation ? 3000 : 600;   // an NSTEMI releases less troponin (REF design)
+  const ageH = infarct ? (p.t + (p.infarctAgeS ?? 2400)) / 3600 : 0;
+  const mi = infarct ? peak * (1 - Math.exp(-Math.max(0, ageH - 1) / 6)) : 0;
   const cpr = (p.cpr.totalCompressions || 0) / 110 * 2 + (p.shockLog?.length || 0) * 15;   // ~2 ng/L per minute of compressions (at ~110/min), not per minute of the case
   const tnt = Math.round(6 + mi + cpr);
   const ntprobnp = Math.round(40 * Math.pow(2, Math.max(0, p.spec.age - 50) / 10) + 2500 * Math.pow(Math.max(0, 1 - lv), 1.3) + 2000 * (p.rvLoad || 0));
@@ -60,6 +71,8 @@ export function scores(p) {
   let gcs = p.arrest.arrested ? 3 : eff.loc ? (H > 0.6 ? 3 : H > 0.45 ? 5 : 7) : clamp(15 - Math.round(6 * H / 0.3), 9, 15);
   if (p.crises?.seizure) gcs = Math.min(gcs, 6);
   if (p.lytes.glucose < 2.2) gcs = Math.min(gcs, 8); else if (p.lytes.glucose < 3) gcs = Math.min(gcs, 13);
+  const na = p.lytes.na;                                              // sodium: confusion, then coma (REF spasovski2014; mapping REF design)
+  if (na < 116 || na > 168) gcs = Math.min(gcs, 8); else if (na < 121 || na > 162) gcs = Math.min(gcs, 11); else if (na < 126 || na > 156) gcs = Math.min(gcs, 13);
   const assessable = !eff.paralyzed;
   const alert = assessable && gcs === 15;
   // NEWS2 (REF rcp2017)
@@ -119,7 +132,7 @@ export function trainOfFour(p) {
   const d = p.drugs.effects({ inArrest: p.arrest.arrested }).nmb;
   const count = d >= 0.99 ? 0 : d >= 0.9 ? 1 : d >= 0.8 ? 2 : d >= 0.75 ? 3 : 4;
   const sux = p.drugs.ce('succinylcholine'), roc = p.drugs.ce('rocuronium');
-  const depol = sux / 1.2 > roc / 1.2;
+  const depol = sux / DRUGS.succinylcholine.c50 > roc / DRUGS.rocuronium.c50;
   const ratio = count < 4 ? null : depol ? 1 : +Math.pow(1 - d, 6).toFixed(2);
   return { count, ratio, depolarising: depol && d > 0.05, extubationReady: count === 4 && ratio >= 0.9 };
 }

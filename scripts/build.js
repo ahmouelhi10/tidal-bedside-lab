@@ -29,6 +29,7 @@ const h = crypto.createHash('sha256');
 for (const n of fs.readdirSync(engineDir).sort()) { h.update(n); h.update(fs.readFileSync(path.join(engineDir, n))); }
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const count = (d) => fs.readdirSync(d, { withFileTypes: true }).reduce((n, e) => n + (e.isDirectory() ? count(path.join(d, e.name)) : 1), 0);
-const manifest = { name: pkg.name, version: pkg.version, builtAt: new Date().toISOString(), engineSha256: h.digest('hex'), files: count(DIST) };
+const { EUCAST_VERSION } = await import(new URL('../src/engine/infection.js', import.meta.url));   // breakpoint table the infectiology ward was built against (CLINICAL_REVIEW INF-1)
+const manifest = { name: pkg.name, version: pkg.version, builtAt: new Date().toISOString(), engineSha256: h.digest('hex'), eucastVersion: EUCAST_VERSION, files: count(DIST) };
 fs.writeFileSync(path.join(DIST, 'BUILD.json'), JSON.stringify(manifest, null, 2) + '\n');
 console.log('built', path.relative(ROOT, DIST), manifest);

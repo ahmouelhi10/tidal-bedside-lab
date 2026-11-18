@@ -41,7 +41,7 @@ test('intubation honours the chosen depth: a tube taped too deep is endobronchia
   for (let seed = 1; seed <= 10 && !found; seed++) {
     const p = mk({}, { seed });
     p.dispatch({ type: 'drug.bolus', drug: 'propofol', amount: 150 }); p.dispatch({ type: 'drug.bolus', drug: 'rocuronium', amount: 100 });
-    for (let k = 0; k < 30 && !(p.drugs.effects({ inArrest: false }).nmb > 0.9); k++) p.run(10);
+    for (let k = 0; k < 30 && !(p.drugs.effects({ inArrest: false }).nmb > 0.9 && p.drugs.effects({ inArrest: false }).loc); k++) p.run(10);
     const r = p.dispatch({ type: 'airway.intubate', depthCm: p.tube.optimalDepth + 6 }); p.run((r.willTakeS || 30) + 1);
     if (p.airway.intubated) { found = true; assert.equal(p.tube.depth, p.tube.optimalDepth + 6); assert.equal(p.tube.mainstem, 'R'); }
   }

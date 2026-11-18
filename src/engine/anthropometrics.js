@@ -44,6 +44,16 @@ export function bloodVolumeLemmens(w, hCm) {                                    
   return (70 / Math.sqrt(bmi / 22)) * w / 1000;
 }
 
+/** Blood volume (L) for any build: Nadler for normal weight, Lemmens for severe obesity, with a smooth hand-over.
+ *  The weight is a smoothstep of BMI from 27 to 45, so the volume and its slope are both continuous and the volume per kg
+ *  never rises with weight. The older linear blend over BMI 28-32 made the volume per kg rise in women (Lemmens is not
+ *  sex-specific and lies ~9 % above Nadler there) and put kinks at both ends. REF nadler1962, lemmens2006; window REF design */
+export const BV_BLEND_BMI = Object.freeze([27, 45]);
+export function bloodVolumeBlend(sex, w, hCm) {
+  const x = Math.min(1, Math.max(0, (bmiOf(w, hCm) - BV_BLEND_BMI[0]) / (BV_BLEND_BMI[1] - BV_BLEND_BMI[0]))), k = x * x * (3 - 2 * x);
+  return bloodVolumeNadler(sex, w, hCm) * (1 - k) + bloodVolumeLemmens(w, hCm) * k;
+}
+
 /** Mifflin-St Jeor resting energy expenditure, kcal/day (REF mifflin1990). Actual weight is the validated input for BMI < 30; obesity is UNVERIFIED here. */
 export const reeMifflin = (sex, age, w, hCm) => 10 * w + 6.25 * hCm - 5 * age + (sex === 'F' ? -161 : 5);
 
@@ -55,11 +65,7 @@ export function describeBody({ sex = 'M', age = 40, heightCm = 175, weightKg = 7
   const ibw = ibwDevine(sex, heightCm), pbw = pbwArdsnet(sex, heightCm);
   const bsa = bsaMosteller(weightKg, heightCm);
   const tbw = Math.min(tbwWatson(sex, age, weightKg, heightCm), weightKg * 0.75);
-  // Blood volume: Nadler below BMI 30, Lemmens (BMI-scaled mL/kg) for obesity.
-  const bvNadler = bloodVolumeNadler(sex, weightKg, heightCm);
-  const bvLemmens = bloodVolumeLemmens(weightKg, heightCm);
-  const wBlend = Math.min(1, Math.max(0, (bmi - 28) / 4));       // smooth hand-over over BMI 28-32
-  const bloodVolume = bvNadler * (1 - wBlend) + bvLemmens * wBlend;
+  const bloodVolume = bloodVolumeBlend(sex, weightKg, heightCm);   // Nadler -> Lemmens, smooth over BMI 27-45
   return {
     sex, age, heightCm, weightKg, bmi, bmiClass: bmiClass(bmi),
     lbm, lbmJames: lbmJ, ibw, pbw, abw: adjustedBodyWeight(ibw, weightKg), bsa,

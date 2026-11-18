@@ -1,7 +1,10 @@
 // DOM user interface: scenario/patient setup, intervention panels, event log, trends, teaching overlay, debrief. No framework.
 import { t, getLang, setLang, drugName, scenarioText, CRITERION_FR } from './i18n.js';
 import { SPEEDS } from './sim.js';
-import { DRUGS } from '/engine/drugs.js';
+import { DRUGS, CALCIUM } from '/engine/drugs.js';
+import { FORCED_AIR_W } from '/engine/thermal.js';
+import { fluidVolumeMl } from '/engine/infection.js';
+import { Coach, levelPicker, loadLevel, helpUsed } from './coach.js';
 import { bmiOf, bmiClass } from '/engine/anthropometrics.js';
 import { SKIN_TONES } from './gl/body.js';
 import { CAMERAS } from './scene.js';
@@ -107,8 +110,8 @@ const DRUG_UI = [
     { k: 'amiodarone', fixed: 300, step: 150 },
     { k: 'lidocaine', per: 1.0, basis: 'tbw', step: 10 },
     { k: 'adenosine', fixed: 6, step: 6 },
-    { k: 'calciumChloride', fixed: 1000, step: 500 },
-    { k: 'calciumGluconate', fixed: 3000, step: 1000 },
+    { k: 'calciumChloride', fixed: CALCIUM.calciumChloride.presetMmol, step: CALCIUM.calciumChloride.stepMmol, ca: CALCIUM.calciumChloride },     // mmol of elemental calcium; values set in drugs.js
+    { k: 'calciumGluconate', fixed: CALCIUM.calciumGluconate.presetMmol, step: CALCIUM.calciumGluconate.stepMmol, ca: CALCIUM.calciumGluconate },
   ] },
   { g: 'g_crisis', items: [
     { k: 'epinephrine', route: 'im', fixed: 500, step: 100, label: 'IM' },
@@ -119,8 +122,16 @@ const DRUG_UI = [
     { k: 'dantrolene', per: 2.5, basis: 'tbw', step: 20 },
     { k: 'lipid', per: 1.5, basis: 'tbw', step: 10, inf: { unit: 'mL/kg/min', def: 0.25, step: 0.05, toEngine: (v, b) => v * b.weightKg } },
     { k: 'hydrocortisone', fixed: 200, step: 50 },
+    { k: 'terlipressin', fixed: 2, step: 1 },
+    { k: 'ceftriaxone', fixed: 1000, step: 1000 },
     { k: 'ipratropium', fixed: 0.5, step: 0.25 },
     { k: 'prednisolone', fixed: 40, step: 10 },
+  ] },
+  { g: 'g_pacu', items: [
+    { k: 'ondansetron', fixed: 4, step: 1 },
+    { k: 'droperidol', fixed: 1.25, step: 0.625 },
+    { k: 'dexamethasone', fixed: 8, step: 4 },
+    { k: 'pethidine', fixed: 25, step: 12.5 },
   ] },
   { g: 'g_neuro', items: [
     { k: 'midazolam', route: 'im', fixed: 10, step: 2.5, label: 'IM' },
@@ -177,6 +188,7 @@ export class UI {
     this.dom = {};
     if (this.menuOpen === undefined) this.menuOpen = !this.sim.patient;
     if (this.panelOpen === undefined) this.panelOpen = false;
+    if (this.level === undefined) this.level = loadLevel();   // learner level: beginner (coach), intermediate (senior on request), expert (no help)
     if (this.hints === undefined) this.hints = false;   // floating markers are opt-in (settings > Markers); hovering the patient or equipment still names it
     const top = el('header', { class: 'hud-top' },
       this.dom.clock = el('div', { class: 'clock', 'aria-live': 'off' }),
@@ -281,7 +293,7 @@ export class UI {
       B.append(back(), el('h3', { text: t('sec_lab') }), el('div', { class: 'card lab-note' }, el('p', { text: t('lab_text') }), el('ul', { class: 'muted small' }, [t('lab_1'), t('lab_2'), t('lab_3')].map(x => el('li', { text: x })))));
     } else if (view === 'resus' || view === 'chal' || view === 'echo' || view === 'infect') {
       const pick = view === 'resus' ? (s => s.kind === 'ACLS') : view === 'echo' ? (s => s.kind === 'Echo') : view === 'infect' ? (s => s.kind === 'Infectiology') : (s => s.kind !== 'ACLS' && s.kind !== 'Echo' && s.kind !== 'Infectiology');
-      B.append(back(), el('h3', { text: t({ resus: 'sec_resus', chal: 'sec_chal', echo: 'sec_echo', infect: 'sec_inf' }[view]) }), el('p', { class: 'muted small', text: t({ resus: 'resus_text', chal: 'chal_text', echo: 'echo_text', infect: 'inf_text' }[view]) }), this.dom.cards);
+      B.append(back(), el('h3', { text: t({ resus: 'sec_resus', chal: 'sec_chal', echo: 'sec_echo', infect: 'sec_inf' }[view]) }), levelPicker(this), el('p', { class: 'muted small', text: t({ resus: 'resus_text', chal: 'chal_text', echo: 'echo_text', infect: 'inf_text' }[view]) }), this.dom.cards);
       if (view === 'echo') B.append(el('details', { class: 'card lab-note small' }, el('summary', { text: t('soon_sources_echo') }), el('ul', { class: 'muted' }, t('echo_sources').map(x => el('li', { text: x })))));
       if (view === 'infect') B.append(el('details', { class: 'card lab-note small' }, el('summary', { text: t('soon_sources') }), el('ul', { class: 'muted' }, t('inf_sources').map(x => el('li', { text: x })))));
       this.buildCards(false, pick);
@@ -309,7 +321,7 @@ export class UI {
         b.append(el('div', { class: 'skill-row' }, ic, el('b', { text: L(pr) })), el('div', { class: 'badges' }, el('span', { class: 'badge kind', text: t('gd_nsteps', { n: pr.steps.length }) }), tools.length ? el('span', { class: 'badge', text: `✋ ${tools.length} ${t('pw_instr')}` }) : null));
         list.append(b);
       }
-      B.append(back(), el('h3', { text: t('sec_skills') }), el('p', { class: 'muted small', text: t('skills_text') }), list);
+      B.append(back(), el('h3', { text: t('sec_skills') }), levelPicker(this), el('p', { class: 'muted small', text: t('skills_text') }), list);
       list.firstChild?.click();
     }
   }
@@ -499,7 +511,8 @@ export class UI {
     this.dom.logBox = el('section', { class: 'card log logpop', hidden: true, role: 'dialog', 'aria-label': t('log') },
       el('div', { class: 'phead' }, el('h3', { text: t('log') }), el('button', { class: 'x', 'aria-label': t('close'), title: t('close'), onclick: () => this.toggleLog(false), text: '×' })),
       this.dom.logList = el('ol', { 'aria-live': 'polite' }));
-    R.append(this.dom.monWrap, this.dom.effBox, this.dom.teach, el('section', { class: 'card trends' }, el('h3', { text: t('tr_title') }), this.dom.trend));
+    this.coach ??= new Coach(this); this.coach.render(true);
+    R.append(this.dom.monWrap, this.coach.box, this.dom.effBox, this.dom.teach, el('section', { class: 'card trends' }, el('h3', { text: t('tr_title') }), this.dom.trend));
     this.logLines.forEach(l => this.dom.logList.prepend(el('li', { text: l })));
   }
 
@@ -542,6 +555,7 @@ export class UI {
     if (skill) setTimeout(() => this.startGuide(skill), 400);
     this.liveLink?.start();                                         // live instructor channel (online sessions only)
     this.dom.teamBox?.replaceChildren(); this._teamId = 0;
+    this.coach?.start(); if (this.coach && this.pendingSkill) this.coach.box.hidden = true;   // skills training: the guided panel is the help
     const sc0 = this.scenarios.find(s => s.id === this.sim.scenarioId);
     if (sc0 && !this.pendingSkill) { const sp = this.sim.speed; this.sim.setSpeed(0); prebrief(scenarioText(sc0), !!this.teamMode).then((r) => { this.teamMode = !!r?.team; const c = this.dom.opts?.querySelector('#chkTeam'); if (c) c.checked = this.teamMode; if (this.sim.patient && !this.sim.finished && this.sim.speed === 0) this.sim.setSpeed(sp || 1); }); }   // scored case: pre-brief first, the clock waits
     if (this.sim.patient?.ward) { this.wardView = new WardView(this); this.tab = 'tab_ward'; this.panelOpen = true; this.dom.card.hidden = true; this.buildTabs(); }   // infectiology cases open the ward workspace
@@ -590,6 +604,17 @@ export class UI {
   }
   btn(label, fn, cls = '', attrs = {}) { return el('button', { class: cls, onclick: fn, text: label, ...attrs }); }
 
+  /** Guided-step help by level: beginner sees why, what to do and what the step will do to the patient; intermediate sees the
+   *  reason on request; expert sees the step title only. */
+  _stepHelp(cur, ctx, evs, handStep) {
+    const lv = this.level, why = cur.why ? L(cur.why) : '';
+    if (lv === 'expert') return [];
+    if (lv === 'intermediate') return why ? [el('details', { class: 'pw-why' }, el('summary', { text: t('pw_why') }), el('p', { text: why }))] : [];
+    const effects = evs(cur).filter(e => e.type !== 'note').map(e => this.describe(e)).filter(Boolean);
+    return [why ? el('p', { text: why }) : null,
+      el('p', { class: 'pw-howto' }, el('b', { text: t('pw_howto') + ' ' }), handStep ? t('pw_drag', { tool: L(TOOLS[cur.hand.tool]) || cur.hand.tool }) : t('pw_press')),
+      effects.length ? el('p', { class: 'small muted pw-effects' }, el('b', { text: t('pw_effects') + ' ' }), effects.join(' · ')) : null].filter(Boolean);
+  }
   /** Live countdown in each drug card after a bolus: to the first sign on the monitor, then to the peak. */
   _drugCountdowns(p) {
     const mm = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
@@ -640,7 +665,7 @@ export class UI {
         // one card per drug: name and dosing rule, a bolus line, and for infusions a rate line with start / stop below
         const row = el('div', { class: 'drug', dataset: { drug: it.k } },
           el('div', { class: 'dn' }, el('b', { text: name }), el('span', { class: 'drun', text: t('dr_running') }),
-            el('span', { class: 'muted small rule', text: it.fixed ? t('basis_fixed') : `${it.per} ${d.unit}/kg · ${t('basis_' + it.basis)}` }), it.warn ? el('span', { class: 'warn small', title: t('not_in_arrest'), text: '⚠ ' + t('not_in_arrest') }) : null),
+            el('span', { class: 'muted small rule', text: it.ca ? t('ca_rule', { ml: Math.round(it.fixed / it.ca.mmolPerMl), c: it.ca.mmolPerMl }) : it.fixed ? t('basis_fixed') : `${it.per} ${d.unit}/kg · ${t('basis_' + it.basis)}` }), it.warn ? el('span', { class: 'warn small', title: t('not_in_arrest'), text: '⚠ ' + t('not_in_arrest') }) : null),
           el('div', { class: 'dcount', hidden: true, dataset: { drug: it.k } }, el('span', { class: 'dc-txt' }), el('span', { class: 'dc-bar' }, el('i'))),
           el('div', { class: 'dtime', dataset: { drug: it.k, dose: def } }, el('span', { class: 'muted small', text: '⏱ ' + t('dt_computing') })),
           el('div', { class: 'dline' }, el('span', { class: 'dl', text: t('bolus') }), dose, el('span', { class: 'unit', text: d.unit }),
@@ -660,7 +685,7 @@ export class UI {
   }
   panelFluids(P) {
     const vol = el('input', { type: 'number', id: 'inFluidVol', value: 500, min: 50, max: 3000, step: 50 }), mins = el('input', { type: 'number', id: 'inFluidMin', value: 15, min: 1, max: 120, step: 1 });
-    const kind = el('select', { id: 'selFluid', 'aria-label': t('fl_kind') }, el('option', { value: 'balanced', text: t('fl_balanced') }), el('option', { value: 'saline', text: t('fl_saline') }));
+    const kind = el('select', { id: 'selFluid', 'aria-label': t('fl_kind') }, el('option', { value: 'balanced', text: t('fl_balanced') }), el('option', { value: 'saline', text: t('fl_saline') }), el('option', { value: 'saline3', text: t('fl_saline3') }), el('option', { value: 'glucose5', text: t('fl_glucose5') }));
     P.append(el('h4', { text: t('fl_crystalloid') }), el('div', { class: 'row3' }, el('label', { class: 'f' }, el('span', { text: t('fl_volume') }), vol), el('label', { class: 'f' }, el('span', { text: t('fl_minutes') }), mins), this.btn(t('fl_give'), () => this.act({ type: 'fluid.bolus', volumeL: Number(vol.value) / 1000, minutes: Number(mins.value), fluid: kind.value }, `${vol.value} mL ${t('fl_' + kind.value)}`), 'act')), el('label', { class: 'f' }, el('span', { text: t('fl_kind') }), kind),
       el('div', { class: 'stack grid2' },
         this.btn(t('fl_prbc'), () => this.act({ type: 'blood.transfuse', kind: 'prbc' }, t('fl_prbc')), 'act'), this.btn(t('fl_whole'), () => this.act({ type: 'blood.transfuse', kind: 'whole' }, t('fl_whole')), 'act'), this.btn(t('fl_ffp'), () => this.act({ type: 'blood.transfuse', kind: 'ffp' }, t('fl_ffp')), 'act'), this.btn(t('fl_plt'), () => this.act({ type: 'blood.transfuse', kind: 'platelets' }, t('fl_plt')), 'act'), this.btn(t('fl_cryo'), () => this.act({ type: 'blood.transfuse', kind: 'cryo' }, t('fl_cryo')), 'act'),
@@ -775,7 +800,7 @@ export class UI {
       el('h4', { text: t('lab_title') }), el('div', { class: 'stack' }, ...LAB_KINDS.map(k => this.btn(t('lab_' + k), () => this.act({ type: 'lab.order', kind: k }, t('lab_' + k)), 'act', { dataset: { lab: k } }))),
       this.dom.labBox = el('div', { class: 'labs' }),
       el('h4', { text: t('od_env') }), el('div', { class: 'row2' }, el('label', { class: 'f' }, el('span', { text: t('od_ambient') }), amb), this.btn(t('od_set'), () => this.act({ type: 'thermal.ambient', c: Number(amb.value) }, t('od_set')), 'act')),
-      el('div', { class: 'stack' }, this.btn(t('od_cover'), () => this.act({ type: 'thermal.cover', factor: 0.5 }, t('od_cover')), 'act'), this.btn(t('od_warmer'), () => this.act({ type: 'thermal.device', target: 38 }, t('od_warmer')), 'act'), this.btn(t('od_cool'), () => this.act({ type: 'thermal.device', target: null }, t('od_cool')), 'act')));
+      el('div', { class: 'stack' }, this.btn(t('od_cover'), () => this.act({ type: 'thermal.cover', factor: 0.5 }, t('od_cover')), 'act'), this.btn(t('od_warmer'), () => this.act({ type: 'thermal.device', target: 38, maxWatts: FORCED_AIR_W }, t('od_warmer')), 'act'), this.btn(t('od_cool'), () => this.act({ type: 'thermal.device', target: null }, t('od_cool')), 'act')));
   }
   /** Laboratory: pending samples with a countdown, then the results table (each sample a column, so trends read left to right). */
   _labsTick(p) {
@@ -832,7 +857,7 @@ export class UI {
       this.dom.gdWait = el('div', { class: 'gd-wait small' });
       const coach = el('div', { class: 'pw-coach' + (handStep ? ' hands' : '') },
         el('div', { class: 'pw-coach-top' }, el('span', { class: 'pw-n', text: String(g.i + 1) }), el('span', { class: 'small muted', text: t('gd_step', { i: g.i + 1, n: steps.length }) })),
-        el('b', { class: 'pw-title', text: L(cur) }), cur.why ? el('p', { text: L(cur.why) }) : null, this.dom.gdWait,
+        el('b', { class: 'pw-title', text: L(cur) }), ...this._stepHelp(cur, ctx, evs, handStep), this.dom.gdWait,
         handStep ? el('div', { class: 'pw-do' }, el('span', { class: 'pw-hand' }), el('span', { text: t('pw_take') })) : null,
         el('div', { class: 'pw-actions' },
           handStep ? this.btn(t('ho_auto'), () => this.guideDo(), 'act', { id: 'btnGuideDo' }) : this.btn(t('pw_perform'), () => this.guideDo(), 'act primary', { id: 'btnGuideDo' }),
@@ -987,7 +1012,11 @@ export class UI {
       case 'team.confirm': return '';                                  // the action itself follows in the journal
       case 'drug.infusion': return `${d} ${t('infusion').toLowerCase()} ${fmt(ev.rate, 3)} /min`;
       case 'drug.stop': return `${d} - ${t('stop')}`;
-      case 'fluid.bolus': return `${t(ev.fluid === 'saline' ? 'fl_saline' : 'fl_balanced')} ${Math.round(ev.volumeL * 1000)} mL / ${ev.minutes} min`;
+      case 'fluid.bolus': return `${t('fl_' + (['saline', 'saline3', 'glucose5'].includes(ev.fluid) ? ev.fluid : 'balanced'))} ${Math.round(ev.volumeL * 1000)} mL / ${ev.minutes} min`;
+      case 'procedure.endoscopy': return t('px_endoscopy');
+      case 'neuraxial.spinal': return `${t('px_spinal')} ${ev.amount} mg`;
+      case 'neuraxial.epidural': return ev.action === 'test' ? t('px_epi_test') : `${t('px_epi_topup')} ${ev.volumeMl} mL`;
+      case 'neuraxial.assess': return t('px_assess');
       case 'blood.transfuse': return t('fl_' + ev.kind);
       case 'airway.set': return `${t('aw_device')}: ${t({ none: 'aw_none', chin_lift: 'aw_chin', jaw_thrust: 'aw_jaw', opa: 'aw_opa', sga: 'aw_sga', ett: 'aw_intubate' }[ev.device] || ev.device)}`;
       case 'airway.intubate': return t('aw_intubate') + (ev.depthCm ? ` ${ev.depthCm} cm` : '');
@@ -997,7 +1026,7 @@ export class UI {
       case 'ward.sample': return t('wd_log_sample', { k: t('wd_s_' + ev.kind) });
       case 'ward.rx.start': return t('wd_log_rx', { d: abxName(ev.drug), r: t('wd_' + ev.route) + (ev.dose === 'high' ? ' · ' + t('wd_high') : '') });
       case 'ward.rx.stop': return t('wd_log_stop', { d: abxName(ev.drug) });
-      case 'ward.order': return t('wd_o_' + ev.what, { ml: '30 mL/kg', w: '' });
+      case 'ward.order': { const pt = this.sim.patient; return t('wd_o_' + ev.what, { ml: pt ? fluidVolumeMl(pt.body) : '', w: '' }); }
       case 'bronch.suction': return `${t('br_suction')} (${ev.where})`;
       case 'bronch.remove': return t('br_removed');
       case 'vent.set': { const v = ev.settings || {}; return `${t('aw_vent')}: ` + [v.mode, v.rate != null ? `${v.rate}/min` : '', v.vt != null ? `Vt ${Math.round(v.vt)} mL` : '', v.fio2 != null ? `FiO2 ${v.fio2}` : '', v.peep != null ? `PEEP ${v.peep}` : ''].filter(Boolean).join(' '); }   // only what was changed
@@ -1037,6 +1066,7 @@ export class UI {
     const p = this.sim.patient; if (!p) return;
     this.effects.tick(p);
     signsTick(this);
+    this.coach?.tick();
     if (this.panelOpen && this.tab === 'tab_airway') { this._mechTick(p); volTick(this); }
     if (this.panelOpen && this.tab === 'tab_orders') { this._labsTick(p); scoresTick(this); }
     if (this.panelOpen && this.tab === 'tab_circ') this._paceStatus?.();
@@ -1104,6 +1134,7 @@ export class UI {
     const ov = el('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': t('score_title') });
     const box = el('div', { class: 'box db-box' }, el('div', { class: 'phead' }, el('h2', { text: t('score_title') + (x ? ' · ' + x.title : '') }), el('button', { class: 'x', 'aria-label': t('close'), onclick: () => ov.remove(), text: '×' })));
     const v = out.server ? (out.server.verified ? t('verified') : t('unverified')) : t('offline');
+    const help = helpUsed(this.sim.patient?.log || []);
     const scen = this.scenarios.find(s => s.id === this.sim.scenarioId);
     recordProgress({ area: scen ? (scen.kind === 'ACLS' ? 'resus' : scen.kind === 'Echo' ? 'echo' : scen.kind === 'Infectiology' ? 'inf' : 'chal') : 'lab', id: scen ? scen.id : 'free', title: x ? x.title : t('free_play'),
       pct: sc ? sc.pct : null, grade: sc?.grade, verified: !!out.server?.verified, spec: this.sim.session?.spec, selfPct: self?.pct ?? null });
@@ -1123,6 +1154,7 @@ export class UI {
       requestAnimationFrame(() => requestAnimationFrame(() => ring.querySelector('.val')?.setAttribute('stroke-dashoffset', (C * (1 - pct / 100)).toFixed(1))));
       analysis.append(el('div', { class: 'db-head' }, ring, el('div', { class: 'db-meta' }, el('span', { class: 'grade', text: `${t('grade')} ${sc.grade}` }), el('span', { class: 'muted', text: `${sc.total} / ${sc.max} ${t('points')}` }), el('span', { class: out.server?.verified ? 'good small' : 'muted small', text: `${t('score_server')}: ${v}` }))));
     } else analysis.append(el('p', { class: 'muted', text: `${t('score_server')}: ${v}` }));
+    if (help.level) analysis.append(el('p', { class: 'db-level' }, el('span', { class: 'badge', text: t('lvl_' + help.level) }), ' ', help.level === 'intermediate' ? t('db_hints', { n: help.hints }) : help.level === 'beginner' ? t('db_coached') : t('db_nohelp')));
     const cal = calibrationCard(self, sc); if (cal) analysis.append(cal);
     const momBox = el('div', { class: 'db-moments' }, el('h4', { text: t('db_moments') }), el('p', { class: 'muted small', text: t('tl_building') }));
     analysis.append(momBox);

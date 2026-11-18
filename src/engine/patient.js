@@ -20,23 +20,27 @@ import { TEAM_ACTS, readbackOf } from './team.js';
 import { Crises } from './crises.js';
 import { Volatile, AGENTS, VAPOURS } from './volatile.js';
 import { Ketosis } from './metabolic.js';
+import { CALCIUM, CA_MAX_BOLUS_MMOL } from './drugs.js';
+import { CA_FULL_SHIELD_MMOL } from './electrolytes.js';
+import { Neuraxial } from './neuraxial.js';
+import { Ponv } from './ponv.js';
+import { FLUID_NA } from './fluids.js';
 import { LAB_KINDS, TURNAROUND_S, sampleValues, flags as labFlags } from './labs.js';
 
 export const DT = 0.1;
 const AIRWAYS = { none: 1.0, chin_lift: 0.8, jaw_thrust: 0.9, opa: 0.9, sga: 0.95, ett: 1.0 };
 
 /** Every intervention accepted by Patient.dispatch(); the server validates replay logs against this list. */
-export const EVENT_TYPES = Object.freeze(['drug.bolus', 'bicarb.bolus', 'drug.infusion', 'drug.stop', 'fluid.bolus', 'blood.transfuse', 'bleed.set', 'bleed.control', 'order', 'airway.set', 'position.set', 'airway.intubate', 'vent.set', 'o2.mask', 'apox.set', 'monitor.attach', 'iv.access', 'nibp.cycle', 'cpr.start', 'cpr.stop', 'cpr.compress', 'cpr.switch', 'cpr.surface', 'defib.pads', 'defib.setEnergy', 'defib.mode', 'defib.charge', 'defib.shock', 'procedure.needle_decompression', 'procedure.chest_tube', 'procedure.cricothyroidotomy', 'exam.chest', 'exam.pocus', 'exam.neck', 'procedure.pericardiocentesis', 'procedure.pci', 'procedure.thrombolysis', 'procedure.treat_hyperkalemia', 'airway.tube_adjust', 'bronch.insert', 'bronch.suction', 'bronch.remove', 'thermal.device', 'thermal.cover', 'thermal.ambient', 'echo.view', 'echo.measure', 'echo.report', 'ward.advance', 'ward.sample', 'ward.rx.start', 'ward.rx.stop', 'ward.order', 'lab.order', 'instructor.inject', 'team.order', 'team.confirm', 'team.correct', 'io.access', 'pacing.set', 'procedure.arterial_line', 'procedure.central_line', 'procedure.ng_tube', 'procedure.urinary_catheter', 'exam.ecg12', 'vaporizer.set', 'n2o.set', 'niv.set', 'procedure.vagal', 'note']);
+export const EVENT_TYPES = Object.freeze(['drug.bolus', 'bicarb.bolus', 'drug.infusion', 'drug.stop', 'fluid.bolus', 'blood.transfuse', 'bleed.set', 'bleed.control', 'order', 'airway.set', 'position.set', 'airway.intubate', 'vent.set', 'o2.mask', 'apox.set', 'monitor.attach', 'iv.access', 'nibp.cycle', 'cpr.start', 'cpr.stop', 'cpr.compress', 'cpr.switch', 'cpr.surface', 'defib.pads', 'defib.setEnergy', 'defib.mode', 'defib.charge', 'defib.shock', 'procedure.needle_decompression', 'procedure.chest_tube', 'procedure.cricothyroidotomy', 'exam.chest', 'exam.pocus', 'exam.neck', 'procedure.pericardiocentesis', 'procedure.pci', 'procedure.thrombolysis', 'procedure.treat_hyperkalemia', 'airway.tube_adjust', 'bronch.insert', 'bronch.suction', 'bronch.remove', 'thermal.device', 'thermal.cover', 'thermal.ambient', 'echo.view', 'echo.measure', 'echo.report', 'ward.advance', 'ward.sample', 'ward.rx.start', 'ward.rx.stop', 'ward.order', 'lab.order', 'instructor.inject', 'team.order', 'team.confirm', 'team.correct', 'io.access', 'pacing.set', 'procedure.arterial_line', 'procedure.central_line', 'procedure.ng_tube', 'procedure.urinary_catheter', 'exam.ecg12', 'vaporizer.set', 'n2o.set', 'niv.set', 'procedure.vagal', 'procedure.endoscopy', 'neuraxial.spinal', 'neuraxial.epidural', 'neuraxial.assess', 'note']);
 /** What a live instructor can change during a case (event 'instructor.inject'). Each goes through the replay log like any
  *  other event, so a session run with an instructor still replays to the same hash. Clinical course after the change is the
  *  engine's own physiology; the changes themselves are scenario-design choices (REF design). */
 /** calcium gluconate carries a third of the calcium of the same mass of calcium chloride (2.2 vs 6.8 mmol/g, REF textbook) */
-const CA_GLUCONATE_EQ = 0.326;
 /** HCO3- lowered by the chloride of 0.9 % saline: ~0.11 mmol/L per mL/kg (60 mL/kg over 2 h -> base excess ~ -6.5, REF scheingraber1999) */
 const SALINE_HCO3_PER_MLKG = 0.11;
-export const INJECTS = Object.freeze(['vf', 'pea', 'asystole', 'svt', 'af', 'brady', 'avblock3', 'bleed', 'bleed_stop', 'tension_ptx', 'hyperkalaemia', 'airway_obstruction', 'anaphylaxis', 'bronchospasm', 'mh', 'hypoglycaemia', 'torsades', 'flutter', 'avblock1', 'avblock2', 'wenckebach', 'lbbb', 'rbbb', 'bbb_off', 'seizure', 'marker']);
+export const INJECTS = Object.freeze(['vf', 'pea', 'asystole', 'svt', 'af', 'brady', 'avblock3', 'bleed', 'bleed_stop', 'tension_ptx', 'hyperkalaemia', 'airway_obstruction', 'anaphylaxis', 'bronchospasm', 'mh', 'hypoglycaemia', 'torsades', 'flutter', 'avblock1', 'avblock2', 'wenckebach', 'lbbb', 'rbbb', 'bbb_off', 'seizure', 'ecg_wpw', 'ecg_lvh', 'ecg_lahb', 'ecg_nstemi', 'ecg_pericarditis', 'ecg_wellens', 'ecg_bigeminy', 'ecg_clear', 'ponv', 'high_spinal', 'marker']);
 
-const NUMERIC_EVENT_PARAMS = ['amount', 'rate', 'volumeL', 'minutes', 'mlPerMin', 'c', 'factor', 'energy', 'mEq', 'target', 'maxWatts', 'fio2', 'seal', 'eff', 'depth', 'needleMm', 'fr', 'depthCm', 'cm', 'quality', 'value', 'hours', 'percent'];
+const NUMERIC_EVENT_PARAMS = ['amount', 'rate', 'volumeL', 'minutes', 'mlPerMin', 'c', 'factor', 'energy', 'mEq', 'target', 'maxWatts', 'fio2', 'seal', 'eff', 'depth', 'needleMm', 'fr', 'depthCm', 'cm', 'quality', 'value', 'hours', 'percent', 'volumeMl'];
 
 /** Structural validation of nested event payloads (settings/opts/items) so a malformed browser payload cannot inject NaN, strings or unknown flags. */
 const VENT_NUM = { rate: [0, 60], vt: [0, 1500], fio2: [0.21, 1], peep: [0, 25], seal: [0, 1] };
@@ -109,13 +113,16 @@ function validateEventShape(ev) {
       return validateEventShape(a);
     }
     case 'team.confirm': case 'team.correct': return Number.isInteger(ev.id) ? null : 'order id must be an integer';
-    case 'drug.bolus': return ev.route == null || (DRUGS[ev.drug]?.routes || ['iv']).includes(ev.route) ? null : 'route not available for this drug';
+    case 'drug.bolus': if (ev.drug in CALCIUM && !(ev.amount > 0 && ev.amount <= CA_MAX_BOLUS_MMOL)) return `calcium is given in mmol of elemental calcium (at most ${CA_MAX_BOLUS_MMOL} mmol a bolus)`;
+      return ev.route == null || (DRUGS[ev.drug]?.routes || ['iv']).includes(ev.route) ? null : 'route not available for this drug';
     case 'vaporizer.set': { const a = ev.agent ?? 'sevoflurane'; return VAPOURS.includes(a) && typeof ev.percent === 'number' && Number.isFinite(ev.percent) && ev.percent >= 0 && ev.percent <= AGENTS[a].maxDial ? null : 'invalid vaporiser setting (sevoflurane 0-8, isoflurane 0-5, desflurane 0-18 %)'; }
-    case 'fluid.bolus': return ev.fluid == null || ['balanced', 'saline'].includes(ev.fluid) ? null : 'fluid must be balanced or saline';
+    case 'fluid.bolus': return (ev.fluid == null || ['balanced', 'saline', 'saline3', 'glucose5'].includes(ev.fluid)) && !(ev.fluid === 'saline3' && ev.volumeL > 0.5) ? null : 'fluid must be balanced, saline, saline3 (at most 500 mL a bolus) or glucose5';
     case 'niv.set': { if (!['off', 'cpap', 'bipap', 'hfno'].includes(ev.mode)) return 'mode must be off, cpap, bipap or hfno';
       const bad = (k, lo, hi) => ev[k] != null && !(typeof ev[k] === 'number' && Number.isFinite(ev[k]) && ev[k] >= lo && ev[k] <= hi);
       return bad('fio2', 0.21, 1) || bad('epap', 0, 20) || bad('ipap', 0, 30) || bad('flow', 0, 70) || (ev.ipap != null && ev.epap != null && ev.ipap < ev.epap) ? 'invalid NIV / high-flow setting' : null; }
     case 'procedure.vagal': return ev.technique == null || ['standard', 'modified'].includes(ev.technique) ? null : 'technique must be standard or modified';
+    case 'neuraxial.spinal': return typeof ev.amount === 'number' && ev.amount >= 2 && ev.amount <= 25 ? null : 'spinal dose: 2-25 mg of hyperbaric bupivacaine 0.5 %';
+    case 'neuraxial.epidural': return ev.action === 'test' || (ev.action === 'topup' && typeof ev.volumeMl === 'number' && ev.volumeMl >= 1 && ev.volumeMl <= 25) ? null : 'epidural: action test, or topup with 1-25 mL';
     case 'n2o.set': return typeof ev.percent === 'number' && Number.isFinite(ev.percent) && ev.percent >= 0 && ev.percent <= AGENTS.n2o.maxDial ? null : 'invalid nitrous oxide setting (0-70 %)';
     case 'pacing.set': return typeof ev.on === 'boolean' && (ev.rate == null || (isNum(ev.rate) && ev.rate >= 30 && ev.rate <= 180)) && (ev.mA == null || (isNum(ev.mA) && ev.mA >= 0 && ev.mA <= 200)) ? null : 'pacing: on boolean, rate 30-180, mA 0-200';
     case 'procedure.central_line': return ['ijv', 'scv', 'fem'].includes(ev.site) && (ev.us == null || typeof ev.us === 'boolean') ? null : 'site ijv|scv|fem, us boolean';
@@ -170,7 +177,10 @@ export class Patient {
     this.rngS = new Rng(((seed ^ 0x9e3779b9) >>> 0) || 7);
     this.rngT = new Rng(((seed ^ 0x2545f491) >>> 0) || 11);  // team read-back errors: own stream (team.js)
     this.team = { orders: [] };
-    this.bbb = this.spec.bbb === 'L' || this.spec.bbb === 'R' ? this.spec.bbb : null;   // bundle branch block: 'L', 'R' or none
+    this.oedema = 0; this.pcwp = 8;                    // pulmonary oedema 0..1 and the estimated wedge pressure (cases with spec.congestion)
+    this.varix = null;                                 // variceal bleeding: { rate mL/min, controlled } (scenario)
+    this.bbb = this.spec.bbb === 'L' || this.spec.bbb === 'R' ? this.spec.bbb : null;
+    this.ecgx = Array.isArray(this.spec.ecg) ? this.spec.ecg.filter(k => ['wpw', 'lvh', 'lahb', 'nstemi', 'pericarditis', 'wellens', 'bigeminy'].includes(k)) : [];   // ECG features (clinical.js)   // bundle branch block: 'L', 'R' or none
     this.volatile = new Volatile(this.body); this.drugs.volatile = this.volatile;   // sevoflurane (volatile.js)
     this.crises = new Crises(this.spec, this.body);    // anaphylaxis, bronchospasm, MH, LAST, hypoglycaemia, fibrinolysis, pacing (crises.js)   // separate stream for surgical gestures: never perturbs the main random sequence
     this.chest = new Chest(this.body, this.rngS); this.neck = new Neck(this.body, this.rngS);
@@ -193,6 +203,8 @@ export class Patient {
     this.shockLog = []; this.pendingEvents = []; this.notes = []; this.orders = []; this.labs = []; this.bleedControlledAt = null;
     this.bicarbMmol = 0; this.painIndex = 0; this.hrSmooth = 72; this.myoHypox = 0;   // progressive hypoxic myocardial depression 0..1 (design)
     this.keto = new Ketosis(this.spec, this.body);   // ketosis and insulin infusion (metabolic.js)
+    this.neuraxial = new Neuraxial(this.body, this.spec);   // spinal / epidural block (neuraxial.js)
+    this.ponv = new Ponv(this.spec); this.aspShunt = 0;     // nausea and vomiting (ponv.js); shunt after an aspiration
     if (this.spec.dehydrationL) { const L = clamp(this.spec.dehydrationL, 0, 8); this.vol.vp -= 0.2 * L; this.vol.vi -= 0.6 * L; }   // water and salt deficit: plasma and interstitial share of an extracellular loss (REF design)
     this.lytes = new Electrolytes(this.spec, this.body);   // K+, Na+, ionised Ca2+, glucose (reported; no feedback on the physiology yet)
     if (scenario?.init) scenario.init(this);
@@ -229,8 +241,7 @@ export class Patient {
       case 'drug.bolus': {
         const d = DRUGS[ev.drug]; if (!d) return { ok: false, error: 'unknown drug' };
         if (ev.drug === 'adenosine') this._adenosine(ev.amount);
-        if (ev.drug === 'calciumChloride') this.lytes.calcium(ev.amount);   // membrane stabilisation against hyperkalaemia
-        if (ev.drug === 'calciumGluconate') this.lytes.calcium(ev.amount * CA_GLUCONATE_EQ);
+        if (ev.drug in CALCIUM) this.lytes.calcium(ev.amount);   // membrane stabilisation against hyperkalaemia; mmol of elemental calcium, either salt
         if (ev.drug === 'potassiumChloride') this.lytes.potassiumMmol(ev.amount);
         if (ev.drug === 'glucagon') this.lytes.glucagonMg(ev.amount);
         if (ev.drug === 'magnesium') this.lytes.magnesiumGrams(ev.amount);
@@ -251,10 +262,11 @@ export class Patient {
       case 'n2o.set': this.volatile.setN2O(ev.percent); return { ok: true };
       case 'niv.set': this.niv = ev.mode === 'off' ? null : { mode: ev.mode, fio2: ev.fio2 ?? 0.5, epap: ev.mode === 'hfno' ? 0 : ev.epap ?? 5, ipap: ev.mode === 'bipap' ? ev.ipap ?? 15 : ev.epap ?? 5, flow: ev.mode === 'hfno' ? ev.flow ?? 50 : 0 }; return { ok: true };
       case 'drug.stop': if (ev.drug === 'insulin') this.keto.setInsulin(0); else if (ev.drug === 'glucose') this.keto.setGlucose(0); else this.drugs.stop(ev.drug); return { ok: true };
-      case 'fluid.bolus': this.vol.startInfusion(ev.volumeL, ev.minutes ?? 15, ev.fluid === 'saline' ? 'saline' : 'crystalloid'); return { ok: true };   // balanced crystalloid unless 0.9 % saline is chosen
+      case 'fluid.bolus': this.vol.startInfusion(ev.volumeL, ev.minutes ?? 15, { saline: 'saline', saline3: 'saline3', glucose5: 'glucose5' }[ev.fluid] || 'crystalloid'); return { ok: true };   // balanced crystalloid unless 0.9 % saline is chosen
       case 'blood.transfuse': this.vol.transfuse(ev.kind); this.lytes.transfuse(); return { ok: true };
       case 'bleed.set': this.vol.setBleed(ev.mlPerMin); return { ok: true };
-      case 'bleed.control': this.vol.setBleed(0); this.bleedControlledAt = t; this.notes.push({ t, text: 'haemorrhage source controlled' }); return { ok: true };
+      case 'bleed.control': if (this.varix && !this.varix.controlled) return { ok: true, note: 'internal bleeding: pressure does not reach it' };
+        this.vol.setBleed(0); this.bleedControlledAt = t; this.notes.push({ t, text: 'haemorrhage source controlled' }); return { ok: true };
       case 'lab.order': {                              // the sample freezes the values now; the result is released after the turnaround
         const rec = { id: this.labs.length + 1, kind: ev.kind, t, readyAt: +(t + TURNAROUND_S[ev.kind]).toFixed(1), values: sampleValues(ev.kind, this) };
         rec.flags = labFlags(rec.values, this.spec.sex, this.spec.age); this.labs.push(rec);
@@ -322,6 +334,32 @@ export class Patient {
         if (this.arrest.key === 'SVT' && this.rng.chance(mod ? 0.43 : 0.17)) { this.arrest.setRhythm('NSR', t); this.notes.push({ t, text: 'SVT converted by a vagal manoeuvre' }); return { ok: true, converted: true }; }
         return { ok: true, converted: false };
       }
+      case 'neuraxial.spinal': {                      // hyperbaric bupivacaine 0.5 % intrathecally (REF hocking2004)
+        if (this.neuraxial.kind === 'spinal') return { ok: false, error: 'a spinal has already been given' };
+        const spread = (this.rng.next() - 0.5) * 4;   // patient-to-patient spread +/- 2 segments
+        this.neuraxial.spinal(ev.amount, t, { headUp: !!this.headUp, spread }); this.notes.push({ t, text: `spinal: bupivacaine ${ev.amount} mg` });
+        return { ok: true, peak: this.neuraxial.target };
+      }
+      case 'neuraxial.epidural': {                    // through the catheter; where it really lies decides what happens (REF guay2006)
+        const where = this.neuraxial.catheter ?? 'epidural';
+        if (ev.action === 'test') {                   // lidocaine 60 mg with epinephrine 15 mcg
+          if (where === 'intravascular') { this.drugs.bolus('epinephrine', 15, t); this.drugs.bolus('lidocaine', 60, t); }
+          else if (where === 'intrathecal') this.neuraxial._start('spinal', this.neuraxial.spinalTarget(7), 1.5, t, 0.4);
+          return { ok: true };
+        }
+        const mg = 5 * ev.volumeMl;                   // bupivacaine 0.5 %
+        if (where === 'intravascular') this.drugs.bolus('bupivacaine', mg, t);
+        else if (where === 'intrathecal') this.neuraxial._start('spinal', this.neuraxial.spinalTarget(mg), 1.2, t);
+        else { this.neuraxial.epidural(ev.volumeMl, t); this.drugs.bolus('bupivacaine', mg, t, 'regional'); }
+        this.notes.push({ t, text: `epidural top-up ${ev.volumeMl} mL bupivacaine 0.5 %` });
+        return { ok: true };
+      }
+      case 'neuraxial.assess': return { ok: true, sensory: this.neuraxial.sensory, bromage: this.neuraxial.bromage };   // cold / pinprick and leg movement
+      case 'procedure.endoscopy': {                    // endoscopic band ligation: controls variceal bleeding in ~90 % (REF baveno7; REF design)
+        if (!this.varix || this.varix.controlled) return { ok: true, controlled: false, note: 'no variceal bleeding' };
+        const ok = this.rng.chance(0.9); if (ok) { this.varix.controlled = true; this.vol.setBleed(0); this.bleedControlledAt = t; this.notes.push({ t, text: 'varices banded: bleeding controlled' }); }
+        return { ok: true, controlled: ok };
+      }
       case 'procedure.ng_tube': this.flags.ngTube = true; this.notes.push({ t, text: 'nasogastric tube' }); return { ok: true };
       case 'procedure.urinary_catheter': this.flags.urineCath = true; this.urine0 = this.vol.urine + this.vol.urineBasal; this.urineT0 = t; return { ok: true };
       case 'exam.ecg12': return { ok: true };
@@ -341,7 +379,7 @@ export class Patient {
         o.status = o.error ? 'accepted_error' : 'confirmed'; o.tConfirm = t;
         return { ok: true, act: o.readback };                         // the client now carries out exactly what was read back
       }
-      case 'procedure.treat_hyperkalemia': this.lytes.calcium(1000); this.lytes.insulinGlucose(); if (this.lytes.kEff < 6.5) this.arrest.fixCause('hyperkalemia'); return { ok: true };   // calcium 1 g + insulin 10 U with glucose 25 g
+      case 'procedure.treat_hyperkalemia': this.lytes.calcium(CA_FULL_SHIELD_MMOL); this.lytes.insulinGlucose(); if (this.lytes.kEff < 6.5) this.arrest.fixCause('hyperkalemia'); return { ok: true };   // calcium 1 g + insulin 10 U with glucose 25 g
       case 'thermal.device': this.therm.setDevice(ev.target == null ? null : { targetC: ev.target, maxWatts: ev.maxWatts ?? 300 }); return { ok: true };
       case 'thermal.cover': this.therm.cover = ev.factor; return { ok: true };
       case 'thermal.ambient': this.therm.setAmbient(ev.c); return { ok: true };
@@ -490,12 +528,16 @@ export class Patient {
       case 'flutter': case 'avblock1': case 'avblock2': case 'wenckebach': if (this.arrest.arrested) return { ok: false, error: 'patient in cardiac arrest' }; this.arrest.setRhythm({ flutter: 'FLUTTER', avblock1: 'AV_BLOCK1', avblock2: 'AV_BLOCK2', wenckebach: 'AV_BLOCK2W' }[ev.what], t); break;
       case 'lbbb': case 'rbbb': this.bbb = ev.what === 'lbbb' ? 'L' : 'R'; break;   // a conduction defect under any supraventricular rhythm
       case 'bbb_off': this.bbb = null; break;
+      case 'ecg_clear': this.ecgx = []; break;
+      case 'ecg_wpw': case 'ecg_lvh': case 'ecg_lahb': case 'ecg_nstemi': case 'ecg_pericarditis': case 'ecg_wellens': case 'ecg_bigeminy': { const k = ev.what.slice(4); if (!this.ecgx.includes(k)) this.ecgx.push(k); break; }
       case 'avblock3': if (this.arrest.arrested) return { ok: false, error: 'patient in cardiac arrest' }; this.arrest.setRhythm('AV_BLOCK3', t); break;
       case 'anaphylaxis': case 'bronchospasm': case 'mh': case 'seizure': this.crises.trigger(ev.what, t); break;
       case 'hypoglycaemia': this.lytes.gluBase = Math.min(this.lytes.gluBase, 1.8); break;
       case 'hyperkalaemia': this.lytes.kBase = Math.max(this.lytes.kBase, 7.4); if (this.arrest.arrested) this.arrest.causes.hyperkalemia = true; break;
       case 'airway_obstruction': this.airway.patency = Math.min(this.airway.patency, 0.15); break;
       case 'torsades': this.crises.qtDrug = Math.max(this.crises.qtDrug, 140); this.arrest.arrest('TORSADES', t); break;   // long-QT substrate so it can recur
+      case 'ponv': this.ponv.extra = 0.9; break;
+      case 'high_spinal': this.neuraxial._start('spinal', 1, 1.5, t); break;   // total spinal
       case 'marker': break;
     }
     this.notes.push({ t, text: 'instructor: ' + (ev.what === 'marker' ? ev.text : ev.what) });
@@ -517,7 +559,11 @@ export class Patient {
     const paralyzed = eff.paralyzed;
     const cx = this.crises.step(dt, { drugs: this.drugs, lytes: this.lytes, map: this.circ.mapArt, bleeding: this.vol.rates.bleed, t, paralyzedOrArrest: paralyzed || arrested, rhythm: this.arrest.key, perfusing: info.perfusing, hr: this.circ.hr, volatileMac: this.volatile.macFrac, arrested });
     eff.fx = { ...eff.fx, svr: eff.fx.svr * cx.svr, ven: eff.fx.ven + cx.ven, inotropy: eff.fx.inotropy * cx.inot, hrAdd: eff.fx.hrAdd + cx.hrAdd };
-    const anesth = eff.loc || cx.loc;
+    // neuraxial block: sympathetic block, cardioaccelerator fibres, respiratory muscles (neuraxial.js)
+    const nx = this.neuraxial.step(dt, { t, rap: this.circ.rap });
+    const shiv = this.therm.shivering;                 // shivering: sympathetic activation (REF sessler2016; size REF design)
+    eff.fx = { ...eff.fx, svr: eff.fx.svr * nx.svr, ven: eff.fx.ven + nx.ven, baro: (eff.fx.baro ?? 1) * nx.baro, baroHr: (eff.fx.baroHr ?? 1) * nx.baroHr, chrono: (eff.fx.chrono ?? 1) * nx.chrono, hrAdd: eff.fx.hrAdd + nx.hrAdd + 12 * shiv };
+    const anesth = eff.loc || cx.loc || nx.loc;
     if (cx.leakLpm > 0) { const l = Math.min(cx.leakLpm * dt / 60, this.vol.vp * 0.01); this.vol.vp -= l; this.vol.vi += l; }   // capillary leak into the tissues
     if (cx.fibLossPerMin > 0) this.vol.fibAmt *= 1 - cx.fibLossPerMin * dt / 60;
     this.vol.hepFn = this.crises.heparinEffect(this.drugs).fnMult;
@@ -560,6 +606,21 @@ export class Patient {
     };
     // pressure support: the exact bleeding / volume loads enter through vol
     this.circ.step(dt, ctx);
+    if (this.varix && !this.varix.controlled && !this.warming) {
+      // variceal bleeding follows the portal pressure: terlipressin lowers it (splanchnic vasoconstriction), over-transfusion and
+      // over-filling raise it (REF baveno7, villanueva2013; sizes REF design); it slows as the arterial pressure falls
+      const terli = this.drugs.ce('terlipressin'), tEff = terli > 0 ? 1 / (1 + Math.pow(0.02 / terli, 1.5)) : 0;
+      const over = 1 + 0.9 * clamp((this.vol.bloodVolume / this.circ.BV0 - 1) / 0.15, 0, 1);   // filled above the starting blood volume: portal pressure and bleeding rise
+      this.vol.setBleed(this.varix.rate * (1 - 0.6 * tEff) * over * clamp(this.circ.mapArt / 70, 0.2, 1.2));
+    }
+    if (this.spec.congestion) {
+      // pulmonary congestion: wedge pressure estimated from the right atrial pressure, the LV function and the afterload; alveolar
+      // flooding above ~18-20 mmHg builds over minutes and clears more slowly (REF esc_hf2021, textbook; sizes REF design)
+      this.pcwp = this.circ.rap + 4 + 22 * (1 - Math.min(1, lvNow)) + 0.18 * Math.max(0, this.circ.mapArt - 95) * (1.6 - Math.min(1, lvNow));
+      const tgt = clamp((this.pcwp - 18) / 12, 0, 1), m = dt / 60;
+      this.oedema += (tgt - this.oedema) * (1 - Math.exp(-m / (tgt > this.oedema ? 5 : 12)));
+    }
+    for (const [kind, dv] of this.vol.delivered) this.lytes.fluid(FLUID_NA[kind] ?? 140, dv);   // sodium follows the fluids given (previous step)
     this.vol.step(dt, { map: this.circ.mapArt, anesthetized: anesth, coreC: this.therm.tc, ph: this.resp.pH, diuretic: cx.diuretic, glucose: this.lytes.glucose });
     // ventilation configuration; nitrous oxide takes part of the inspired gas, so oxygen cannot exceed 100 % minus its share
     // pressure support unloads the respiratory muscles: it recovers up to 60 % of the ventilation lost to airway obstruction (REF design)
@@ -591,7 +652,8 @@ export class Patient {
     const sedPatency = this.airway.intubated || !(anesth || paralyzed) ? sedPatency0 : Math.min(sedPatency0, this.hard?.cap ?? 1);   // the difficult-airway cap only bites once the airway muscles are relaxed
     const rctx = {
       co: this.circ.co, hb: this.vol.hb, tempC: this.therm.tc, anesthetized: anesth || paralyzed, paralyzed: paralyzed || arrested,
-      shuntExtra: this.chest.shuntExtra + this.tube.shuntExtra + cx.shunt, vaMult: nivVa(this.chest.vaMult * this.tube.vaMult * cx.vaMult, nivCtx), vo2Scale: cx.vo2, niv: nivCtx, vdWash, br: this.crises.br,
+      shuntExtra: this.chest.shuntExtra + this.tube.shuntExtra + cx.shunt + this.aspShunt + 0.38 * this.oedema * (1 - clamp(0.045 * (vent.peep ?? 0), 0, 0.55)),   // flooded alveoli; CPAP / PEEP re-opens up to half (REF rochwerg2017_niv; REF design)
+ vaMult: nivVa(this.chest.vaMult * this.tube.vaMult * cx.vaMult * (vent.mode === 'ctrl' ? 1 : nx.vaMult), nivCtx), vo2Scale: cx.vo2 * (1 + 1.0 * shiv) /* shivering up to doubles the oxygen consumption (REF sessler2016) */, niv: nivCtx, vdWash, br: this.crises.br, dyspnoea: this.oedema,
       dep: eff.dep, vent, airwayPatency: sedPatency * (1 - 0.8 * this.volatile.irritation) * cx.patency, o2: this.o2 ? { ...this.o2, fio2: n2oCap(this.o2.fio2) } : this.o2, o2Dilution: this.volatile.dilution, apOx: this.apOx, bicarbMmol: this.bicarbMmol - SALINE_HCO3_PER_MLKG * this.vol.salineLoad - this.keto.hco3Loss, bloodVolume: this.vol.bloodVolume,
     };
     if (vent.mode === 'none' && arrested) rctx.vent = { mode: 'none' };
@@ -604,12 +666,21 @@ export class Patient {
     this.neck.step(dt, { ventilating: vent.mode === 'ctrl', cap: this.hard?.cap ?? 1 }, this.chest);
     this.tube.step(dt, { intubated: this.airway.device === 'ett' });
     this.bicarbMmol = Math.max(0, this.bicarbMmol - this.bicarbMmol * dt / 1800);
-    this.therm.step(dt, { vo2: this.resp.vo2Eff, paralyzed, anesthetized: anesth || paralyzed, vasodilation: clamp(1 - eff.fx.svr, 0, 1), perfusion: clamp(this.circ.co / this.circ.CO0, 0.05, 1.2) });
+    if (this.ponv.pacu || this.neuraxial.t0 !== null || this.ponv.extra > 0.01 || this.ponv.nausea > 0.01) {
+      const pv = this.ponv.step(dt, { drugs: this.drugs, mapRatio: this.circ.mapArt / this.circ.MAP0, suppressed: paralyzed || arrested || eff.loc, loc: anesth, protectedAirway: this.airway.device === 'ett', t });
+      if (pv.vomited) { this.notes.push({ t, text: 'vomiting' }); if (this.ponv.aspirated && this.aspShunt === 0) { this.aspShunt = 0.12; this.notes.push({ t, text: 'aspiration of gastric content' }); } }   // REF design
+    }
+    // pethidine lowers the shivering threshold about twice as much as the vasoconstriction threshold (REF kurz1997; size REF design)
+    const antiShiver = 1.2 * (this.drugs.pk.pethidine ? 1 / (1 + Math.pow(0.05 / Math.max(1e-9, this.drugs.ce('pethidine')), 2)) : 0);
+    this.therm.step(dt, { shiverShift: antiShiver, vo2: this.resp.vo2Eff / (1 + shiv), paralyzed,   // shivering heat is added by thermal.js itself
+      anesthetized: anesth || paralyzed, vasodilation: clamp(1 - eff.fx.svr, 0, 1), perfusion: clamp(this.circ.co / this.circ.CO0, 0.05, 1.2) });
     // ---- pre-arrest degeneration (deterministic timers) and arrest dynamics
     if (!arrested && info.perfusing) {
       this.timers.hypoxic = this.resp.sao2 < 0.50 ? this.timers.hypoxic + dt : Math.max(0, this.timers.hypoxic - dt);
       this.timers.lowMap = this.circ.mapArt < 35 ? this.timers.lowMap + dt : Math.max(0, this.timers.lowMap - dt);
-      if (this.timers.hypoxic > 45 && this.arrest.key !== 'SINUS_BRADY') this.arrest.setRhythm('SINUS_BRADY', t);
+      if (this.timers.hypoxic > 45 && this.arrest.key !== 'SINUS_BRADY') { this.arrest.setRhythm('SINUS_BRADY', t); this.hypoxicBrady = true; }
+      else if (this.hypoxicBrady && this.arrest.key === 'SINUS_BRADY' && this.timers.hypoxic === 0 && this.resp.sao2 > 0.9) { this.arrest.setRhythm('NSR', t); this.hypoxicBrady = false; }   // hypoxic bradycardia resolves once oxygenation is restored (REF textbook)
+      else if (this.arrest.key !== 'SINUS_BRADY') this.hypoxicBrady = false;
       if (((this.timers.hypoxic > 90 || this.timers.lowMap > 20) && this.circ.mapArt < 40) || (this.timers.hypoxic > 120 && this.myoHypox > 0.8)) {
         const cause = this.resp.sao2 < 0.5 ? 'hypoxia' : (this.chest.tension >= 0.4 ? 'tension_ptx' : 'hypovolemia'); this.arrest.causes[cause] = true;
         if (this.chest.tension >= 0.4) this.arrest.causes.tension_ptx = true;
@@ -632,7 +703,7 @@ export class Patient {
       else if (r === 'SELF_TERM') { this.arrest.selfTerminate(t); this.cpr.stop(); this.notes.push({ t, text: 'torsades stopped on its own' }); }
     }
     this.keto.step(dt, this.lytes);
-    this.lytes.step(dt, { hco3: this.resp.hco3, cacl2: this.drugs.cp('calciumChloride') + CA_GLUCONATE_EQ * this.drugs.cp('calciumGluconate'), coreC: this.therm.tc, salbutamol: this.drugs.ce('salbutamol') });
+    this.lytes.step(dt, { hco3: this.resp.hco3, caMmolL: this.drugs.cp('calciumChloride') + this.drugs.cp('calciumGluconate'), coreC: this.therm.tc, salbutamol: this.drugs.ce('salbutamol') });
     if (!this.warming) {                                               // severe hyperkalaemia can stop the heart; calcium protects the membrane
       const lam = this.lytes.arrestHazard();                           // per minute (electrolytes.js); random draw only when the hazard exists
       if (lam > 0 && !this.arrest.arrested && this.rng.chance(1 - Math.exp(-lam * dt / 60))) {
@@ -645,6 +716,7 @@ export class Patient {
       }
       if (cx.seStop > 0 && this.rng.chance(1 - Math.exp(-cx.seStop * dt / 60))) { this.crises.se.active = false; this.notes.push({ t, text: 'seizure stopped' }); }   // status epilepticus
       else if (cx.seRecur > 0 && this.rng.chance(1 - Math.exp(-cx.seRecur * dt / 60))) { this.crises.trigger('seizure', t); this.notes.push({ t, text: 'seizure recurred' }); }
+      if (cx.naSeizure > 0 && this.rng.chance(1 - Math.exp(-cx.naSeizure * dt / 60))) { this.crises.trigger('seizure', t); this.notes.push({ t, text: 'seizure (hyponatraemia)' }); }
       if (cx.tdp > 0 && !this.arrest.arrested && this.rng.chance(1 - Math.exp(-cx.tdp * dt / 60))) {   // long QT: torsades de pointes
         this.arrest.arrest('TORSADES', t); this.tdpCount = (this.tdpCount || 0) + 1; this.notes.push({ t, text: 'arrest: torsades de pointes' });
       }
@@ -695,7 +767,7 @@ export class Patient {
   /** FNV-1a over a quantised (6-decimal) state vector; used for replay verification. Coarse enough to tolerate last-ulp differences between JS engines. */
   stateHash() {
     const c = this.circ, r = this.resp, v = this.vol, th = this.therm;
-    const vec = [this.n, c.hr, c.sbp, c.dbp, c.mapArt, c.rap, c.co, c.x.hr, c.x.svr, r.sao2, r.paco2, r.pv, r.vO2, r.vN2, r.cv, r.lactate, v.vp, v.rbc, v.vi, v.fAmt, v.fibAmt, v.pltAmt, v.res.f, v.res.fib, v.res.plt, th.tc, th.tp, this.arrest.readiness, this.arrest.vfAmp, this.myoHypox, this.rng.state, this.chest.air, this.chest.pip, this.chest.leak, this.neck.palpable ? 1 : 0, this.neck.marked ? 1 : 0, this.neck.cannulaOk ? 1 : 0, this.rngS.state, this.rngT.state, ...this.tube.hashVec(), this.peri.volume, this.rvLoad, ...(this.ward ? this.ward.hashVec() : []), ...this.drugs.hashVec(), ...this.lytes.hashVec(), ...this.crises.hashVec(), this.flutterBlockUntil ?? -1, ...this.volatile.hashVec(), this.vol.salineLoad, this.bbb === 'L' ? 1 : this.bbb === 'R' ? 2 : 0, ...(this.niv ? [['cpap', 'bipap', 'hfno'].indexOf(this.niv.mode), this.niv.fio2, this.niv.epap, this.niv.ipap, this.niv.flow] : [-1]), ...this.keto.hashVec()];
+    const vec = [this.n, c.hr, c.sbp, c.dbp, c.mapArt, c.rap, c.co, c.x.hr, c.x.svr, r.sao2, r.paco2, r.pv, r.vO2, r.vN2, r.cv, r.lactate, v.vp, v.rbc, v.vi, v.fAmt, v.fibAmt, v.pltAmt, v.res.f, v.res.fib, v.res.plt, th.tc, th.tp, this.arrest.readiness, this.arrest.vfAmp, this.myoHypox, this.rng.state, this.chest.air, this.chest.pip, this.chest.leak, this.neck.palpable ? 1 : 0, this.neck.marked ? 1 : 0, this.neck.cannulaOk ? 1 : 0, this.rngS.state, this.rngT.state, ...this.tube.hashVec(), this.peri.volume, this.rvLoad, ...(this.ward ? this.ward.hashVec() : []), ...this.drugs.hashVec(), ...this.lytes.hashVec(), ...this.crises.hashVec(), this.flutterBlockUntil ?? -1, ...this.volatile.hashVec(), this.vol.salineLoad, this.bbb === 'L' ? 1 : this.bbb === 'R' ? 2 : 0, this.ecgx.length, this.oedema, this.varix ? (this.varix.controlled ? 2 : 1) : 0, ...(this.niv ? [['cpap', 'bipap', 'hfno'].indexOf(this.niv.mode), this.niv.fio2, this.niv.epap, this.niv.ipap, this.niv.flow] : [-1]), ...this.keto.hashVec(), ...this.neuraxial.hashVec(), ...this.ponv.hashVec(), this.aspShunt, this.hypoxicBrady ? 1 : 0];
     for (const k of Object.keys(this.drugs.pk)) vec.push(...this.drugs.pk[k].a, this.drugs.pk[k].ce);
     let h = 0x811c9dc5;
     const s = vec.map(x => (Number.isFinite(x) ? x.toFixed(6) : 'NaN')).join('|') + '|' + this.arrest.key;

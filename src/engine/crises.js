@@ -33,7 +33,7 @@ export class Crises {
     this.qtDrug = 0;                                 // QTc prolongation (ms) from QT-prolonging drugs or a congenital long QT
     this.out = this._neutral();
   }
-  _neutral() { return { svr: 1, ven: 0, inot: 1, hrAdd: 0, leakLpm: 0, vaMult: 1, shunt: 0, vo2: 1, loc: false, hazard: 0, cause: null, diuretic: 0, fibLossPerMin: 0, tdp: 0, patency: 1, seStop: 0, seRecur: 0 }; }
+  _neutral() { return { svr: 1, ven: 0, inot: 1, hrAdd: 0, leakLpm: 0, vaMult: 1, shunt: 0, vo2: 1, loc: false, hazard: 0, cause: null, diuretic: 0, fibLossPerMin: 0, tdp: 0, patency: 1, seStop: 0, seRecur: 0, naSeizure: 0 }; }
   /** QTc (ms) that drives the torsades risk: drugs or congenital, plus hypokalaemia (QT-U). Hypocalcaemia lengthens the ST
    *  segment (see electrolytes.ecg) but rarely causes torsades, so it is left out here (REF drew2010, textbook). */
   riskQtc(lytes) { return 400 + this.qtDrug + 70 * smooth(3.5, 2.5, lytes.k) + 40 * smooth(0.7, 0.4, lytes.mg ?? 0.85); }   // hypomagnesaemia also promotes torsades (REF drew2010; size REF design)
@@ -104,6 +104,11 @@ export class Crises {
     if (cns > 1.0) o.hrAdd += 15 * smooth(1, 1.6, cns);
     o.inot *= 1 - 0.7 * smooth(0.5, 1.3, cv); o.svr *= 1 - 0.3 * smooth(0.6, 1.3, cv);
     if (cv > 1) { o.hazard += 0.3 * Math.exp(2 * (cv - 1)); o.cause = 'local_anaesthetic'; }
+    // ---- sodium: acute hyponatraemia swells the brain: confusion below ~125, coma and seizures below ~115-120; hypernatraemia
+    //      shrinks it: lethargy above ~155, coma above ~165 (REF spasovski2014, adrogue2000; thresholds REF design)
+    const na = ctx.lytes.na;
+    if (na < 116 || na > 168) o.loc = true;
+    o.naSeizure = na < 120 && !this.se.active ? 0.03 * (120 - na) / 5 : 0;   // per minute
     // ---- hypoglycaemia: neuroglycopenia below ~3 mmol/L, coma below ~2 (REF textbook); adrenergic response
     const g = ctx.lytes.glucose;
     if (g < 2.2) o.loc = true;

@@ -794,7 +794,10 @@ SCENARIOS.status_epilepticus = {
   startMonitored: true,
   init(p) { p.flags.spo2Probe = p.flags.ecgLeads = true; p.crises.trigger('seizure', -300); },
   timeline: [],
-  track(p) { if (p.seStopT == null && !p.crises.se.active) p.seStopT = p.t; if (p.crises.se.active) p.seStopT = null; },
+  track(p) {   // on/off timeline of the seizure: [{ t, on }], one entry per change
+    const on = !!p.crises.se.active, log = (p.seLog ??= []);
+    if (!log.length || log[log.length - 1].on !== on) log.push({ t: p.t, on });
+  },
   score: () => [
     C('se_benzo', 'First benzodiazepine within 5 min (IM midazolam 10 mg, IV lorazepam 4 mg or IV diazepam 10 mg)', 25, 'glauser2016', p => {
       const d = p.drugs.log.find(x => (x.key === 'midazolam' && x.amount >= 10) || (x.key === 'lorazepam' && x.amount >= 4) || (x.key === 'diazepam' && x.amount >= 10));
@@ -802,14 +805,20 @@ SCENARIOS.status_epilepticus = {
     }),
     C('se_two_benzo', 'No more than two benzodiazepine doses', 10, 'glauser2016', p => { const n = benzoDoses(p).length; return { frac: n <= 2 ? 1 : 0, detail: `${n} doses` }; }),
     C('se_second', 'Second-line drug by 20 min if the seizure continues (levetiracetam 60 mg/kg, max 4.5 g)', 20, 'esett2019', p => {
-      const b = benzoDoses(p)[0]; const stillAt = (t) => p.crises.se.active || (p.seStopT != null && p.seStopT > t) || p.notes.some(n => n.text === 'seizure stopped' && n.t > t);
-      if (!b || !stillAt(b.t + 600)) return null;
+      // needed from the first moment, 10 min or more after the first benzodiazepine, that the seizure is active: it never stopped, or it came back
+      const b = benzoDoses(p)[0], log = p.seLog ?? []; if (!b) return null;
+      const t10 = b.t + 600, onAt = (t) => { let s = false; for (const e of log) { if (e.t > t) break; s = e.on; } return s; };
+      const tNeed = onAt(t10) ? t10 : (log.find(e => e.on && e.t > t10)?.t ?? null); if (tNeed == null) return null;
       const l = p.drugs.log.find(x => x.key === 'levetiracetam' && x.amount >= Math.min(4500, 40 * p.body.weightKg));
-      return l ? { frac: lerpScore(l.t, 1200, 2400), detail: `levetiracetam ${l.amount} mg at ${Math.round(l.t / 60)} min` } : { frac: 0, detail: 'no second-line drug' };
+      return l ? { frac: lerpScore(l.t - tNeed, 600, 1800), detail: `levetiracetam ${l.amount} mg ${Math.round(Math.max(0, l.t - tNeed) / 60)} min after it was needed` } : { frac: 0, detail: 'no second-line drug' };
     }),
     C('se_glucose', 'Glucose checked within 15 min', 10, 'glauser2016', p => { const e = p.log.find(x => x.type === 'lab.order' && ['abg', 'chem'].includes(x.kind)); return { frac: e ? lerpScore(e.t, 900, 1800) : 0, detail: e ? `${Math.round(e.t / 60)} min` : 'not checked' }; }),
     C('se_oxygen', 'Oxygen within 5 min', 10, 'glauser2016', p => { const e = p.log.find(x => ['o2.mask', 'niv.set', 'vent.set'].includes(x.type)); return { frac: e ? lerpScore(e.t, 300, 900) : 0, detail: e ? `${Math.round(e.t)} s` : 'none' }; }),
-    C('se_stopped', 'Seizure stopped by 30 min', 15, 'glauser2016', p => { const t = p.crises.se.active ? null : p.seStopT; return { frac: t == null ? 0 : lerpScore(t, 1200, 2400), detail: t == null ? 'still seizing' : `stopped at ${Math.round(t / 60)} min` }; }),
+    C('se_stopped', 'Seizure stopped by 30 min', 15, 'glauser2016', p => {
+      const log = p.seLog ?? [], stop = log.find(e => !e.on), again = log.filter(e => e.on).length - 1;
+      if (p.crises.se.active || !stop) return { frac: 0, detail: 'still seizing' };
+      return { frac: lerpScore(stop.t, 1200, 2400), detail: `stopped at ${Math.round(stop.t / 60)} min` + (again > 0 ? `, recurred ${again} time(s), controlled` : '') };
+    }),
     criteria.survival(),
   ],
   learning: ['A seizure lasting 5 minutes is status epilepticus: treat it, do not wait.', 'First line: a benzodiazepine, IM midazolam 10 mg if there is no IV line, or IV lorazepam 4 mg; repeat once after 5-10 min if it continues.', 'Benzodiazepines work less well the longer the seizure lasts. By 20 minutes give a second-line drug: levetiracetam 60 mg/kg (max 4.5 g), fosphenytoin or valproate.', 'Check glucose, give oxygen, protect the airway. Still fitting at 40 minutes: anaesthesia and intubation (refractory status).'],
@@ -884,9 +893,9 @@ SCENARIOS.hyperkalaemia = {
   track(p) { p.minGlu = Math.min(p.minGlu ?? 99, p.lytes.glucose); },
   score: () => [
     ecg12Crit('renal_hyperk2023'),
-    C('hk_calcium', 'IV calcium within 10 min (calcium chloride 10 % 10 mL or gluconate 10 % 30 mL)', 20, 'renal_hyperk2023', p => {
-      const d = p.drugs.log.find(x => (x.key === 'calciumChloride' && x.amount >= 500) || (x.key === 'calciumGluconate' && x.amount >= 1500));
-      return d ? { frac: lerpScore(d.t, 600, 1200), detail: `${d.key} ${d.amount} mg at ${Math.round(d.t / 60)} min` } : { frac: 0, detail: 'no calcium' };
+    C('hk_calcium', 'IV calcium within 10 min (about 6.8 mmol: calcium chloride 10 % 10 mL or gluconate 10 % 30 mL)', 20, 'renal_hyperk2023', p => {
+      const d = p.drugs.log.find(x => (x.key === 'calciumChloride' || x.key === 'calciumGluconate') && x.amount >= 3.3);   // at least half of the full dose, either salt
+      return d ? { frac: lerpScore(d.t, 600, 1200), detail: `${d.key} ${d.amount} mmol at ${Math.round(d.t / 60)} min` } : { frac: 0, detail: 'no calcium' };
     }),
     C('hk_insulin', 'Insulin 10 U with glucose 25 g within 20 min', 20, 'renal_hyperk2023', p => {
       const proc = p.log.find(e => e.type === 'procedure.treat_hyperkalemia'); if (proc) return { frac: lerpScore(proc.t, 1200, 2400), detail: `insulin-glucose at ${Math.round(proc.t / 60)} min` };
@@ -948,4 +957,197 @@ SCENARIOS.mobitz_brady = {
     criteria.survival(),
   ],
   learning: ['Bradycardia with adverse features (shock, syncope, ischaemia, heart failure): atropine 500 mcg IV, repeat up to 3 mg.', 'Mobitz II, complete heart block, a recent pause > 3 s or asystole are a risk of asystole: start an interim measure even if atropine helps, pacing or isoprenaline 5 mcg/min or adrenaline 2-10 mcg/min, and call for transvenous pacing.', 'The block is below the AV node in Mobitz II, so atropine changes little.'],
+};
+
+// ----------------------------------------------------------------------------- sodium, pulmonary oedema, hypertensive emergency, variceal bleeding
+const labAt = (p, kinds, after = -1) => p.log.find(e => e.type === 'lab.order' && kinds.includes(e.kind) && e.t > after) || null;
+
+SCENARIOS.hyponatraemia = {
+  id: 'hyponatraemia', title: 'Severe symptomatic hyponatraemia', difficulty: 'advanced', durationS: 5400, kind: 'Emergency',
+  summary: 'A 72-year-old woman (160 cm, 62 kg) started a thiazide diuretic three weeks ago. Since yesterday she has been vomiting and confused, and she is now very drowsy. Find the cause, treat the danger, and do not overshoot.',
+  spec: { sex: 'F', age: 72, heightCm: 160, weightKg: 62, causes: [], sodium: 113 },
+  history: { hypertension: true },
+  startMonitored: true,
+  init(p) { p.flags.ecgLeads = p.flags.spo2Probe = p.flags.nibp = true; p.nibp = { sbp: 128, dbp: 74, t: 0, valid: true }; },
+  timeline: [],
+  track(p) { if (p.na0 == null) p.na0 = p.lytes.na; },
+  score: () => [
+    C('na_measure', 'Sodium measured within 10 min', 10, 'spasovski2014', p => { const e = labAt(p, ['abg', 'chem']); return { frac: e ? lerpScore(e.t, 600, 1800) : 0, detail: e ? `${Math.round(e.t / 60)} min` : 'not measured' }; }),
+    C('na_hypertonic', '150 mL of 3 % saline over 20 min, started within 15 min', 25, 'spasovski2014', p => {
+      const e = p.log.find(x => x.type === 'fluid.bolus' && x.fluid === 'saline3'); if (!e) return { frac: 0, detail: 'no hypertonic saline' };
+      const dose = e.volumeL >= 0.1 && e.volumeL <= 0.25 ? 1 : 0.6;
+      return { frac: dose * lerpScore(e.t, 900, 2400), detail: `${Math.round(e.volumeL * 1000)} mL at ${Math.round(e.t / 60)} min` };
+    }),
+    C('na_recheck', 'Sodium rechecked after the bolus', 10, 'spasovski2014', p => { const b = p.log.find(x => x.type === 'fluid.bolus' && x.fluid === 'saline3'); if (!b) return null; const e = labAt(p, ['abg', 'chem'], b.t + 600); return { frac: e ? 1 : 0, detail: e ? `${Math.round((e.t - b.t) / 60)} min after` : 'no recheck' }; }),
+    C('na_rise', 'Sodium up by about 5 mmol/L in the first hours', 20, 'spasovski2014', p => { const r = p.lytes.na - p.na0; return { frac: lerpScore(4 - r, 0, 3), detail: `+${r.toFixed(1)} mmol/L` }; }),
+    C('na_limit', 'No overcorrection (rise <= 10 mmol/L)', 15, 'spasovski2014', p => { const r = p.lytes.na - p.na0; return { frac: lerpScore(r, 10, 14), detail: `+${r.toFixed(1)} mmol/L` }; }),
+    C('na_no_hypotonic', 'No hypotonic fluid (glucose 5 %)', 10, 'spasovski2014', p => ({ frac: p.log.some(x => x.type === 'fluid.bolus' && x.fluid === 'glucose5') ? 0 : 1, detail: '' })),
+    criteria.survival(),
+  ],
+  learning: ['Hyponatraemia with severe symptoms (vomiting, deep drowsiness, seizures, coma) is an emergency whatever the cause: brain swelling kills.', 'Give 150 mL of 3 % saline over 20 minutes, check the sodium, and repeat up to twice until it has risen by 5 mmol/L.', 'Then stop: limit the rise to 10 mmol/L in the first 24 hours (8 after that). Faster correction risks osmotic demyelination.', 'Stop the thiazide. Never give hypotonic fluid.'],
+};
+
+SCENARIOS.pulmonary_oedema = {
+  id: 'pulmonary_oedema', title: 'Acute pulmonary oedema', difficulty: 'intermediate', durationS: 2700, kind: 'Emergency',
+  summary: 'A 74-year-old man (172 cm, 82 kg) with heart failure woke up fighting for breath. He is sitting bolt upright, grey and sweating, with pink frothy sputum and a pressure of 190/115. Relieve him.',
+  spec: { sex: 'M', age: 74, heightCm: 172, weightKg: 82, causes: [], lvFunction: 0.5, map0: 132, congestion: true },
+  history: { chf: true, hypertension: true },
+  startMonitored: true, preRunS: 900,
+  init(p) { p.flags.ecgLeads = p.flags.spo2Probe = p.flags.nibp = true; p.vol.vp += 0.6; },
+  timeline: [],
+  track(p) { if (p.sbp0 == null) p.sbp0 = p.circ.sbp; },
+  score: () => [
+    ecg12Crit('esc_hf2021', 600),
+    C('po_upright', 'Sat upright', 5, 'esc_hf2021', p => ({ frac: p.headUp ? 1 : 0, detail: '' })),
+    C('po_cpap', 'CPAP or bilevel NIV within 10 min', 20, 'rochwerg2017_niv', p => { const e = p.log.find(x => x.type === 'niv.set' && ['cpap', 'bipap'].includes(x.mode)); return { frac: e ? lerpScore(e.t, 600, 1500) : 0, detail: e ? `${e.mode} at ${Math.round(e.t / 60)} min` : 'no NIV' }; }),
+    C('po_nitrate', 'IV nitrate within 10 min (systolic > 110)', 20, 'esc_hf2021', p => {
+      const e = p.log.find(x => (x.type === 'drug.infusion' && x.drug === 'nitroglycerin' && x.rate > 0) || (x.type === 'drug.bolus' && x.drug === 'nitroglycerin'));
+      return { frac: e ? lerpScore(e.t, 600, 1500) : 0, detail: e ? `${Math.round(e.t / 60)} min` : 'no nitrate' };
+    }),
+    C('po_diuretic', 'IV furosemide 40 mg or more within 15 min', 15, 'esc_hf2021', p => { const d = drugsGiven(p, 'furosemide')[0]; return { frac: d ? (d.amount >= 40 ? 1 : 0.6) * lerpScore(d.t, 900, 1800) : 0, detail: d ? `${d.amount} mg at ${Math.round(d.t / 60)} min` : 'none' }; }),
+    C('po_no_fluid', 'No fluid bolus', 10, 'esc_hf2021', p => ({ frac: p.vol.totalCrystalloid > 0.25 ? 0 : 1, detail: `${Math.round(p.vol.totalCrystalloid * 1000)} mL` })),
+    C('po_spo2', 'SpO2 >= 92 % at the end', 10, 'esc_hf2021', p => ({ frac: lerpScore(92 - p.resp.spo2, 0, 6), detail: `${p.resp.spo2.toFixed(0)} %` })),
+    criteria.survival(),
+  ],
+  learning: ['Acute pulmonary oedema with a high pressure: the lungs are flooded because the left heart cannot empty against the afterload. Sit the patient up.', 'CPAP or bilevel NIV early: it re-opens flooded alveoli and reduces the work of breathing.', 'IV nitrate when systolic pressure is above 110 mmHg (it lowers preload and afterload), and IV furosemide 40 mg (or the home dose).', 'No fluid. Look for the trigger: ischaemia (12-lead), arrhythmia, missed tablets.'],
+};
+
+SCENARIOS.hypertensive_emergency = {
+  id: 'hypertensive_emergency', title: 'Hypertensive emergency', difficulty: 'intermediate', durationS: 3600, kind: 'Emergency',
+  summary: 'A 58-year-old man (176 cm, 88 kg) stopped his blood pressure tablets a month ago. He has a severe headache, blurred vision and is muddled. His pressure is 230/140. Lower it safely.',
+  spec: { sex: 'M', age: 58, heightCm: 176, weightKg: 88, causes: [], map0: 160, ecg: ['lvh'] },
+  history: { hypertension: true },
+  startMonitored: true,
+  init(p) { p.flags.ecgLeads = p.flags.spo2Probe = p.flags.nibp = true; },
+  timeline: [],
+  track(p) { if (p.map0 == null) p.map0 = p.circ.mapArt; p.minMapHt = Math.min(p.minMapHt ?? 999, p.circ.mapArt); },
+  score: () => [
+    ecg12Crit('esc_htn2018', 600),
+    C('ht_drug', 'Titratable IV drug within 15 min (labetalol, urapidil or nitrate)', 20, 'esc_htn2018', p => {
+      const d = p.drugs.log.find(x => ['labetalol', 'urapidil', 'nitroglycerin', 'esmolol'].includes(x.key)), inf = p.log.find(x => x.type === 'drug.infusion' && ['nitroglycerin', 'labetalol', 'urapidil'].includes(x.drug) && x.rate > 0);
+      const t0 = Math.min(d ? d.t : 1e9, inf ? inf.t : 1e9); return { frac: t0 < 1e9 ? lerpScore(t0, 900, 2400) : 0, detail: t0 < 1e9 ? `${Math.round(t0 / 60)} min` : 'no IV drug' };
+    }),
+    C('ht_aline', 'Invasive arterial pressure', 10, 'esc_htn2018', p => ({ frac: p.flags.aline ? 1 : 0, detail: '' })),
+    C('ht_target', 'MAP lowered by 20-25 % at one hour', 30, 'esc_htn2018', p => { const r = 1 - p.circ.mapArt / p.map0; return { frac: r < 0.2 ? lerpScore(0.2 - r, 0.03, 0.14) : lerpScore(r - 0.25, 0.03, 0.12), detail: `-${(r * 100).toFixed(0)} %` }; }),
+    C('ht_no_crash', 'Never more than 30 % below the starting MAP', 20, 'esc_htn2018', p => { const r = 1 - p.minMapHt / p.map0; return { frac: lerpScore(r, 0.30, 0.42), detail: `lowest -${(r * 100).toFixed(0)} %` }; }),
+    criteria.survival(),
+  ],
+  learning: ['A hypertensive emergency is a very high pressure WITH acute organ damage (brain, heart, kidney, retina, aorta). Without organ damage it is not an emergency.', 'Lower the mean pressure by 20-25 % over the first hours with a titratable IV drug (labetalol, urapidil, nicardipine): the brain has adapted to the high pressure and a fast fall causes a stroke.', 'Exceptions that need a faster, lower target: aortic dissection, acute pulmonary oedema, pre-eclampsia.', 'Monitor the pressure invasively and repeat small doses.'],
+};
+
+SCENARIOS.variceal_bleed = {
+  id: 'variceal_bleed', title: 'Variceal bleeding', difficulty: 'advanced', durationS: 2700, kind: 'Emergency',
+  summary: 'A 54-year-old man (178 cm, 80 kg) with alcohol-related cirrhosis vomits a large amount of fresh blood in the waiting room. He is pale, sweaty and jaundiced, with a distended abdomen. Resuscitate him and stop the bleeding.',
+  spec: { sex: 'M', age: 54, heightCm: 178, weightKg: 80, causes: [] },
+  startMonitored: true,
+  init(p) {
+    p.flags.ecgLeads = p.flags.spo2Probe = p.flags.nibp = true;
+    p.varix = { rate: 110, controlled: false };                         // mL/min at a normal pressure
+    p.vol.fAmt *= 0.65; p.vol.fibAmt *= 0.7; p.vol.pltAmt *= 0.45;      // cirrhosis: INR ~1.5, low fibrinogen, platelets ~110
+    p.vol.res.f *= 0.65; p.vol.res.fib *= 0.7; p.vol.res.plt *= 0.45;
+  },
+  timeline: [],
+  track(p) { if (p.vol.totalBlood > 0) p.maxHbTx = Math.max(p.maxHbTx ?? 0, p.vol.hb); },
+  score: () => [
+    C('vb_terlipressin', 'Vasoactive drug (terlipressin 2 mg) within 15 min', 20, 'baveno7', p => { const d = drugsGiven(p, 'terlipressin')[0]; return { frac: d ? lerpScore(d.t, 900, 1800) : 0, detail: d ? `${d.amount} mg at ${Math.round(d.t / 60)} min` : 'none' }; }),
+    C('vb_antibiotic', 'Antibiotic prophylaxis (ceftriaxone 1 g)', 10, 'baveno7', p => ({ frac: drugsGiven(p, 'ceftriaxone').length ? 1 : 0, detail: '' })),
+    C('vb_transfusion', 'Restrictive transfusion (Hb kept near 7-8, never above 9.5 g/dL after transfusion)', 15, 'villanueva2013', p => {
+      if (p.vol.totalBlood === 0) return { frac: p.vol.hb >= 7 ? 1 : 0.3, detail: `no transfusion, Hb ${p.vol.hb.toFixed(1)}` };
+      return { frac: lerpScore(p.maxHbTx, 9.5, 11.5) * (p.vol.hb >= 6.5 ? 1 : 0.5), detail: `highest Hb after transfusion ${p.maxHbTx.toFixed(1)}, final ${p.vol.hb.toFixed(1)}` };
+    }),
+    C('vb_endoscopy', 'Endoscopy with band ligation', 20, 'baveno7', p => { const e = p.log.find(x => x.type === 'procedure.endoscopy'); return { frac: e ? lerpScore(e.t, 1500, 2700) : 0, detail: e ? `${Math.round(e.t / 60)} min` : 'not done' }; }),
+    C('vb_no_txa', 'No tranexamic acid', 5, 'baveno7', p => ({ frac: drugsGiven(p, 'tranexamicAcid').length ? 0 : 1, detail: '' })),
+    C('vb_controlled', 'Bleeding controlled', 15, 'baveno7', p => ({ frac: p.varix && p.varix.controlled ? 1 : 0, detail: p.varix && p.varix.controlled ? `at ${Math.round(p.bleedControlledAt / 60)} min` : 'still bleeding' })),
+    criteria.survival(),
+  ],
+  learning: ['Haematemesis in cirrhosis is variceal until proven otherwise. Two large IV lines, blood for group and crossmatch.', 'Start a vasoactive drug at once, before endoscopy (terlipressin 2 mg IV): it lowers the portal pressure. Give antibiotic prophylaxis (ceftriaxone 1 g).', 'Transfuse restrictively to a haemoglobin of 7-8 g/dL and do not over-fill: more volume means more portal pressure and more bleeding.', 'Endoscopic band ligation within 12 hours, sooner if unstable; protect the airway if he is drowsy or vomiting blood. Tranexamic acid does not help.'],
+};
+
+
+// ---------------------------------------------------------------- regional anaesthesia and the recovery room
+const firstAfter = (p, keys, t0) => p.drugs.log.find(d => keys.includes(d.key) && d.t >= t0) || null;
+const VASOPRESSORS = ['phenylephrine', 'ephedrine', 'norepinephrine', 'epinephrine'];
+const trackMap = (p) => { if (p.spinalT0 != null) { p.minMapRatio = Math.min(p.minMapRatio ?? 1, p.circ.mapArt / p.mapRef); if (p.lowMapT == null && p.circ.mapArt < 0.8 * p.mapRef) p.lowMapT = p.t; } };
+
+SCENARIOS.spinal_hypotension = {
+  id: 'spinal_hypotension', title: 'Hypotension after a spinal', difficulty: 'intermediate', durationS: 1500, kind: 'Anaesthesia',
+  summary: 'An 82-year-old woman (155 cm, 52 kg) with a fractured neck of femur has just had a spinal with 12.5 mg of hyperbaric bupivacaine 0.5 % for a hemiarthroplasty. She is monitored and has an IV line. Look after her for the next 25 minutes.',
+  spec: { sex: 'F', age: 82, heightCm: 155, weightKg: 52, causes: [] },
+  startMonitored: true,
+  init(p) { p.flags.ecgLeads = p.flags.spo2Probe = p.flags.nibp = p.flags.ivAccess = true; p.nibp = { sbp: 138, dbp: 72, t: 0, valid: true }; },
+  timeline: [{ t: 5, run: p => { p.neuraxial.spinal(12.5, p.t, { spread: 0 }); p.spinalT0 = p.t; p.mapRef = p.circ.mapArt; } }],
+  track: trackMap,
+  score: () => [
+    C('sp_vaso', 'Vasopressor within 2 min of the MAP falling below 80 % of baseline', 30, 'griffiths2021', p => {
+      if (p.lowMapT == null) return { frac: 1, detail: 'MAP kept within 20 %' };
+      const d = firstAfter(p, VASOPRESSORS, p.spinalT0); if (!d) return { frac: 0, detail: 'no vasopressor' };
+      return { frac: lerpScore(d.t - p.lowMapT, 120, 420), detail: `${d.key} ${Math.round(d.t - p.lowMapT)} s after the fall` };
+    }),
+    C('sp_nadir', 'Lowest MAP within 20 % of baseline (none at 40 % below)', 25, 'griffiths2021', p => ({ frac: lerpScore(1 - (p.minMapRatio ?? 1), 0.2, 0.4), detail: `${Math.round(100 * (1 - (p.minMapRatio ?? 1)))} % below baseline` })),
+    C('sp_level', 'Block height checked within 10 min', 10, 'hocking2004', p => { const e = p.log.find(x => x.type === 'neuraxial.assess'); return { frac: e ? lerpScore(e.t - (p.spinalT0 ?? 0), 600, 1200) : 0, detail: e ? `at ${Math.round(e.t / 60)} min` : 'never checked' }; }),
+    C('sp_fluid', 'Fluid 250-1000 mL, not more (frail, elderly)', 10, 'griffiths2021', p => { const v = p.vol.totalCrystalloid; return { frac: v < 0.25 ? v / 0.25 : v <= 1.0 ? 1 : lerpScore(v, 1.0, 2.0), detail: `${Math.round(v * 1000)} mL` }; }),
+    C('sp_nausea', 'No vomiting', 5, 'carpenter1992', p => ({ frac: p.ponv.vomits.length ? 0 : 1, detail: `${p.ponv.vomits.length} episode(s)` })),
+  ],
+  learning: ['A spinal blocks the sympathetic outflow below the block: arterioles and veins dilate. The higher the block and the older the patient, the deeper the fall in pressure.', 'For a hip fracture use a low dose (hyperbaric bupivacaine 10 mg or less) and keep the pressure within 20 % of baseline: treat early with a vasopressor (phenylephrine 50-100 mcg, ephedrine 3-6 mg, or a norepinephrine infusion) rather than litres of fluid.', 'A block at or above T4 reaches the cardioaccelerator fibres: the heart cannot speed up, and a low venous return can cause sudden bradycardia. Ephedrine or atropine, legs raised.', 'Nausea after a spinal is usually hypotension: correct the pressure first.'],
+};
+
+SCENARIOS.high_spinal = {
+  id: 'high_spinal', title: 'High block after an epidural top-up', difficulty: 'advanced', durationS: 1200, kind: 'Anaesthesia',
+  summary: 'A 52-year-old man (178 cm, 85 kg) has an epidural catheter for a knee replacement. A colleague has just given a top-up of 15 mL of bupivacaine 0.5 % without a test dose and left the room. A minute later he says his hands are tingling and he cannot breathe properly. Manage him.',
+  spec: { sex: 'M', age: 52, heightCm: 178, weightKg: 85, causes: [], catheter: 'intrathecal' },
+  startMonitored: true,
+  init(p) { p.flags.ecgLeads = p.flags.spo2Probe = p.flags.nibp = p.flags.ivAccess = true; p.nibp = { sbp: 134, dbp: 78, t: 0, valid: true }; p.o2 = { fio2: 0.3, seal: 0.6 }; },
+  timeline: [{ t: 2, run: p => { p.neuraxial._start('spinal', p.neuraxial.spinalTarget(75), 1.2, p.t); p.spinalT0 = p.t; p.mapRef = p.circ.mapArt; } }],
+  track(p) { trackMap(p); if (p.breathT == null && p.neuraxial.seg < 5) p.breathT = p.t; if (p.bradyT == null && p.circ.hr < 50 && !p.arrest.arrested) p.bradyT = p.t; },
+  score: () => [
+    C('hs_vent', 'Ventilation supported within 2 min of the block reaching the diaphragm (C3-C5)', 30, 'textbook', p => {
+      if (p.breathT == null) return null;
+      const e = p.log.find(x => (x.type === 'vent.set' && x.settings?.mode === 'ctrl') || x.type === 'airway.intubate'); if (!e) return { frac: 0, detail: 'never ventilated' };
+      return { frac: lerpScore(e.t - p.breathT, 120, 360), detail: `${Math.round(e.t - p.breathT)} s after onset` };
+    }),
+    C('hs_vaso', 'Vasopressor within 2 min of the MAP falling below 80 % of baseline', 20, 'carpenter1992', p => {
+      if (p.lowMapT == null) return { frac: 1, detail: 'MAP kept within 20 %' };
+      const d = firstAfter(p, VASOPRESSORS, p.spinalT0 ?? 0); if (!d) return { frac: 0, detail: 'no vasopressor' };
+      return { frac: lerpScore(d.t - p.lowMapT, 120, 420), detail: `${d.key} ${Math.round(d.t - p.lowMapT)} s after the fall` };
+    }),
+    C('hs_brady', 'Bradycardia treated (atropine, ephedrine or epinephrine) within 2 min', 10, 'carpenter1992', p => {
+      if (p.bradyT == null) return null;
+      const d = firstAfter(p, ['atropine', 'ephedrine', 'epinephrine', 'glycopyrrolate'], p.bradyT - 30); if (!d) return { frac: 0, detail: 'not treated' };
+      return { frac: lerpScore(d.t - p.bradyT, 120, 360), detail: `${d.key} ${Math.round(d.t - p.bradyT)} s after` };
+    }),
+    C('hs_airway', 'Airway secured with a tracheal tube', 10, 'textbook', p => ({ frac: p.airway.intubated ? 1 : 0, detail: p.airway.intubated ? 'intubated' : 'not intubated' })),
+    C('hs_sedation', 'Sedation once intubated (he may be awake under the block)', 10, 'textbook', p => {
+      const it = p.log.find(x => x.type === 'airway.intubate'); if (!it) return null;
+      const d = firstAfter(p, ['midazolam', 'propofol', 'ketamine', 'etomidate'], it.t - 120); return { frac: d ? 1 : 0, detail: d ? d.key : 'none' };
+    }),
+    criteria.survival(),
+  ],
+  learning: ['Tingling or weak hands, difficulty breathing or speaking and a falling pressure soon after an epidural dose: the block is too high. A catheter can lie in, or migrate into, the subarachnoid space: always aspirate and give a test dose, and stay with the patient.', 'High block: call for help, stop the epidural, oxygen, support the breathing (bag-mask, then intubate if the block reaches the diaphragm), vasopressor and atropine or epinephrine for bradycardia; raise the legs.', 'The patient may be fully awake while unable to breathe or move: talk to them, and give sedation once the airway is secured.', 'The block wears off in 1-2 hours: support until then.'],
+};
+
+SCENARIOS.pacu_ponv = {
+  id: 'pacu_ponv', title: 'Recovery room: nausea, vomiting and shivering', difficulty: 'beginner', durationS: 3600, kind: 'Anaesthesia',
+  summary: 'A 34-year-old woman (165 cm, 62 kg), a non-smoker who was sick after her last operation, has just arrived in recovery after a laparoscopic cholecystectomy. She received 10 mg of morphine and no antiemetic. She is awake, cold and shaking. Look after her in recovery.',
+  spec: { sex: 'F', age: 34, heightCm: 165, weightKg: 62, causes: [], pacu: true, ponvHistory: true, smoker: false },
+  startMonitored: true,
+  init(p) {
+    p.flags.ecgLeads = p.flags.spo2Probe = p.flags.nibp = p.flags.ivAccess = p.flags.tempProbe = true; p.nibp = { sbp: 124, dbp: 74, t: 0, valid: true };
+    p.therm.tc = 35.2; p.therm.tp = 30.5; p.drugs.bolus('morphine', 10, 0);
+  },
+  track(p) { if (p.vomitT == null && p.ponv.vomits.length) p.vomitT = p.ponv.vomits[0]; if (p.nauseaT == null && p.ponv.nausea > 0.6) p.nauseaT = p.t; },
+  score: () => [
+    C('pacu_rescue', 'Rescue antiemetic (ondansetron or droperidol) within 5 min of nausea', 30, 'gan2020', p => {
+      const t0 = p.nauseaT ?? p.vomitT; if (t0 == null) return { frac: 1, detail: 'no nausea' };
+      const d = firstAfter(p, ['ondansetron', 'droperidol'], 0); if (!d) return { frac: 0, detail: firstAfter(p, ['dexamethasone'], 0) ? 'dexamethasone only (too slow for rescue)' : 'none given' };
+      return { frac: lerpScore(d.t - t0, 300, 900), detail: `${d.key} ${Math.max(0, Math.round(d.t - t0))} s after` };
+    }),
+    C('pacu_settled', 'No vomiting in the last 10 min', 15, 'gan2020', p => { const late = p.ponv.vomits.filter(x => x > p.t - 600).length; return { frac: late ? 0 : 1, detail: `${p.ponv.vomits.length} episode(s) in all, ${late} in the last 10 min` }; }),
+    C('pacu_warm', 'Shivering treated: forced-air warming or pethidine within 10 min', 20, 'kranke2002', p => {
+      const w = p.log.find(x => x.type === 'thermal.device' && x.target != null), d = firstAfter(p, ['pethidine'], 0), t = Math.min(w?.t ?? Infinity, d?.t ?? Infinity);
+      return Number.isFinite(t) ? { frac: lerpScore(t, 600, 1200), detail: `${w ? 'warming' : 'pethidine'} at ${Math.round(t / 60)} min` } : { frac: 0, detail: 'not treated' };
+    }),
+    C('pacu_o2', 'Oxygen while she is shivering', 10, 'sessler2016', p => ({ frac: p.log.some(x => x.type === 'o2.mask' || x.type === 'niv.set') ? 1 : 0, detail: '' })),
+    C('pacu_temp', 'Core temperature at least 36.0 C before discharge from recovery', 15, 'nice_cg65', p => ({ frac: p.therm.tc >= 36.0 ? 1 : lerpScore(36.0 - p.therm.tc, 0, 0.3), detail: `${p.therm.tc.toFixed(1)} C` })),
+  ],
+  learning: ['Apfel score: female, non-smoker, previous PONV or motion sickness, postoperative opioids. Four factors: about 80 % risk. She should have had two or three antiemetics as prophylaxis.', 'Rescue with a class not already given (ondansetron 4 mg, or droperidol 0.625-1.25 mg). Dexamethasone takes 1-2 hours: prophylaxis, not rescue.', 'Shivering after surgery: warm actively (forced air), give oxygen (it raises the oxygen consumption), and pethidine 25 mg IV if it continues.', 'Discharge from recovery only when the core temperature is at least 36.0 C.'],
 };
