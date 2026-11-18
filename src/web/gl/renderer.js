@@ -354,7 +354,7 @@ export class Renderer {
     gl.clearColor(...this.clear.map(v => Math.pow(v, 2.2)), 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     let proj = mat4.perspective(camera.fov || 0.9, this.aspect, 0.05, 80);
-    if (this.shiftX) proj = mat4.multiply(mat4.translation(this.shiftX, 0, 0), proj);   // lens shift: centre the picture in the space left free by the side panels
+    if (this.shiftX || this.shiftY) proj = mat4.multiply(mat4.translation(this.shiftX || 0, this.shiftY || 0, 0), proj);   // lens shift: centre the picture in the space left free by the side panels
     const view = mat4.lookAt(camera.eye, camera.target, [0, 1, 0]);
     this.vp = mat4.multiply(proj, view); this.invVP = mat4.invert(this.vp); this.eye = camera.eye;
     gl.useProgram(this.prog);

@@ -70,7 +70,7 @@ export class Scene {
     this.yaw = CAMERAS.default.yaw; this.pitch = CAMERAS.default.pitch; this.dist = CAMERAS.default.dist; this.target = [...CAMERAS.default.target];
     this.goal = null; this.off = { yaw: 0, pitch: 0 }; this.hover = null; this.t = 0; this.breathPh = 0; this.compAmt = 0; this.shockT = 0; this.tone = 2; this.body = null;
     this.auto = false;            // slow cinematic orbit (case menu)
-    this.inset = { l: 0, r: 0 }; this.shift = 0;   // screen px covered by panels on the left / right (ui.updateInsets)
+    this.inset = { l: 0, r: 0, t: 0, b: 0 }; this.shift = 0; this.shiftY = 0;   // screen px covered by panels on each side (ui.updateInsets)
     this.gest = new Gestures(); this.rescuerHands = true; this.pins = []; this._bindInput(canvas);
   }
 
@@ -125,7 +125,8 @@ export class Scene {
   /** The operator's eye for a site: at the head of the bed for the face, neck and airway, otherwise standing at the patient's
    *  side nearest the site (the right side, by the IV arm, for midline sites), eyes about 1.55 m high, looking down at it. */
   operatorEye(key, p) {
-    if (['face', 'airway', 'neck'].includes(key)) return [p[0] + 0.5, 1.48, p[2] + 0.05];
+    if (['face', 'airway'].includes(key)) return [p[0] + 0.5, 1.48, p[2] + 0.05];
+    if (key === 'neck') return [p[0] - 0.04, p[1] + 0.55, p[2] - 0.22];          // from the right shoulder, looking down at the front of the neck: from the head the chin, a face mask and the sheet hide it
     const side = key.startsWith('L_') || key === 'padLeft' || key === 'leftArm' ? 1 : key.startsWith('R_') || key === 'rightArmIV' || key === 'padRight' || key === 'femoral' ? -1 : (p[2] > 0.03 ? 1 : -1);
     const reach = key === 'rightArmIV' ? 0.32 : 0.5;                          // the arm board already brings the forearm out to the operator
     return [p[0] - 0.12, 1.55, p[2] + side * reach];
@@ -134,7 +135,8 @@ export class Scene {
   frameStepSite(key, dist = 0.62) {
     const f = this.siteFrame(key); if (!f) return false;
     const eye = this.operatorEye(key, f.p), d = vec3.sub(eye, f.p), L = Math.hypot(...d);
-    this.frameSite(f.p, vec3.scale(d, 1 / L), Math.min(dist, L)); return true;
+    const narrow = this.canvas.clientWidth < 600 ? 1.3 : 1;                    // phones: the free band is narrow, step back so the site keeps some context
+    this.frameSite(f.p, vec3.scale(d, 1 / L), Math.min(dist * narrow, L)); return true;
   }
   /** Site key of an engine event, for the operator's viewpoint during its gesture. */
   _eventSite(ev) {
@@ -397,7 +399,8 @@ export class Scene {
     const eye = [this.target[0] + D * Math.cos(pitchV) * Math.sin(yawV), this.target[1] + D * Math.sin(pitchV), this.target[2] + D * Math.cos(pitchV) * Math.cos(yawV)];
     eye[0] = clamp(eye[0], ROOM.x0 + 0.15, ROOM.x1 - 0.15); eye[2] = clamp(eye[2], ROOM.z0 + 0.15, ROOM.z1 - 0.15); eye[1] = clamp(eye[1], 0.4, ROOM.h - 0.12);   // never leave the bay
     const cam = { eye, target: this.target, fov: 0.85 };
-    { const W = Math.max(1, this.canvas.clientWidth), goal = clamp((this.inset.l - this.inset.r) / W, -0.5, 0.5); this.shift += (goal - this.shift) * (1 - Math.exp(-realDt * 5)); r.shiftX = this.shift; }
+    { const W = Math.max(1, this.canvas.clientWidth), goal = clamp((this.inset.l - this.inset.r) / W, -0.5, 0.5); this.shift += (goal - this.shift) * (1 - Math.exp(-realDt * 5)); r.shiftX = this.shift;
+      const H = Math.max(1, this.canvas.clientHeight), goalY = clamp(((this.inset.b || 0) - (this.inset.t || 0)) / H, -0.7, 0.7); this.shiftY += (goalY - this.shiftY) * (1 - Math.exp(-realDt * 5)); r.shiftY = this.shiftY; }
 
     // ---------------- physiology -> appearance
     const sao2 = p.resp.sao2, arrested = p.arrest.arrested, perf = p.circ.mapArt;

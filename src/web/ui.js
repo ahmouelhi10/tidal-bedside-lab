@@ -1350,8 +1350,14 @@ export class UI {
     let l = 0, r = 0;
     for (const e of [this.dom.panelWrap, this.dom.card, this.menuOpen ? this.dom.menu?.querySelector('.menuL') : null]) if (vis(e)) { const b = e.getBoundingClientRect(); if (b.left < Wd * 0.3 && b.height > Hd * 0.15) l = Math.max(l, b.right); }
     for (const e of [this.menuOpen ? null : this.dom.right, this.menuOpen ? this.dom.menuR : null, this.menuOpen ? null : this.echoLab?.dom?.root]) if (vis(e)) { const b = e.getBoundingClientRect(); if (b.right > Wd * 0.7 && b.height > Hd * 0.15) r = Math.max(r, Wd - b.left); }
-    if (Wd <= 600) { l = 0; r = 0; }                                             // phones: panels are bottom sheets
-    this.scene.inset = { l, r };
+    let tp = 0, bt = 0;
+    if (Wd <= 600) {                                                            // phones: the panels are bottom sheets and the HUD sits on top, so the free space is a band in between
+      l = 0; if (r > Wd * 0.6) r = 0;
+      const top = this.root.querySelector('.hud-top'); if (vis(top)) tp = top.getBoundingClientRect().bottom;
+      for (const e of [this.dom.left, this.dom.panelWrap, this.dom.card, this.dom.dock]) if (vis(e)) { const b = e.getBoundingClientRect(); if (b.bottom > Hd * 0.6 && b.top > Hd * 0.2) bt = Math.max(bt, Hd - b.top); }
+      if (Hd - tp - bt < Hd * 0.2) bt = Math.max(0, Hd * 0.8 - tp);             // never squeeze the view below a fifth of the screen
+    }
+    this.scene.inset = { l, r, t: tp, b: bt };
   }
   trackMouse(e) { this._mouse = { x: e.clientX, y: e.clientY }; }
 }
