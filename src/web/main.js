@@ -36,7 +36,7 @@ scene.onAsset = () => { if (ui.panelOpen && ui.tab === 'tab_guide') ui.buildTabs
 window.__tbl = { sim, scene, monitor, ui };         // debugging / automated UI tests
 
 monitor.onBeat = (spo2) => sound.beep(spo2);
-scene.onHotspot = (h) => ui.hotspot(h);
+scene.onHotspot = (h, e) => ui.hotspot(h, e);
 glCanvas.addEventListener('pointermove', (e) => ui.trackMouse(e));
 glCanvas.addEventListener('pointerleave', () => { ui._mouse = null; });
 

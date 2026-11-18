@@ -259,7 +259,7 @@ export class Scene {
   _bindInput(c) {
     // The camera is driven by the game (setCamera / focus / frameSite); the pointer only hovers and clicks.
     c.addEventListener('pointermove', e => { this.hover = this.pick(e.clientX, e.clientY); });
-    c.addEventListener('pointerup', e => { if (this.onHotspot) { const h = this.pick(e.clientX, e.clientY); if (h) this.onHotspot(h); } });
+    c.addEventListener('pointerup', e => { if (this.onHotspot) { const h = this.pick(e.clientX, e.clientY); if (h) this.onHotspot(h, e); } });
     c.addEventListener('pointerleave', () => { this.hover = null; });
     c.addEventListener('wheel', e => { e.preventDefault(); }, { passive: false });
   }

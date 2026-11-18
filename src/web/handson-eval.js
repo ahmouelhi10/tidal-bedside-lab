@@ -47,6 +47,23 @@ export function evalHold(seconds, needS = 2) {
   return { ok: seconds >= needS, quality: clamp01(seconds / needS), seconds: +seconds.toFixed(1) };
 }
 
+/** Why a gesture failed, as keyed facts the guide turns into a sentence ({ k, v, lim }), most important first. Empty when ok.
+ *  hand = the step's spec (radiusCm, minCm, maxCm, holdS, gesture). */
+export function faults(r, hand = {}) {
+  if (!r || r.ok) return [];
+  const out = [], rad = hand.radiusCm;
+  if (r.distCm != null && rad != null && r.distCm > rad) out.push({ k: 'far', v: r.distCm, lim: rad });
+  if (r.tooShallow) out.push({ k: 'shallow', v: r.depthCm, lim: hand.minCm });
+  if (r.tooDeep) out.push({ k: 'deep', v: r.depthCm, lim: hand.maxCm });
+  if (r.lengthCm != null && hand.minCm != null && r.lengthCm < hand.minCm) out.push({ k: 'short', v: r.lengthCm, lim: hand.minCm });
+  if (r.lengthCm != null && hand.maxCm != null && r.lengthCm > hand.maxCm) out.push({ k: 'long', v: r.lengthCm, lim: hand.maxCm });
+  if (hand.gesture === 'stroke' && r.angleDeg != null && r.angleDeg > 35) out.push({ k: 'angle', v: r.angleDeg, lim: 35 });
+  if (hand.gesture === 'rotate' && r.angleDeg != null) out.push({ k: 'turn', v: Math.abs(r.angleDeg), lim: 90 });
+  if (r.seconds != null && r.seconds < (hand.holdS ?? 2)) out.push({ k: 'brief', v: r.seconds, lim: hand.holdS ?? 2 });
+  if (!out.length) out.push({ k: 'other' });
+  return out;
+}
+
 /** One line for the event log: "dist 1.2 cm, length 3.1 cm, angle 12 deg, depth 3 cm, 2.4 s" (only what applies). */
 export function describe(r) {
   const bits = [];

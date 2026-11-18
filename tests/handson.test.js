@@ -47,3 +47,18 @@ test('every hands-on step names a known instrument, a gesture and sensible limit
   }
   assert.ok(n >= 12, `${n} hands-on steps`);
 });
+
+test('a failed gesture says what to correct: distance, depth, length, direction, turn, hold time', async () => {
+  const { faults } = await import('../src/web/handson-eval.js');
+  const k = (r, h) => faults(r, h).map(f => f.k);
+  assert.deepEqual(faults(evalPlace([0, 0, 0], [0, 0, 0], 0.04), { radiusCm: 4 }), [], 'a good gesture has no fault');
+  assert.deepEqual(faults(evalPlace([0.07, 0, 0], [0, 0, 0], 0.04), { radiusCm: 4 }), [{ k: 'far', v: 7, lim: 4 }]);
+  const push = (cm) => ({ ...evalPlace([0, 0, 0], [0, 0, 0], 0.04), ...evalPush(cm, { minCm: 1, maxCm: 3.5 }), ok: false });
+  assert.deepEqual(k(push(0.4), { radiusCm: 4, minCm: 1, maxCm: 3.5, gesture: 'push' }), ['shallow']);
+  assert.deepEqual(k(push(5), { radiusCm: 4, minCm: 1, maxCm: 3.5, gesture: 'push' }), ['deep']);
+  assert.deepEqual(k(evalStroke([0, 0, 0], [0.01, 0, 0], [0.005, 0, 0], 0.03, { minCm: 2, maxCm: 5 }), { radiusCm: 3, minCm: 2, maxCm: 5, gesture: 'stroke' }), ['short']);
+  assert.deepEqual(k(evalStroke([0, 0, 0], [0, 0, 0.03], [0, 0, 0.015], 0.03, { dir: [1, 0, 0] }), { radiusCm: 3, minCm: 2, maxCm: 5, gesture: 'stroke' }), ['angle']);
+  assert.deepEqual(k({ ...evalRotate(20), ok: false }, { gesture: 'rotate' }), ['turn']);
+  assert.deepEqual(k({ ...evalPlace([0, 0, 0], [0, 0, 0], 0.04), ...evalHold(0.8, 2), ok: false }, { radiusCm: 4, holdS: 2, gesture: 'hold' }), ['brief']);
+  assert.deepEqual(k({ ok: false }, {}), ['other'], 'never an empty explanation');
+});

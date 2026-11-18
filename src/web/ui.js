@@ -11,6 +11,7 @@ import { CAMERAS } from './scene.js';
 import { PROCEDURES, PARAMS, Guide } from './procedures.js';
 import { icon, stepIcon } from './icons.js';
 import { TOOLS } from './handson.js';
+import { faults } from './handson-eval.js';
 import { WardView, wardClock, abxName } from './ward.js';
 import { EffectWatcher } from './effects.js';
 import { monitorOnset } from './onset.js';
@@ -161,6 +162,25 @@ const DRUG_UI = [
     { k: 'bupivacaine', route: 'regional', per: 1.5, basis: 'tbw', step: 10, label: 'block' },
   ] },
 ];
+/** What can be done on each part of the body (click on the patient): [label key, action, extra class]. Each action is an
+ *  ordinary panel action, so it is logged, scored and replayed the same way. */
+const BODY_ACTIONS = {
+  rarm: (u) => [['od_iv', () => u.act({ type: 'iv.access' }, t('od_iv'))], ['px_io', () => u.act({ type: 'io.access' }, t('px_io'))],
+    ['px_aline', () => u.act({ type: 'procedure.arterial_line', us: false }, t('px_aline'))], ['hs_abg', () => u.act({ type: 'lab.order', kind: 'abg' }, t('hs_abg'))],
+    ['hs_press', () => u.act({ type: 'bleed.control' }, t('hs_press')), 'danger'], ['tab_drugs', () => u.openTab('tab_drugs'), 'ghost'], ['tab_fluids', () => u.openTab('tab_fluids'), 'ghost']],
+  larm: (u) => [['od_nibp', () => { u.act({ type: 'monitor.attach', items: { nibp: true } }); u.act({ type: 'nibp.cycle' }, t('od_nibp')); }],
+    ['od_spo2', () => u.act({ type: 'monitor.attach', items: { spo2Probe: true } }, t('od_spo2'))], ['od_iv', () => u.act({ type: 'iv.access' }, t('od_iv'))],
+    ['hs_press', () => u.act({ type: 'bleed.control' }, t('hs_press')), 'danger']],
+  chest: (u) => [['cp_manual', () => { u.openTab('tab_circ'); u.manualCompress(); }, 'danger'], ['sg_chest_exam', () => u._exam({ type: 'exam.chest' })],
+    ['sg_pocus', () => u._exam({ type: 'exam.pocus' })], ['od_ecg', () => u.act({ type: 'monitor.attach', items: { ecgLeads: true } }, t('od_ecg'))],
+    ['od_ecg12', () => u.act({ type: 'exam.ecg12' }, t('od_ecg12'))], ['cp_pads', () => u.act({ type: 'defib.pads' }, t('cp_pads'))],
+    ['tab_circ', () => u.openTab('tab_circ'), 'ghost'], ['tab_proc', () => u.openTab('tab_proc'), 'ghost']],
+  head: (u) => [['aw_nrb', () => u.act({ type: 'o2.mask', fio2: O2.nrb.fio2, seal: O2.nrb.seal }, t('aw_nrb'))], ['tab_airway', () => u.openTab('tab_airway'), 'ghost']],
+  neck: (u) => [['sg_neck_palp', () => u._exam({ type: 'exam.neck', method: 'palpation' })], ['tab_proc', () => u.openTab('tab_proc'), 'ghost']],
+  groin: (u) => [['hs_press', () => u.act({ type: 'bleed.control' }, t('hs_press')), 'danger'], ['hs_cvc_fem', () => u.act({ type: 'procedure.central_line', site: 'fem', us: true }, t('hs_cvc_fem'))],
+    ['tab_fluids', () => u.openTab('tab_fluids'), 'ghost']],
+  abdomen: (u) => [['px_uc', () => u.act({ type: 'procedure.urinary_catheter' }, t('px_uc'))], ['px_ng', () => u.act({ type: 'procedure.ng_tube' }, t('px_ng'))], ['tab_orders', () => u.openTab('tab_orders'), 'ghost']],
+};
 const O2 = { room: { fio2: 0.21, seal: 0.5, key: 'aw_room' }, nc: { fio2: 0.36, seal: 0.6, key: 'aw_nc' }, mask: { fio2: 0.55, seal: 0.8, key: 'aw_mask' }, nrb: { fio2: 0.85, seal: 0.9, key: 'aw_nrb' }, v24: { fio2: 0.24, seal: 1, key: 'aw_v24' }, v28: { fio2: 0.28, seal: 1, key: 'aw_v28' } };
 
 export class UI {
@@ -862,7 +882,13 @@ export class UI {
         el('div', { class: 'pw-actions' },
           handStep ? this.btn(t('ho_auto'), () => this.guideDo(), 'act', { id: 'btnGuideDo' }) : this.btn(t('pw_perform'), () => this.guideDo(), 'act primary', { id: 'btnGuideDo' }),
           this.btn(t('gd_skip'), () => this.guideSkip(), 'ghost')));
-      if (last) coach.prepend(el('div', { class: 'pw-last ' + (lastSt === 'done' ? 'ok' : 'bad'), text: last }));
+      if (last && !g.miss && !g.hold) coach.prepend(el('div', { class: 'pw-last ' + (lastSt === 'done' ? 'ok' : 'bad'), text: last }));
+      if (g.miss) coach.insertBefore(this._missBox(g.miss, cur), coach.children[1]);
+      if (g.hold) {                                                              // the step was done with a problem: stay here until the learner has read it
+        coach.querySelector('.pw-actions').replaceChildren(this.btn(t('gd_continue'), () => { g.hold = null; this._guideNext(); }, 'act primary', { id: 'btnGuideNext' }));
+        coach.querySelector('.pw-do')?.remove();
+        coach.insertBefore(el('div', { class: 'pw-miss hold', role: 'alert' }, el('b', { text: t(g.hold.status === 'early' ? 'gd_hold_early' : 'gd_hold_warn') }), el('ul', {}, g.hold.lines.map(x => el('li', { text: x })))), coach.children[1]);
+      }
       P.append(coach);
       this.updateGuideWait();
     } else {
@@ -874,12 +900,12 @@ export class UI {
     const need = [...new Set(steps.filter(s => s.hand).map(s => s.hand.tool))];
     if (need.length) {
       const tools = [...need, ...DISTRACTORS.filter(x => !need.includes(x)).slice(0, Math.max(2, 6 - need.length))].sort((a, b) => L(TOOLS[a]).localeCompare(L(TOOLS[b])));
-      const usedUpTo = new Set(steps.slice(0, g.i).filter(s => s.hand).map(s => s.hand.tool)), live = cur?.hand && hands;
+      const usedUpTo = new Set(steps.slice(0, g.i).filter(s => s.hand).map(s => s.hand.tool)), live = cur?.hand && hands && !g.hold;
       const table = el('div', { class: 'pw-table' + (live ? ' live' : '') });
       for (const k of tools) {
         const tile = el('button', { class: 'pw-tool' + (usedUpTo.has(k) ? ' used' : ''), dataset: { tool: k }, title: L(TOOLS[k]), 'aria-label': L(TOOLS[k]), disabled: !live });
         tile.innerHTML = icon(k, 30); tile.append(el('span', { text: L(TOOLS[k]) }));
-        if (live) tile.addEventListener('pointerdown', (e) => { e.preventDefault(); this.handsOn.grab(k, e, cur, g.prm, (r) => { if (r) this.guideDo(r); }); });
+        if (live) tile.addEventListener('pointerdown', (e) => { e.preventDefault(); this.handsOn.grab(k, e, cur, g.prm, (r) => { if (!r) return; if (r.wrongTool || !r.res.ok) this.guideMiss(r); else this.guideDo(r); }); });
         table.append(tile);
       }
       P.append(el('h4', { text: t('pw_table') + (hands ? '' : ' · ' + t('pw_loading')) }), table);
@@ -932,12 +958,40 @@ export class UI {
       if (r && r.ok === false) { status = 'warn'; lines.push(r.error || t('err_generic')); } else { lines.push(...this.resultLines(ev, r)); if (r && (r.wrongSide || r.reached === false) && status === 'done') status = 'warn'; }   // a needle on the wrong side or too short is a problem, not a success
     }
     if (s.msg) lines.push(L(s.msg(ctx)));
-    this.sim.act({ type: 'note', text: `guide ${g.proc.id}: ${s.id}${status !== 'done' ? ` (${status})` : ''}${hand ? ` [hands-on: ${hand.note}]` : ''}`.slice(0, 300) });
+    const tries = g.tries?.[g.i] || 0; g.miss = null;
+    if (hand && tries) lines.push(t('gd_after_tries', { n: tries }));
+    this.sim.act({ type: 'note', text: `guide ${g.proc.id}: ${s.id}${status !== 'done' ? ` (${status})` : ''}${hand ? ` [hands-on: ${hand.note}${tries ? `, ${tries} failed attempt(s)` : ''}]` : ''}`.slice(0, 300) });
     if (hand) this.scene.focus(s.cam || 'default', 1.6);                         // the learner's own instrument already showed the gesture
     else if (s.g) this.scene.stepGesture(s.g, s.cam, this.scene.siteOf(s.at, g.prm)); else if (!engineGesture) this.scene.focus(s.cam || 'default', 2.2);
     g.status[g.i] = status; g.done[s.id] = p.t; g.notes[g.i] = lines.filter(Boolean).join(' · ') || null;
     if (lines.length) this.toast(lines[0], status !== 'done');
+    if (status !== 'done') { g.hold = { status, lines: lines.filter(Boolean) }; this.buildTabs(); this.prefocusStep(2400); return; }   // stay on the step: read what went wrong, then continue
     this._guideNext();
+  }
+  /** A hands-on attempt that failed (wrong instrument, wrong spot, wrong depth, too short): nothing is done to the patient,
+   *  the guide stays on the same step with the camera on its site and says what to correct. Logged as an attempt, which
+   *  does not count as the step (the note does not start with "guide <proc>: <step>"). */
+  guideMiss(r) {
+    const g = this.guide, s = g?.step; if (!s || this.sim.finished) return;
+    g.tries ??= {}; g.tries[g.i] = (g.tries[g.i] || 0) + 1;
+    const fl = r.wrongTool ? [{ k: 'tool', v: r.name }] : faults(r.res, s.hand);
+    g.miss = { n: g.tries[g.i], fl };
+    this.sim.act({ type: 'note', text: `guide attempt ${g.proc.id}: ${s.id} failed (${r.wrongTool ? 'wrong instrument ' + r.wrongTool : r.note})`.slice(0, 300) });
+    this.toast(this._faultText(fl[0], s), true);
+    this.buildTabs(); this.prefocusStep(0);
+  }
+  _faultText(f, s) {
+    const n = (x) => (x == null ? '' : String(x).replace('.', getLang() === 'fr' ? ',' : '.'));
+    if (f.k === 'tool') return t('ho_wrong_tool', { tool: f.v }) + ' · ' + t('gd_miss_tool', { tool: L(TOOLS[s.hand.tool]) });
+    return t('gd_f_' + f.k, { v: n(f.v), lim: n(f.lim) });
+  }
+  _missBox(miss, s) {
+    const fix = this.level === 'expert' ? null : t('gd_fix_' + (s.hand?.gesture || 'place'));
+    return el('div', { class: 'pw-miss', role: 'alert' },
+      el('b', { text: t('gd_miss_title', { n: miss.n }) }),
+      el('ul', {}, miss.fl.map(f => el('li', { text: this._faultText(f, s) }))),
+      fix ? el('p', { class: 'small', text: fix }) : null,
+      el('p', { class: 'small muted', text: t('gd_miss_retry') }));
   }
   _guideNext() {
     const g = this.guide; g.i++; this.prefocusStep(g.finished ? 0 : 2400);
@@ -1255,20 +1309,40 @@ export class UI {
     const done = () => { page.remove(); window.removeEventListener('afterprint', done); };
     window.addEventListener('afterprint', done); window.print(); setTimeout(done, 60000);
   }
-  hotspot(h) {
+  hotspot(h, e) {
     if (!this.sim.patient || this.sim.finished || this.menuOpen) return;
+    if (this.guide && !this.guide.finished && this.tab === 'tab_guide') { this.toast(t('gd_stay'), true); this.prefocusStep(0); return; }   // a guided procedure keeps the learner on its step
+    if (BODY_ACTIONS[h.id]) return this.bodyMenu(h, e);
     switch (h.id) {
-      case 'chest': this.openTab('tab_circ'); this.manualCompress(); break;
-      case 'head': case 'o2': case 'vent': this.openTab('tab_airway'); break;
-      case 'neck': case 'flank': this.openTab('tab_proc'); break;
-      case 'rarm': this.act({ type: 'iv.access' }, t('od_iv')); break;
-      case 'larm': this.act({ type: 'monitor.attach', items: { nibp: true } }); this.act({ type: 'nibp.cycle' }, t('od_nibp')); break;
-      case 'groin': case 'ivpole': this.openTab('tab_fluids'); break;
+      case 'o2': case 'vent': this.openTab('tab_airway'); break;
+      case 'flank': this.openTab('tab_proc'); break;
+      case 'ivpole': this.openTab('tab_fluids'); break;
       case 'defib': this.openTab('tab_circ'); break;
       case 'meds': this.openTab('tab_drugs'); break;
       default: this.openTab('tab_orders');
     }
   }
+  /** Small menu at the click point listing what can be done on that part of the body. */
+  bodyMenu(h, e) {
+    this.closeBodyMenu();
+    const title = t('hs_' + h.id), items = BODY_ACTIONS[h.id](this), m = el('div', { class: 'hs-menu', role: 'menu', 'aria-label': title });
+    m.append(el('b', { class: 'hs-menu-t', text: title }));
+    for (const [key, run, cls] of items) m.append(el('button', { type: 'button', role: 'menuitem', class: 'hs-mi' + (cls ? ' ' + cls : ''), text: t(key), onclick: (ev) => { ev.stopPropagation(); this.closeBodyMenu(); run(); } }));
+    document.body.append(m); this._bodyMenu = m;
+    const W = window.innerWidth, H = window.innerHeight, r = m.getBoundingClientRect(), x = e?.clientX ?? W / 2, y = e?.clientY ?? H / 2;
+    m.style.left = Math.max(8, Math.min(W - r.width - 8, x + 8)) + 'px'; m.style.top = Math.max(8, Math.min(H - r.height - 8, y - 12)) + 'px';
+    m.querySelector('.hs-mi')?.focus({ preventScroll: true });
+    setTimeout(() => {                                                          // after this click: any click elsewhere or Escape closes it
+      this._bmClose = (ev) => { if (ev.type === 'keydown' ? ev.key === 'Escape' : !m.contains(ev.target)) this.closeBodyMenu(); };
+      window.addEventListener('pointerdown', this._bmClose, true); window.addEventListener('keydown', this._bmClose, true);
+    }, 0);
+  }
+  closeBodyMenu() {
+    this._bodyMenu?.remove(); this._bodyMenu = null;
+    if (this._bmClose) { window.removeEventListener('pointerdown', this._bmClose, true); window.removeEventListener('keydown', this._bmClose, true); this._bmClose = null; }
+  }
+  /** Run an examination from the body menu and show its findings. */
+  _exam(ev) { const r = this.act(ev); if (r && r.ok !== false) { const l = this.resultLines(ev, r); if (l.length) this.toast(l.join(' · ')); } }
   /** Tell the scene how much of the window the panels cover, so the 3D view centres the patient in the free space. */
   updateInsets() {
     if (!this.dom || !this.scene) return;

@@ -61,7 +61,9 @@ export class HandsOn {
   _bind() {
     const c = this.scene.canvas;
     window.addEventListener('pointermove', (e) => { if (this.active && this.active.phase !== 'pick') this._move(e); }, true);
-    window.addEventListener('pointerup', (e) => { if (this.active) this._up(e); }, true);
+    // the release that drops or finishes the instrument belongs to the instrument: it must not also reach the canvas as a
+    // click on the patient (which would fire that body zone's own action and pull the learner out of the procedure)
+    window.addEventListener('pointerup', (e) => { if (this.active) { if (this.active.phase !== 'drag' || e.target === c) e.stopImmediatePropagation(); this._up(e); } }, true);
     // while a gesture is running, the canvas belongs to the instrument (no camera drag, no hotspot clicks)
     c.addEventListener('pointerdown', (e) => { if (this.active && this.active.phase === 'placed') { e.stopImmediatePropagation(); e.preventDefault(); this._down(e); } }, true);
   }
@@ -89,7 +91,7 @@ export class HandsOn {
     if (a.phase === 'drag') {
       this.scene.canvas.style.cursor = '';
       if (!a.hit) { this.end(); return; }                                          // dropped off the patient: back on the table
-      if (a.tool !== a.hand.tool) { this.ui.toast(t('ho_wrong_tool', { tool: L(TOOLS[a.tool]) }), true); this.ui.noteWrongTool?.(a.tool); this.end(); return; }
+      if (a.tool !== a.hand.tool) { const d = a.onDone, tool = a.tool; this.end(); d?.({ wrongTool: tool, name: L(TOOLS[tool]) }); return; }   // the guide stays on the step and says so
       this.scene.ghost.lift = 0;
       if (a.hand.gesture === 'place') return this._finish();
       a.phase = 'placed'; this._chip(); return;
