@@ -337,9 +337,10 @@ export class UI {
       const list = el('div', { class: 'cards' });
       for (const pr of PROCEDURES) {
         const tools = [...new Set(pr.steps.filter(s => s.hand).map(s => s.hand.tool))];
-        const b = el('button', { class: 'scard skill', dataset: { kind: 'skill', id: pr.id }, onclick: () => {
+        const b = el('button', { class: 'scard skill', dataset: { kind: 'skill', id: pr.id }, onclick: (e) => {
           this.pendingSkill = pr.id; this.inputs.scenario.value = SKILL_CASE[pr.id] ?? ''; this.inputs.scenario.dispatchEvent(new Event('change'));
           for (const c of list.children) c.classList.toggle('on', c === b);
+          this._showStart(e);
         } });
         const ic = el('span', { class: 'skill-ic' }); ic.innerHTML = icon(tools[0] || 'check', 24);
         b.append(el('div', { class: 'skill-row' }, ic, el('b', { text: L(pr) })), el('div', { class: 'badges' }, el('span', { class: 'badge kind', text: t('gd_nsteps', { n: pr.steps.length }) }), tools.length ? el('span', { class: 'badge', text: `✋ ${tools.length} ${t('pw_instr')}` }) : null));
@@ -348,6 +349,13 @@ export class UI {
       B.append(...listTop(), el('p', { class: 'muted small', text: t('skills_text') }), list);
       list.firstChild?.click();
     }
+  }
+  /** After the learner taps a case: on a phone the patient panel sits below the whole list, so bring the start button into view. */
+  _showStart(e) {
+    if (!e?.isTrusted) return;                                                  // not for the automatic first pick when a section opens
+    const b = document.getElementById('btnStart'); if (!b) return;
+    const r = b.getBoundingClientRect();
+    if (r.top < 0 || r.bottom > window.innerHeight) b.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
   openMenu() {
     if (this.sim.patient && !this.sim.finished) { this._speedBefore = this.sim.speed; this.sim.setSpeed(0); }
@@ -364,13 +372,13 @@ export class UI {
   }
   buildCards(grouped = false, only = null) {
     const cards = this.dom.cards; cards.replaceChildren();
-    if (only) { for (const s of this.scenarios.filter(only)) { const x = scenarioText(s); cards.append(el('button', { class: 'scard', dataset: { id: s.id, kind: s.kind }, 'aria-pressed': 'false', onclick: () => { this.inputs.scenario.value = s.id; this.inputs.scenario.dispatchEvent(new Event('change')); } }, el('b', { text: x.title }), el('span', { class: 'sum', text: x.summary }), this._badges(s))); } this.markCards(); return; }
+    if (only) { for (const s of this.scenarios.filter(only)) { const x = scenarioText(s); cards.append(el('button', { class: 'scard', dataset: { id: s.id, kind: s.kind }, 'aria-pressed': 'false', onclick: (e) => { this.inputs.scenario.value = s.id; this.inputs.scenario.dispatchEvent(new Event('change')); this._showStart(e); } }, el('b', { text: x.title }), el('span', { class: 'sum', text: x.summary }), this._badges(s))); } this.markCards(); return; }
     const lvl = { beginner: 1, intermediate: 2, advanced: 3 };
     const badges = (s) => !s ? el('div', { class: 'badges' }, el('span', { class: 'badge kind', text: t('free_badge') })) : el('div', { class: 'badges' },
       el('span', { class: 'badge kind', text: s.kind }),
       el('span', { class: 'badge', title: s.difficulty }, el('span', { class: 'lvl' }, [1, 2, 3].map(i => el('i', { class: i <= (lvl[s.difficulty] || 1) ? 'on' : '' }))), ' ', s.difficulty),
       el('span', { class: 'badge', text: `${Math.round(s.durationS / 60)} min` }));
-    const mk = (id, title, summary, s) => el('button', { class: 'scard', dataset: { id, kind: s ? s.kind : 'free' }, 'aria-pressed': 'false', onclick: () => { this.inputs.scenario.value = id; this.inputs.scenario.dispatchEvent(new Event('change')); } },
+    const mk = (id, title, summary, s) => el('button', { class: 'scard', dataset: { id, kind: s ? s.kind : 'free' }, 'aria-pressed': 'false', onclick: (e) => { this.inputs.scenario.value = id; this.inputs.scenario.dispatchEvent(new Event('change')); this._showStart(e); } },
       el('b', { text: title }), el('span', { class: 'sum', text: summary }), badges(s));
     if (!grouped) { cards.append(mk('', t('free_play'), t('free_sub'), null)); for (const s of this.scenarios) { const x = scenarioText(s); cards.append(mk(s.id, x.title, x.summary, s)); } }
     else for (const [title, pick] of [[t('grp_resus'), s => s.kind === 'ACLS'], [t('grp_chal'), s => s.kind !== 'ACLS' && s.kind !== 'Infectiology']]) {
