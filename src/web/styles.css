@@ -749,11 +749,17 @@ body.resizing, body.resizing * { cursor: ew-resize !important; user-select: none
 .signs[hidden] { display: none; }
 
 /* learner level (start screen) and in-case help (coach.js) */
-.lvl-pick { padding: 10px 12px; margin: 6px 0 10px; }
-.lvl-pick h4 { margin: 0 0 6px; }
-.lvl-seg { display: flex; width: 100%; }
-.lvl-seg button { flex: 1; }
-.lvl-desc { margin: 6px 0 0; }
+.lvl-wrap { min-height: 0; overflow-y: auto; padding-right: 4px; }
+.lvl-wrap > p { margin: 0 0 12px; }
+.lvl-step { display: grid; gap: 10px; }
+.lvl-card { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 16px; text-align: left; padding: 16px 18px; min-height: 0; border-radius: var(--r-lg); background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); color: inherit; transition: transform .18s var(--ease), border-color .18s, background .18s; }
+.lvl-card:hover { transform: translateX(4px); border-color: rgba(76, 195, 255, .45); }
+.lvl-card.on { border-color: rgba(76, 195, 255, .7); background: linear-gradient(100deg, var(--accent-soft) 0%, var(--surface) 60%); }
+.lvl-dots { display: flex; gap: 4px; } .lvl-dots i { width: 9px; height: 9px; border-radius: 50%; background: rgba(255, 255, 255, .14); } .lvl-dots i.on { background: var(--accent); }
+.lvl-txt { display: grid; gap: 4px; } .lvl-txt b { font-size: 16px; font-weight: 750; } .lvl-txt span { color: var(--text-2); font-size: 13px; line-height: 1.45; font-weight: 400; }
+.lvl-go { width: 9px; height: 9px; border-right: 2px solid var(--muted); border-top: 2px solid var(--muted); transform: rotate(45deg); margin-right: 4px; }
+.lvl-chip { align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; margin: 0 0 8px; padding: 6px 12px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line-2); }
+.lvl-chip b { color: var(--accent); } .lvl-chip .lvl-chg { color: var(--text-2); text-decoration: underline; text-underline-offset: 3px; font-size: 12.5px; }
 .coach { max-height: 34vh; overflow: auto; }
 .coach h3 { margin-bottom: 6px; }
 .co-next { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: var(--r-xs); background: color-mix(in srgb, var(--accent) 16%, transparent); border-left: 3px solid var(--accent); margin-bottom: 8px; }

@@ -4,7 +4,7 @@ import { SPEEDS } from './sim.js';
 import { DRUGS, CALCIUM } from '/engine/drugs.js';
 import { FORCED_AIR_W } from '/engine/thermal.js';
 import { fluidVolumeMl } from '/engine/infection.js';
-import { Coach, levelPicker, loadLevel, helpUsed } from './coach.js';
+import { Coach, levelPicker, levelChip, loadLevel, helpUsed } from './coach.js';
 import { bmiOf, bmiClass } from '/engine/anthropometrics.js';
 import { SKIN_TONES } from './gl/body.js';
 import { CAMERAS } from './scene.js';
@@ -35,6 +35,7 @@ const SKILL_CASE = { iv: '', rsi: 'obese_rsi', defib: 'witnessed_vf', needle: 't
 const DISTRACTORS = ['scalpel', 'syringe', 'tourniquet', 'bougie', 'forcepsGauze'];
 /** Start-screen views that start a case, so the patient chooser is shown beside them. */
 const PLAYABLE = new Set(['lab', 'skills', 'resus', 'chal', 'echo', 'infect', 'instructor']);
+const LEVELED = { resus: 'sec_resus', chal: 'sec_chal', echo: 'sec_echo', infect: 'sec_inf', skills: 'sec_skills' };   // sections that ask for the level first (value: title key)
 /** Body-shape presets: a BMI inside each WHO class (WHO_BMI_CLASSES in /engine/anthropometrics.js); weight = BMI x height^2. */
 const SHAPES = [['shape_under', 17.5], ['shape_normal', 22], ['shape_over', 27.5], ['shape_obese', 33], ['shape_morbid', 45]];
 
@@ -284,16 +285,19 @@ export class UI {
     this.dom.menuBody = el('div', { class: 'menuBody' });
     this.dom.menuR = el('div', { class: 'menuR' }, el('h3', { text: t('patient_builder') }), this.dom.setup, el('div', { class: 'muted small previewnote', text: t('preview_note') }), this.dom.resume);
     m.append(el('div', { class: 'menuL' }, el('h1', { text: t('app') }), el('p', { class: 'muted', text: t('menu_sub') }), this.dom.menuBody), this.dom.menuR);
-    this.buildSetup(); this.menuView(this._view || 'home');
+    this.buildSetup(); this.menuView(this._view || 'home', this._step);
     return m;
   }
   /** Start screen: home (eight sections); every playable mode shows the patient chooser on the right. */
-  menuView(view) {
+  menuView(view, step) {
     if (view === 'scen') view = 'resus';
-    this._view = view; const B = this.dom.menuBody; B.replaceChildren();
-    this.dom.menuR.hidden = !PLAYABLE.has(view);
+    step = LEVELED[view] ? (step || 'level') : null;                       // sections with cases: first the level on its own, then the cases
+    this._view = view; this._step = step; const B = this.dom.menuBody; B.replaceChildren();
+    this.dom.menuR.hidden = !PLAYABLE.has(view) || step === 'level';
     if (view !== 'skills') this.pendingSkill = null;
-    const back = () => el('button', { class: 'ghost menu-back', onclick: () => this.menuView('home') }, el('span', { class: 'ic' }), t('menu_back'));
+    const back = (to = 'home') => el('button', { class: 'ghost menu-back', onclick: () => this.menuView(to) }, el('span', { class: 'ic' }), t('menu_back'));
+    if (step === 'level') { B.append(back(), el('h3', { text: t(LEVELED[view]) }), levelPicker(this, () => this.menuView(view, 'list'))); return; }
+    const listTop = () => [back(view), el('h3', { text: t(LEVELED[view]) }), levelChip(this, () => this.menuView(view, 'level'))];   // back returns to the level step
     const sec = (id, ic, col, title, sub, soon) => { const b = el('button', { class: 'sect' + (soon ? ' soon' : ''), style: `--sc:${col}`, dataset: { view: id }, onclick: () => this.menuView(id) }); b.innerHTML = `<span class="sect-ic">${icon(ic, 24)}</span>`; b.append(el('span', { class: 'sect-t' }, el('b', { text: title }), el('span', { text: sub })), el('span', { class: 'sect-go' })); b.lastChild.innerHTML = soon ? `<span class="badge">${t('soon')}</span>` : icon('chevron', 18); return b; };
     const pickScenario = (id) => { this.inputs.scenario.value = id; this.inputs.scenario.dispatchEvent(new Event('change')); };
     if (view === 'home') {
@@ -313,7 +317,7 @@ export class UI {
       B.append(back(), el('h3', { text: t('sec_lab') }), el('div', { class: 'card lab-note' }, el('p', { text: t('lab_text') }), el('ul', { class: 'muted small' }, [t('lab_1'), t('lab_2'), t('lab_3')].map(x => el('li', { text: x })))));
     } else if (view === 'resus' || view === 'chal' || view === 'echo' || view === 'infect') {
       const pick = view === 'resus' ? (s => s.kind === 'ACLS') : view === 'echo' ? (s => s.kind === 'Echo') : view === 'infect' ? (s => s.kind === 'Infectiology') : (s => s.kind !== 'ACLS' && s.kind !== 'Echo' && s.kind !== 'Infectiology');
-      B.append(back(), el('h3', { text: t({ resus: 'sec_resus', chal: 'sec_chal', echo: 'sec_echo', infect: 'sec_inf' }[view]) }), levelPicker(this), el('p', { class: 'muted small', text: t({ resus: 'resus_text', chal: 'chal_text', echo: 'echo_text', infect: 'inf_text' }[view]) }), this.dom.cards);
+      B.append(...listTop(), el('p', { class: 'muted small', text: t({ resus: 'resus_text', chal: 'chal_text', echo: 'echo_text', infect: 'inf_text' }[view]) }), this.dom.cards);
       if (view === 'echo') B.append(el('details', { class: 'card lab-note small' }, el('summary', { text: t('soon_sources_echo') }), el('ul', { class: 'muted' }, t('echo_sources').map(x => el('li', { text: x })))));
       if (view === 'infect') B.append(el('details', { class: 'card lab-note small' }, el('summary', { text: t('soon_sources') }), el('ul', { class: 'muted' }, t('inf_sources').map(x => el('li', { text: x })))));
       this.buildCards(false, pick);
@@ -341,7 +345,7 @@ export class UI {
         b.append(el('div', { class: 'skill-row' }, ic, el('b', { text: L(pr) })), el('div', { class: 'badges' }, el('span', { class: 'badge kind', text: t('gd_nsteps', { n: pr.steps.length }) }), tools.length ? el('span', { class: 'badge', text: `✋ ${tools.length} ${t('pw_instr')}` }) : null));
         list.append(b);
       }
-      B.append(back(), el('h3', { text: t('sec_skills') }), levelPicker(this), el('p', { class: 'muted small', text: t('skills_text') }), list);
+      B.append(...listTop(), el('p', { class: 'muted small', text: t('skills_text') }), list);
       list.firstChild?.click();
     }
   }

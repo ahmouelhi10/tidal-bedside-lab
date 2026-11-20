@@ -30,17 +30,20 @@ function el(tag, attrs = {}, ...kids) {
   return e;
 }
 
-/** Level chooser shown in each section of the start screen. */
-export function levelPicker(ui) {
-  const desc = el('p', { class: 'muted small lvl-desc' });
-  const seg = el('div', { class: 'seg lvl-seg', role: 'radiogroup', 'aria-label': t('lvl_title') });
-  const paint = () => {
-    for (const b of seg.children) { const on = b.dataset.level === ui.level; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); }
-    desc.textContent = t('lvl_' + ui.level + '_d');
-  };
-  for (const v of LEVELS) seg.append(el('button', { type: 'button', role: 'radio', dataset: { level: v }, text: t('lvl_' + v), onclick: () => { ui.level = v; saveLevel(v); paint(); } }));
-  paint();
-  return el('div', { class: 'card lvl-pick' }, el('h4', { text: t('lvl_title') }), seg, desc);
+/** Level step of a start-screen section: one large choice per level; picking one goes on to the cases (onPick). */
+export function levelPicker(ui, onPick) {
+  const list = el('div', { class: 'lvl-step', role: 'radiogroup', 'aria-label': t('lvl_title') });
+  LEVELS.forEach((v, i) => list.append(el('button', { type: 'button', role: 'radio', class: 'lvl-card' + (v === ui.level ? ' on' : ''), 'aria-checked': String(v === ui.level), dataset: { level: v }, onclick: () => { ui.level = v; saveLevel(v); onPick(v); } },
+    el('span', { class: 'lvl-dots' }, LEVELS.map((_, j) => el('i', { class: j <= i ? 'on' : '' }))),
+    el('span', { class: 'lvl-txt' }, el('b', { text: t('lvl_' + v) }), el('span', { text: t('lvl_' + v + '_d') })),
+    el('span', { class: 'lvl-go' }))));
+  return el('div', { class: 'lvl-wrap' }, el('p', { class: 'muted', text: t('lvl_q') }), list);
+}
+
+/** Small reminder of the chosen level above the case list; clicking it goes back to the level step. */
+export function levelChip(ui, onChange) {
+  return el('button', { type: 'button', class: 'ghost lvl-chip', onclick: onChange },
+    el('span', { class: 'muted', text: t('lvl_title') }), el('b', { text: t('lvl_' + ui.level) }), el('span', { class: 'lvl-chg', text: t('lvl_change') }));
 }
 
 /** Coach card in the right column; one instance per UI, restarted at each case. */
