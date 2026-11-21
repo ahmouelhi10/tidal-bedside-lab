@@ -110,7 +110,8 @@ void main(){
     vec3 st = vec3(vnoise(vWP * 1400.0), vnoise(vWP * 1400.0 + 13.1), vnoise(vWP * 1400.0 + 29.7)) - 0.5;
     n = normalize(n + st * 0.05 * fadeP);
     base *= 0.95 + 0.07 * vnoise(vWP * 60.0);
-    rough = 0.46; f0 = 0.035; wrap = 0.22; spMul = 0.8; sss = 0.35;
+    base = mix(base, vec3(dot(base, vec3(0.2126, 0.7152, 0.0722))), 0.14);   // real nitrile is a slightly muted cobalt, not an electric blue
+    rough = 0.46; f0 = 0.035; wrap = 0.22; spMul = 0.8; sss = 0.35; gloss = 1.0;   // satin sheen at grazing angles
   }
   // key light: ceiling spot with a soft shadow
   vec3 toL = uLightPos - vWP; float ld = length(toL); vec3 L = toL / ld;

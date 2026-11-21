@@ -179,13 +179,16 @@ Total: 6,404 triangles, 0.21 MB. Materials are plain colours (no textures). Clea
 
 ## hands.glb
 
-A gloved adult right hand per grip: 11 top-level mesh nodes, about 4,700 triangles each, 0.7 MB, no textures. Two
+A gloved adult hand per grip: 12 top-level mesh nodes (11 right hands and one left), about 5,400 triangles each, 1.06 MB, no textures. Two
 materials: `nitrile_glove` (#4c75d1, roughness 0.55: nitrile is satin) and `gown_sleeve` (pale blue). The app draws the glove
 with a nitrile shader (fine stipple, slight translucency) and the sleeve with the fabric shader. The hand is the
 MakeHuman/MPFB base-mesh right hand (sex-neutral adult, glove size about 7.5 to 8). It is posed with the MakeHuman
 default rig: fingers are curled, or driven by a small CCD IK onto contact points of the instrument. It is then frozen,
-smoothed (nails and skin creases removed), thickened 0.7 mm, and given a rolled glove cuff and a 20 cm gown sleeve with
-soft folds, widening toward the elbow and closed by a gathered, rounded hem (its end is normally out of frame). Both follow the forearm's own cross-section.
+smoothed (nails and skin creases removed), thickened 0.7 mm, and given the nitrile's own folds: a 0.7 mm crease on the
+inside of each bent finger joint (deeper the more the joint is bent) and soft ridges where the glove is rucked up between
+the wrist and the cuff. It then gets a rolled glove cuff and a 34 cm gown sleeve that reaches the elbow, so its end never
+shows in a close-up: the cloth bunches where the cuff pushes it up, then has soft folds, widens 2.4 cm toward the elbow
+and closes in a gathered, rounded hem. Both follow the forearm's own cross-section.
 
 **Frame: each hand is already placed in its instrument's frame** (metres, glTF +Y up), so draw it with exactly the
 instrument's model matrix. The instrument's origin is its working point and +Y points toward its handle (see
@@ -204,9 +207,13 @@ instruments.glb above). The node transform is identity.
 | `hand_stethoscope` | `stethoscope` | palm over the chest piece, fingertips steadying the rim, tubing back between the fingers |
 | `hand_usProbe` | `usProbe` | palmar grip around the body, lens below the little finger, thumb on the marked side |
 | `hand_press` | its own | flat palm: origin = palm centre on the skin, +Y = back of the hand (outward normal), fingers along +X |
+| `hand_pressL` | its own (same as `hand_press`) | **left** hand resting flat beside a puncture or incision, thumb and index spread to tense the skin: the right-hand pose mirrored across the fingers (glTF z -> -z) |
 
-The forearm leaves each hand at a natural angle: wrist extended 32 degrees for the flat-palm grips and 8 to 14
-degrees for the others. The two pads are identical, so `defibPadLeft` can use `hand_defibPadRight` drawn with the
+The forearm leaves each hand at a natural angle: wrist extended 32 degrees for the flat-palm grips (22 for the left hand)
+and 8 to 14 degrees for the others, except the 14G needle, which is held with the wrist flexed 10 degrees so that a needle
+square to the chest has the forearm about 33 degrees above the skin, not raised high. The app reads which way each
+forearm leaves (the sleeve's centroid across the instrument axis) and turns rotationally symmetric instruments about their
+axis so the arm comes from the operator's side. The two pads are identical, so `defibPadLeft` can use `hand_defibPadRight` drawn with the
 left pad's matrix. Each node has `extras`:
 `instrument`, `grip`, `frame`. Fingers touch the instrument within a few millimetres. The IK residuals printed by
 the build are 0 to 26 mm; the larger ones are fingers that only rest near the shaft (middle finger in the pencil grip,

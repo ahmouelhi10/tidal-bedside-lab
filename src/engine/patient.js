@@ -303,7 +303,12 @@ export class Patient {
       case 'procedure.needle_decompression': return this._needle(ev);
       case 'procedure.chest_tube': return this._chestTube(ev);
       case 'procedure.cricothyroidotomy': return this._fona(ev);
-      case 'exam.chest': return { ok: true, findings: this.chest.findings({ ppv: this._ppv(), rap: this.circ.rap }) };
+      case 'exam.chest': {
+        let f = this.chest.findings({ ppv: this._ppv(), rap: this.circ.rap });
+        const ms = this.tube.mainstem;                                            // endobronchial tube: the other lung is not ventilated (REF design)
+        if (ms) { const o = ms === 'R' ? 'L' : 'R'; f = f.filter(c => c !== 'chest_normal'); for (const c of ['chest_rise_reduced_' + o, 'breath_sounds_reduced_' + o]) if (!f.includes(c) && !f.includes('breath_sounds_absent_' + o)) f.unshift(c); }
+        return { ok: true, findings: f };
+      }
       case 'exam.pocus': return { ok: true, ...this.chest.pocus() };
       case 'exam.neck': return this._examNeck(ev);
       case 'procedure.pericardiocentesis': { this.arrest.fixCause('tamponade'); const ml = this.peri.drain(); if (ml > 1) this.notes.push({ t, text: `pericardiocentesis: ${Math.round(ml)} mL drained` }); return { ok: true, drainedMl: Math.round(ml) }; }

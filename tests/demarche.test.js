@@ -75,6 +75,30 @@ test('démarche scoring is a pure function of the log: a replay gives the same i
   assert.deepEqual(item(r, 'fona'), item(p, 'fona'));
 });
 
+test('guided bronchoscopy skill: doing every step in order fixes the tube and earns the whole démarche', async () => {
+  const { PROCEDURES } = await import('../src/web/procedures.js');
+  const pr = PROCEDURES.find(x => x.id === 'bronch'), p = scen('tube_desat', 1);
+  assert.equal(p.tube.mainstem, 'R', 'the case starts with the tube in the right main bronchus');
+  const ex = p.dispatch({ type: 'exam.chest' }).findings;
+  assert.ok(ex.includes('breath_sounds_reduced_L') && !ex.includes('chest_normal'), `the left lung is silent: ${ex}`);
+  const msgs = [];
+  for (const st of pr.steps) {                                                   // what ui.guideDo does: check, run the events, note the step
+    p.run(10);
+    const ctx = { p, b: p.body, prm: {} };
+    assert.equal(st.check?.(ctx) ?? null, null, `${st.id} is done in a good state`);
+    for (const ev of st.run ? st.run(ctx) : []) assert.notEqual(p.dispatch(ev)?.ok, false, `${st.id}: ${ev.type}`);
+    if (st.msg) msgs.push(st.msg(ctx).en);
+    p.dispatch({ type: 'note', text: `guide bronch: ${st.id}` });
+  }
+  assert.match(msgs[0], /right main bronchus/, 'the scope shows the tube too deep');
+  assert.match(msgs[1], /^Carina \d/, 'after the pull the carina is seen below the tip');
+  p.run(SCENARIOS.tube_desat.durationS - p.t);
+  const tip = p.tube.tipAboveCarina;
+  assert.ok(tip >= 2 && tip <= 6, `tip ${tip} cm above the carina`);
+  assert.equal(item(p, 'bronch').frac, 1, item(p, 'bronch').detail);
+  for (const id of ['tube_reposition', 'tube_depth_final', 'secretions']) assert.equal(scoreSession(p).items.find(i => i.id === id).frac, 1, id);
+});
+
 test('bronchoscopy: moving the tube blind, low FiO2 and a long look are penalised; the scenario rewards the fix itself', () => {
   const p = scen('tube_desat', 1);
   runScript(p, [[20, { type: 'airway.tube_adjust', cm: -3 }], [40, { type: 'bronch.insert' }], [400, { type: 'bronch.remove' }]], 500);

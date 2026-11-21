@@ -8,7 +8,7 @@ import { Coach, levelPicker, levelChip, loadLevel, helpUsed } from './coach.js';
 import { bmiOf, bmiClass } from '/engine/anthropometrics.js';
 import { SKIN_TONES } from './gl/body.js';
 import { CAMERAS } from './scene.js';
-import { PROCEDURES, PARAMS, Guide } from './procedures.js';
+import { PROCEDURES, PARAMS, Guide, SKILL_CASE } from './procedures.js';
 import { icon, stepIcon } from './icons.js';
 import { TOOLS } from './handson.js';
 import { faults } from './handson-eval.js';
@@ -30,11 +30,16 @@ import { SBAR } from '/engine/debrief.js';
 import { AREAS, loadProgress, recordProgress, clearProgress, levelOf, profileOf, achievementsOf } from './progress.js';
 
 /** Skills training: the case each procedure is practised on (the condition that makes the procedure meaningful). */
-const SKILL_CASE = { iv: '', rsi: 'obese_rsi', defib: 'witnessed_vf', needle: 'tension_ptx', drain: 'tension_ptx', fona: 'cico' };
 /** Instruments on the table besides the ones the procedure needs: choosing the right one is part of the skill. */
 const DISTRACTORS = ['scalpel', 'syringe', 'tourniquet', 'bougie', 'forcepsGauze'];
 /** Start-screen views that start a case, so the patient chooser is shown beside them. */
 const PLAYABLE = new Set(['lab', 'skills', 'resus', 'chal', 'echo', 'infect', 'instructor']);
+/** icon of a guided step's callout, from its first engine event (icons.js) */
+const FX_ICON = { 'vent.set': 'vent', 'o2.mask': 'oxygen', 'apox.set': 'oxygen', 'monitor.attach': 'monitor', 'nibp.cycle': 'monitor', 'drug.bolus': 'syringe', 'drug.infusion': 'drug', 'fluid.bolus': 'drug',
+  'iv.access': 'ivCannula', 'io.access': 'ivCannula', 'exam.chest': 'steth', 'exam.pocus': 'probe', 'exam.neck': 'hand', 'order': 'talk', 'airway.set': 'airway', 'airway.intubate': 'airway', 'airway.tube_adjust': 'airway',
+  'bronch.insert': 'airway', 'bronch.suction': 'airway', 'bronch.remove': 'airway', 'position.set': 'bed', 'cpr.start': 'cpr', 'cpr.stop': 'cpr', 'defib.pads': 'defibPadRight', 'defib.charge': 'bolt', 'defib.shock': 'bolt',
+  'defib.setEnergy': 'bolt', 'procedure.needle_decompression': 'syringe', 'procedure.chest_tube': 'chestDrain', 'procedure.cricothyroidotomy': 'scalpel', 'procedure.arterial_line': 'target', 'procedure.central_line': 'target',
+  'procedure.ng_tube': 'target', 'procedure.urinary_catheter': 'target', 'neuraxial.spinal': 'syringe', 'neuraxial.assess': 'hand', 'lab.order': 'flask' };
 const LEVELED = { resus: 'sec_resus', chal: 'sec_chal', echo: 'sec_echo', infect: 'sec_inf', skills: 'sec_skills' };   // sections that ask for the level first (value: title key)
 /** Body-shape presets: a BMI inside each WHO class (WHO_BMI_CLASSES in /engine/anthropometrics.js); weight = BMI x height^2. */
 const SHAPES = [['shape_under', 17.5], ['shape_normal', 22], ['shape_over', 27.5], ['shape_obese', 33], ['shape_morbid', 45]];
@@ -223,6 +228,7 @@ export class UI {
       this.dom.opts = this.buildOpts());
     this.dom.noGl = el('div', { class: 'nogl', hidden: true, text: t('no_webgl') });
     this.dom.pins = el('div', { class: 'pins' });
+    this.dom.fx = el('div', { class: 'fx-layer', 'aria-live': 'polite' });
     this.dom.alarm = el('div', { class: 'alarm', hidden: true, role: 'alert' }, this.dom.alarmText = el('span'));
     this.dom.left = el('aside', { class: 'hud-left' });
     this.dom.right = el('aside', { class: 'hud-right' });
@@ -230,7 +236,7 @@ export class UI {
     this.dom.toast = el('div', { class: 'toast', hidden: true, role: 'status' });
     this._alarmMode = null;
     this.buildLeft(); this.buildRight();
-    r.append(el('div', { class: 'stage' }, this.glCanvas, this.dom.pins, this.dom.alarm), top, this.dom.left, this.dom.right, this.buildDock(),
+    r.append(el('div', { class: 'stage' }, this.glCanvas, this.dom.pins, this.dom.fx, this.dom.alarm), top, this.dom.left, this.dom.right, this.buildDock(),
       this.dom.hint = el('div', { class: 'hint', text: t('shortcuts') }), this.dom.logBox, el('footer', { class: 'foot', text: t('disclaimer') }), this.buildMenu(), this.dom.noGl, this.dom.tip, this.dom.toast);
     if (this.sim.patient) { this.refreshCard(); this.buildTabs(); this.syncSetupFromSession(); }
     this.syncPins(); this.syncChrome();
@@ -558,6 +564,7 @@ export class UI {
     }
   }
   updatePins() {
+    this.updateFx();
     if (!this.dom.pins) return;
     const show = this.hints && !this.menuOpen && this.sim.patient && !this.sim.finished;
     this.dom.pins.hidden = !show; if (!show || !this.pinEls) return;
@@ -605,6 +612,7 @@ export class UI {
   openTab(k) { this.tab = k; this.panelOpen = true; { const f = { tab_airway: 'head', tab_circ: 'chest', tab_drugs: 'arm', tab_fluids: 'arm', tab_proc: 'chest' }[k]; if (f && this.sim.patient && !this.menuOpen) this.scene.setCamera(f); } this.dom.card.hidden = true; if (this.sim.patient) this.buildTabs(); }   // the briefing makes room for the action panel
   closePanel() { this.panelOpen = false; this.buildTabs(); if (this.sim.patient && !this.menuOpen) this.scene.setCamera('default'); }   // back to the overview of the patient
   buildTabs() {
+    this.bronch?.syncGuide();                                     // the scope window repeats the current guided step
     const wardCase = !!this.sim.patient?.ward;                    // infectiology: only the ward workspace is relevant
     this.dom.dockBtns.forEach(b => { b.hidden = wardCase !== (b.dataset.tab === 'tab_ward'); });
     this.dom.left?.classList.toggle('ward-mode', wardCase && this.panelOpen && this.tab === 'tab_ward');
@@ -964,21 +972,54 @@ export class UI {
     if (rem > 0) lines.push(`${L(s.wait)} (${t('gd_wait', { s: Math.ceil(rem) })})`);
     if (nr) lines.push(L(nr));
     if (warn) lines.push(L(warn));
-    for (const ev of (s.run ? s.run(ctx) : [])) {
+    const evs = s.run ? s.run(ctx) : [];
+    for (const ev of evs) {
       const r = this.sim.act(ev);
       if (GESTURE_TYPES.has(ev.type)) engineGesture = true;
       if (r && r.ok === false) { status = 'warn'; lines.push(r.error || t('err_generic')); } else { lines.push(...this.resultLines(ev, r)); if (r && (r.wrongSide || r.reached === false) && status === 'done') status = 'warn'; }   // a needle on the wrong side or too short is a problem, not a success
     }
     if (s.msg) lines.push(L(s.msg(ctx)));
+    if (s.scope === 'open') this.bronch?.start(); else if (s.scope === 'close') this.bronch?.stop();   // the scope window follows the guided steps
     const tries = g.tries?.[g.i] || 0; g.miss = null;
     if (hand && tries) lines.push(t('gd_after_tries', { n: tries }));
     this.sim.act({ type: 'note', text: `guide ${g.proc.id}: ${s.id}${status !== 'done' ? ` (${status})` : ''}${hand ? ` [hands-on: ${hand.note}${tries ? `, ${tries} failed attempt(s)` : ''}]` : ''}`.slice(0, 300) });
     if (hand) this.scene.focus(s.cam || 'default', 1.6);                         // the learner's own instrument already showed the gesture
     else if (s.g) this.scene.stepGesture(s.g, s.cam, this.scene.siteOf(s.at, g.prm)); else if (!engineGesture) this.scene.focus(s.cam || 'default', 2.2);
     g.status[g.i] = status; g.done[s.id] = p.t; g.notes[g.i] = lines.filter(Boolean).join(' · ') || null;
-    if (lines.length) this.toast(lines[0], status !== 'done');
+    this._stepFx(s, evs, lines.filter(Boolean), status);                         // something to see for every step, on the patient
+    if (lines.length && status !== 'done') this.toast(lines[0], true);
     if (status !== 'done') { g.hold = { status, lines: lines.filter(Boolean) }; this.buildTabs(); this.prefocusStep(2400); return; }   // stay on the step: read what went wrong, then continue
     this._guideNext();
+  }
+  /** Step callout: a pulsing ring on the step's site and a card (icon, step, what it did) that follows it while the camera moves. */
+  _stepFx(s, evs, lines, status) {
+    const W = this.scene.world; if (!W || !this.dom.fx) return;
+    const pos = (s.at && this.scene.siteOf(s.at, this.guide?.prm)) || { head: W.face, neck: W.neck, chest: W.sternum, arm: W.rightArmIV, groin: W.femoral }[s.cam] || W.sternum;
+    const ic = s.ic || FX_ICON[evs[0]?.type] || { swab: 'forcepsGauze', scalpel: 'scalpel', mask: 'oxygen', pads: 'defibPadRight', probe: 'probe', steth: 'steth', needle: 'syringe', syringe: 'syringe', tourniquet: 'tourniquet', scope: 'airway', touch: 'hand' }[s.g] || (s.wait || s.ready ? 'clock' : 'check');
+    const detail = (lines.length ? lines : evs.map(e => this.describe(e))).filter(Boolean).slice(0, 2);
+    const ring = el('i', { class: 'fx-ring' }), icn = el('span', { class: 'fx-ic' }); icn.innerHTML = icon(ic, 20);
+    const card = el('div', { class: 'fx-card' }, icn, el('div', { class: 'fx-t' }, el('b', { text: L(s) }), ...detail.map(d => el('span', { text: d }))));
+    const box = el('div', { class: `fx ${status}` }, ring, card);
+    this.dom.fx.replaceChildren(box);
+    this._fx = { pos, box, ring, card, until: performance.now() + 4800 };
+    this.updateFx();
+  }
+  updateFx() {
+    const f = this._fx; if (!f) return;
+    if (performance.now() > f.until || this.menuOpen || !this.sim.patient) { f.box.remove(); this._fx = null; return; }
+    const s = this.scene.project(f.pos); if (!s) { f.box.hidden = true; return; }
+    f.box.hidden = false;
+    const R = this.dom.fx.getBoundingClientRect(), ins = this.scene.inset || {};
+    const L0 = (ins.l || 0) + 8, R0 = R.width - (ins.r || 0) - 8, T0 = (ins.t || 0) + 8, B0 = R.height - (ins.b || 0) - 8;   // the part of the view no panel covers
+    const mw = `${Math.round(Math.max(170, Math.min(300, R0 - L0)))}px`; if (f.card.style.maxWidth !== mw) f.card.style.maxWidth = mw;   // narrow gap between panels: a narrower card
+    const cw = f.card.offsetWidth || 240, ch = f.card.offsetHeight || 60;
+    const x = Math.min(Math.max(8, s.x), R.width - 8), y = Math.min(Math.max(8, s.y), R.height - 8);
+    let left, top = y - ch / 2;
+    if (x + 26 + cw <= R0) left = x + 26; else if (x - 26 - cw >= L0) left = x - 26 - cw;   // beside the site when there is room
+    else { left = Math.max(L0, Math.min(x - cw / 2, R0 - cw)); top = y - ch - 30 >= T0 ? y - ch - 30 : y + 30; }   // otherwise above it (or below)
+    top = Math.min(Math.max(T0, top), B0 - ch);
+    f.ring.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+    f.card.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
   }
   /** A hands-on attempt that failed (wrong instrument, wrong spot, wrong depth, too short): nothing is done to the patient,
    *  the guide stays on the same step with the camera on its site and says what to correct. Logged as an attempt, which

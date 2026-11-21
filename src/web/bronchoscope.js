@@ -114,7 +114,7 @@ export class Bronchoscope {
   /** Insert the scope (engine event) and open the window. */
   start() {
     const p = this.sim.patient; if (!p || this.open) return;
-    const r = this.ui.act({ type: 'bronch.insert' }, t('br_title'));
+    const r = p.tube?.scopeIn ? { ok: true } : this.ui.act({ type: 'bronch.insert' }, t('br_title'));   // a guided step may already have inserted it
     if (!r || r.ok === false) return;
     this.open = true; this._build(); this.scene.setCamera('head');
     this.dom.msg.textContent = t('br_loading'); this.dom.msg.hidden = false;
@@ -169,8 +169,9 @@ export class Bronchoscope {
           B('br-suction', t('br_suction'), () => this._suction()),
           el('div', { class: 'br-tube' }, el('span', { class: 'small muted', text: t('br_tube_depth') }), el('div', { class: 'row3' }, B('', '−1', () => this._adjust(-1), t('br_pull')), d.depth, B('', '+1', () => this._adjust(1), t('br_push')))),
           d.find, B('br-remove danger', t('br_remove'), () => this.stop()))),
+      d.guide = el('div', { class: 'br-guide', hidden: true }),
       el('footer', { class: 'br-foot small muted', text: t('br_hint') }));
-    document.body.append(d.root);
+    document.body.append(d.root); this.syncGuide();
     // drag on the image: sideways rotates the scope, up/down bends the tip
     let drag = null;
     d.canvas.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY }; d.canvas.setPointerCapture(e.pointerId); });
@@ -183,6 +184,18 @@ export class Bronchoscope {
       if (map[k]) { map[k](); e.preventDefault(); e.stopImmediatePropagation(); }
     };
     window.addEventListener('keydown', this._key, true);
+  }
+
+  /** The window covers the guided panel: repeat the current guided step (and its button) at the bottom of the window. */
+  syncGuide() {
+    const box = this.dom?.guide; if (!box) return;
+    const ui = this.ui, g = ui.guide, s = g?.step;
+    if (!s || g.finished) { box.hidden = true; return; }
+    box.hidden = false;
+    const go = g.hold ? el('button', { class: 'act primary', text: t('gd_continue'), onclick: () => { g.hold = null; ui._guideNext(); } })
+      : el('button', { class: 'act primary', text: t('pw_perform'), onclick: () => ui.guideDo() });
+    box.replaceChildren(el('div', { class: 'br-guide-t' }, el('span', { class: 'small muted', text: `${g.i + 1} / ${g.proc.steps.length}` }), el('b', { text: s[this.lang] || s.en }),
+      g.hold ? el('span', { class: 'small br-guide-hold', text: g.hold.lines.join(' · ') }) : null), go);
   }
 
   _suction() {

@@ -50,10 +50,12 @@ HS = importlib.import_module(MPFB + '.services.humanservice').HumanService
 MACRO = dict(gender=0.5, age=0.5, muscle=0.5, weight=0.5, proportions=0.5, height=0.5, cupsize=0.5, firmness=0.5,
              race=dict(asian=1 / 3, caucasian=1 / 3, african=1 / 3))
 CUT = 0.068           # m: the glove ends this far up the forearm from the wrist joint
-SLEEVE = (0.064, 0.260)   # m: gown sleeve from / to (up the forearm), starts under the glove cuff; long enough that its end is out of frame
+SLEEVE = (0.064, 0.400)   # m: gown sleeve from / to (up the forearm), starts under the glove cuff; reaches the elbow so its end never shows in a close-up
 GLOVE_RGB = (0.072, 0.180, 0.640)      # #4c75d1 in linear RGB: medical nitrile blue, a little less saturated
 SLEEVE_RGB = (0.36, 0.55, 0.68)        # pale blue gown cuff
-TRI_BUDGET = 8000                      # triangles per hand (glove + cuff + sleeve): enough for knuckles and finger pads
+TRI_BUDGET = 12000                     # triangles per hand (glove + cuff + sleeve): enough for knuckles, glove creases and finger pads
+CREASE = 0.0007                        # m: depth of the nitrile fold on the inside of a bent finger joint
+WRIST_RUCK = 0.00045                   # m: glove rucked up between the wrist and the rolled cuff
 
 FINGERS = {'thumb': 'finger1', 'index': 'finger2', 'middle': 'finger3', 'ring': 'finger4', 'pinky': 'finger5'}
 
@@ -90,7 +92,8 @@ GRIPS = {
                             label='palmar grip around the tube 15 cm from the tip'),
     'hand_bougie': dict(instrument='bougie', wrist=(14, -6), mode='pencil', p=(0.0143, 0, 0.12), axis_r=0.0025, pre=PENCIL_PRE,
                         label='pencil grip 12 cm from the tip'),
-    'hand_needle14G': dict(instrument='needle14G', wrist=(14, -6), mode='pencil', p=(0, 0, 0.112), axis_r=0.0038, pre=PENCIL_PRE,
+    # wrist a little flexed: the needle goes in square to the chest with the forearm ~33 deg above the skin, not raised high
+    'hand_needle14G': dict(instrument='needle14G', wrist=(-10, -6), mode='pencil', p=(0, 0, 0.112), axis_r=0.0038, pre=PENCIL_PRE,
                            label='pencil grip on the hub and flash chamber'),
     'hand_ivCannula': dict(instrument='ivCannula', wrist=(14, -6), mode='pencil', p=(0, 0, 0.07), axis_r=0.003, pre=PENCIL_PRE,
                            label='pencil grip (thumb and index) on the hub'),
@@ -115,6 +118,11 @@ GRIPS = {
                          pre={'ring': CURLED, 'pinky': CURLED, 'index': ('curl', [30, 60, 40], 6), 'middle': ('curl', [30, 60, 40], -6)},
                          post={'index': (0.0125, 0.0, 0.0790), 'middle': (-0.0125, 0.0, 0.0790), 'thumb': (0.0, 0.0, 0.1445)},
                          label='thumb on the plunger, index and middle fingers hooked over the flange'),
+    # the other hand: stretches the skin below a puncture or an incision (built as a right hand, then mirrored to a left hand)
+    'hand_pressL': dict(instrument=None, wrist=(22, 0), mode='frame', flat=True, mirror=True, p=(0, 0, 0), q=(0, 0, 0), z=(0, 0, -1), x=(1, 0, 0),
+                        pre={'index': ('curl', [4, 6, 4], 16), 'middle': ('curl', [8, 12, 8], 2),
+                             'ring': ('curl', [11, 15, 10], -7), 'pinky': ('curl', [14, 18, 12], -16)}, post={'thumb': (0.02, 0.085, 0.001)},
+                        label='left hand tensing the skin: thumb and index spread on the skin, other fingers resting'),
 }
 
 
@@ -384,17 +392,18 @@ def sleeve_mesh(bm, c0, axis, radii0, flare, length):
     """Gown sleeve up the forearm: a cloth tube that widens toward the elbow, with soft folds that drift along its length
     (deterministic, no random numbers), ending in a gathered hem closed by a rounded end (it is usually out of frame)."""
     ax, e1, e2 = basis(axis)
-    NR = 12
+    NR = 26
     rings = []
     for k in range(NR + 1):
-        u = k / NR
+        u = (k / NR) ** 1.5                                                     # rings closer together near the cuff, where the cloth bunches
         s_ = length * u
-        gather = 1.0 - 0.10 * max(0.0, (u - 0.9) / 0.1)                      # elastic hem pulls in at the end
+        gather = 1.0 - 0.10 * max(0.0, (u - 0.94) / 0.06)                     # elastic hem pulls in at the end
         ring = []
         for i in range(SEG):
             th = 2 * math.pi * i / SEG
             fold = 0.0016 * math.sin(5 * th + 7.0 * u) * min(1.0, u * 4) + 0.0010 * math.sin(3 * th - 4.0 * u + 1.3)
-            r_ = (radii0[i] + flare * u + fold) * gather
+            bunch = 0.0024 * max(0.0, 1.0 - s_ / 0.07) * (0.5 + 0.5 * math.sin(2 * math.pi * s_ / 0.017 + 0.6 * math.sin(2 * th)))   # cloth pushed up by the glove cuff
+            r_ = (radii0[i] + flare * min(1.0, u * 1.15) + fold + bunch) * gather
             ring.append(bm.verts.new(Vector(c0) + ax * s_ + (e1 * math.cos(th) + e2 * math.sin(th)) * r_))
         rings.append(ring)
     for k in range(NR):
@@ -414,9 +423,51 @@ def sleeve_mesh(bm, c0, axis, radii0, flare, length):
         bm.faces.new((prev[i], prev[(i + 1) % SEG], cap)).smooth = True
 
 
+def glove_folds(P, T, rig, wr, f):
+    """Nitrile does not stretch evenly: it folds into a crease on the inside of each bent finger joint and rucks up in
+    soft ridges between the wrist and the rolled cuff. Deterministic (no random numbers)."""
+    N = vnormals(P, T)
+    n_palm = np.array(hand_frame(rig, 0.0)[3])
+    D = np.zeros(len(P))
+    for fg in FINGERS:
+        bones = chain(fg)
+        for a, b in zip(bones, bones[1:] + [None]):
+            J = np.array(Hd(rig, a if b is None else b))           # the joint between bone a and the next one (the DIP for the last)
+            if b is None:
+                continue
+            da = np.array(Tl(rig, a) - Hd(rig, a)); da /= np.linalg.norm(da)
+            db = np.array(Tl(rig, b) - Hd(rig, b)); db /= np.linalg.norm(db)
+            bend = db - da
+            k = np.linalg.norm(bend)
+            concave = bend / k if k > 0.12 else n_palm          # inside of the bend; a straight finger creases on its palmar side
+            axial = (P - J) @ ((da + db) / np.linalg.norm(da + db))
+            near = np.linalg.norm(P - J, axis=1) < 0.014
+            inside = np.clip((N @ concave - 0.05) / 0.5, 0, 1)
+            amp = CREASE * (0.45 + 0.55 * min(1.0, k / 0.9))       # deeper the more the joint is bent
+            D -= near * inside * amp * np.exp(-(axial / 0.0026) ** 2)
+    t = (P - wr) @ f                                              # wrist ruck: ridges round the forearm under the cuff
+    band = np.clip((t + CUT - 0.004) / 0.008, 0, 1) * np.clip((-0.012 - t) / 0.008, 0, 1)
+    D += band * WRIST_RUCK * np.sin(2 * math.pi * t / 0.0085)
+    return P + N * D[:, None]
+
+
+def mirror_left(ob):
+    """Right hand -> left hand in the same frame: mirror Blender Y (glTF -Z, across the fingers), keep the palm normal
+    (Blender +Z = glTF +Y) and the finger direction; faces flipped so the normals still point out."""
+    bm = bmesh.new()
+    bm.from_mesh(ob.data)
+    bmesh.ops.transform(bm, matrix=Matrix.Diagonal((1, -1, 1, 1)), verts=bm.verts)
+    bmesh.ops.reverse_faces(bm, faces=bm.faces)
+    bm.to_mesh(ob.data)
+    bm.free()
+    ob.data.update()
+
+
 def build_hand_object(name, human, rig, tmpl, orig, M, T, edges, mats):
     Pw = evaluated_world(human)[orig]
     Pg = glove(Pw, T, edges)
+    wr0, el0 = np.array(Hd(rig, 'wrist.R')), np.array(Hd(rig, 'lowerarm01.R'))
+    Pg = glove_folds(Pg, T, rig, wr0, (wr0 - el0) / np.linalg.norm(wr0 - el0))
     Minv = np.array(M.inverted())
     wr, el = np.array(Hd(rig, 'wrist.R')), np.array(Hd(rig, 'lowerarm01.R'))
     f = (wr - el) / np.linalg.norm(wr - el)
@@ -452,7 +503,7 @@ def build_hand_object(name, human, rig, tmpl, orig, M, T, edges, mats):
     nglove = len(bm.faces)
     # rolled glove cuff (outermost), then the gown sleeve under it running up the forearm
     ring_mesh(bm, Vector(wr - f * CUT), Vector(-f), radii_at(-CUT + 0.003, 0.0012), 0.0022)
-    sleeve_mesh(bm, Vector(wr - f * SLEEVE[0]), Vector(-f), radii_at(-SLEEVE[0] + 0.002, 0.0015), 0.016, SLEEVE[1] - SLEEVE[0])   # forearm widens ~1.6 cm toward the elbow
+    sleeve_mesh(bm, Vector(wr - f * SLEEVE[0]), Vector(-f), radii_at(-SLEEVE[0] + 0.002, 0.0015), 0.024, SLEEVE[1] - SLEEVE[0])   # forearm widens ~2.4 cm toward the elbow
     bm.faces.ensure_lookup_table()
     cuff_faces = SEG * 8
     for i, fc in enumerate(bm.faces):
@@ -497,6 +548,8 @@ def main():
     for name, g in GRIPS.items():
         M, errs = pose_grip(rig, g, d_palm)
         ob = build_hand_object(name, human, rig, tmpl, orig, M, T, edges, mats)
+        if g.get('mirror'):
+            mirror_left(ob)
         ob['instrument'] = g['instrument'] or ''
         ob['grip'] = g['label']
         ob['frame'] = 'instrument' if g['instrument'] else 'skin contact: origin = palm centre, +Y = back of the hand'

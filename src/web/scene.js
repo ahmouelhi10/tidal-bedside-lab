@@ -120,6 +120,14 @@ export class Scene {
     for (let v = 0, n = m.pos.length / 3; v < n; v++) { const dx = m.pos[v * 3] - q[0], dy = m.pos[v * 3 + 1] - q[1], dz = m.pos[v * 3 + 2] - q[2], d = dx * dx + dy * dy + dz * dz; if (d < bd) { bd = d; best = v; } }
     return [m.nrm[best * 3], m.nrm[best * 3 + 1], m.nrm[best * 3 + 2]];
   }
+  /** Nearest point of the skin to a world point, with its outward normal (realistic body; the point itself otherwise). */
+  surfaceAt(p) {
+    const B = this.body; if (!B?.b?.glb) return { p, n: [0, 1, 0] };
+    const m = B.b.meshes.body, s = B.b.scale, q = [(p[0] - CROWN_X) / s, (p[1] - BED_TOP) / s, p[2] / s];
+    let best = 0, bd = Infinity;
+    for (let v = 0, n = m.pos.length / 3; v < n; v++) { const dx = m.pos[v * 3] - q[0], dy = m.pos[v * 3 + 1] - q[1], dz = m.pos[v * 3 + 2] - q[2], d = dx * dx + dy * dy + dz * dz; if (d < bd) { bd = d; best = v; } }
+    return { p: [CROWN_X + m.pos[best * 3] * s, BED_TOP + m.pos[best * 3 + 1] * s, m.pos[best * 3 + 2] * s], n: [m.nrm[best * 3], m.nrm[best * 3 + 1], m.nrm[best * 3 + 2]] };
+  }
   /** Direction of the right forearm on its board, from the antecubital fossa toward the hand. */
   armAxis() { const a = this.world.rightArmIV, b = this.world.padRight, d = [a[0] - b[0], 0, a[2] - b[2]], l = Math.hypot(d[0], d[2]) || 1; return [d[0] / l, 0, d[2] / l]; }
   /** The operator's eye for a site: at the head of the bed for the face, neck and airway, otherwise standing at the patient's
@@ -170,7 +178,7 @@ export class Scene {
   siteOf(at, prm = {}) {
     const W = this.world; if (!W) return null;
     if (at === 'chestSite') { const s = this.chestSites?.[prm.side || 'R']; return s ? (s[prm.site] || s.mal5) : W.sternum; }
-    return { face: W.face, chest: W.sternum, neck: W.neck, arm: W.rightArmIV }[at] || null;
+    return { face: W.face, chest: W.sternum, neck: W.neck, arm: W.rightArmIV, groin: W.femoral, abdomen: W.abdomen }[at] || null;
   }
 
   /** (Re)build the patient mesh for a body spec. */
@@ -200,7 +208,12 @@ export class Scene {
       this.instruments = out;
       // gloved hands posed in each instrument's frame (assets/hands.glb, optional)
       const hb = await fetch(base + 'hands.glb').then(r => (r.ok ? r.arrayBuffer() : null)).catch(() => null);
-      if (hb) { const hg = parseGlb(hb), hands = {}; for (const [name, m] of Object.entries(hg.meshes)) hands[name] = m.prims.map(pr => { const f = pr.material?.pbrMetallicRoughness?.baseColorFactor || [0.23, 0.44, 0.85, 1], sleeve = /sleeve/i.test(pr.material?.name || ''); return { g: this.r.upload({ pos: pr.pos, nrm: pr.nrm, w: new Float32Array(pr.pos.length / 3 * 2), idx: pr.idx }), color: f.slice(0, 3), sleeve }; }); this.hands = hands; }
+      if (hb) { const hg = parseGlb(hb), hands = {}; for (const [name, m] of Object.entries(hg.meshes)) hands[name] = m.prims.map(pr => { const f = pr.material?.pbrMetallicRoughness?.baseColorFactor || [0.23, 0.44, 0.85, 1], sleeve = /sleeve/i.test(pr.material?.name || ''); return { g: this.r.upload({ pos: pr.pos, nrm: pr.nrm, w: new Float32Array(pr.pos.length / 3 * 2), idx: pr.idx }), color: f.slice(0, 3), sleeve, pos: sleeve ? pr.pos : null }; });
+        for (const h of Object.values(hands)) {                                   // which way the forearm leaves the hand, across the instrument axis (+Y): lets a gesture bring the arm from the operator
+          let x = 0, z = 0; for (const pt of h) if (pt.pos) for (let i = 0; i < pt.pos.length; i += 3) { x += pt.pos[i]; z += pt.pos[i + 2]; }
+          const l = Math.hypot(x, z); h.fa = l > 1e-6 ? Math.atan2(z / l, x / l) : null; for (const pt of h) delete pt.pos;
+        }
+        this.hands = hands; }
     } catch (e) { console.warn('instruments unavailable:', e && e.message); }
   }
   /** Ray-pick the realistic body's skin: { p, n, region } in world space, or null (also null with the procedural body). */
@@ -217,9 +230,14 @@ export class Scene {
     const parts = this.instruments?.[name] || []; if (!parts.length && !this.hands?.['hand_' + name]) return;   // a hand alone ('press') is fine
     const ey = vec3.norm(n), ref = Math.abs(ey[0]) > 0.9 ? [0, 0, 1] : [1, 0, 0];
     let ex = vec3.norm(vec3.cross(ref, ey)); const ez0 = vec3.cross(ex, ey);
+    const hand = opts.noHand ? null : this.hands?.['hand_' + name];             // the gloved hand holding it, same frame
+    const hf = this.hands?.['hand_' + name]?.fa;
+    if (opts.toward && hf != null) {                                             // turn about the axis so the forearm points toward the operator (angle adds the wrist roll)
+      const t = opts.toward, k = vec3.dot(t, ey), tp = [t[0] - ey[0] * k, t[1] - ey[1] * k, t[2] - ey[2] * k];
+      if (Math.hypot(...tp) > 0.2) angle += Math.atan2(vec3.dot(tp, ez0), vec3.dot(tp, ex)) - hf;
+    }
     ex = vec3.norm(vec3.add(vec3.scale(ex, Math.cos(angle)), vec3.scale(ez0, Math.sin(angle)))); const ez = vec3.cross(ex, ey);
     const M = mat4.fromBasis(ex, ey, ez, p);
-    const hand = opts.noHand ? null : this.hands?.['hand_' + name];             // the gloved hand holding it, same frame
     // nitrile glove (satin rubber, textured fingertips, a little translucent) and the cotton gown sleeve
     if (hand) for (const pt of hand) this.r.draw(pt.g, M, pt.sleeve ? { color: pt.color, spec: 0.05, pattern: 5 } : { color: pt.color, spec: 0.32, pattern: 8 });
     for (const pt of parts) { if (opts.only && !opts.only.includes(pt.mat)) continue; if (opts.skip && opts.skip.includes(pt.mat)) continue; this.r.draw(pt.g, M, { color: pt.color, alpha: pt.alpha, spec: pt.metal > 0.5 ? 0.95 : 0.4, noShadow: pt.alpha < 0.9 }); }
