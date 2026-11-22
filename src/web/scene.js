@@ -6,6 +6,7 @@ import { FaceAnim } from './face.js';
 import { CprAnim } from './cpr-anim.js';
 import { BodyAnim } from './body-anim.js';
 import { SkinAnim } from './skin.js';
+import { CamMove, moveDuration, handheld, handheldAmp } from './camera-rig.js';
 import { Renderer, mat4, vec3 } from './gl/renderer.js';
 import { box, sphere, cylinder } from './gl/geometry.js';
 import { morphology, buildBody, supineMatrix, SKIN_TONES, skinColor, localToWorld } from './gl/body.js';
@@ -78,6 +79,8 @@ export class Scene {
     this.auto = false;            // slow cinematic orbit (case menu)
     this.inset = { l: 0, r: 0, t: 0, b: 0 }; this.shift = 0; this.shiftY = 0;   // screen px covered by panels on each side (ui.updateInsets)
     this.faceAnim = new FaceAnim(); this.cprAnim = new CprAnim(); this.bodyAnim = new BodyAnim(); this.skinAnim = new SkinAnim();
+    this.camVel = { yaw: 0, pitch: 0, dist: 0, target: [0, 0, 0] }; this.hh = 0;   // camera velocity (per s) and hand-held strength (camera-rig.js)
+    this.reduceMotion = typeof matchMedia === 'function' && !!matchMedia('(prefers-reduced-motion: reduce)')?.matches;
     this.gest = new Gestures(); this.rescuerHands = true; this.pins = []; this._bindInput(canvas);
   }
 
@@ -94,11 +97,10 @@ export class Scene {
     }
     this.auto = false; this.returnAt = null; this.view = name;
     const to = { yaw: c.yaw, pitch: c.pitch, dist: c.dist, target: c.target };
-    // smooth camera move: eased tween on the orbit (shortest way round), swinging slightly out mid-way so it travels around the bed, not through it
+    // smooth camera move on the orbit (shortest way round), carrying on from the current motion, swinging slightly out mid-way so it travels around the bed, not through it
     const from = { yaw: this.yaw, pitch: this.pitch, dist: this.dist, target: [...this.target] };
-    const dYaw = Math.atan2(Math.sin(to.yaw - from.yaw), Math.cos(to.yaw - from.yaw));
-    const span = Math.abs(dYaw) + Math.abs(to.pitch - from.pitch) + Math.abs(to.dist - from.dist) * 0.6 + Math.hypot(...to.target.map((v, i) => v - from.target[i]));
-    this.tw = { t0: this.t, dur: clamp(0.9 + span * 0.55, 0.9, 2.2), from, to: { ...to, yaw: from.yaw + dYaw }, lift: clamp(span * 0.18, 0, 0.45) };
+    const dYaw = Math.atan2(Math.sin(to.yaw - from.yaw), Math.cos(to.yaw - from.yaw)), { span, dur } = moveDuration(from, to);
+    this.tw = new CamMove(from, this.camVel, { ...to, yaw: from.yaw + dYaw }, dur, clamp(span * 0.18, 0, 0.45)); this.tw.t0 = this.t;
     this.goal = to;
   }
   /** Frame a world point seen from direction `dir` (unit vector from the point toward the eye) at distance `dist`, and stay there. */
@@ -106,7 +108,8 @@ export class Scene {
     const d = vec3.norm(dir), pitch = clamp(Math.asin(d[1]), 0.35, 1.45), yaw = Math.atan2(d[0], d[2]);
     const from = { yaw: this.yaw, pitch: this.pitch, dist: this.dist, target: [...this.target] }, dYaw = Math.atan2(Math.sin(yaw - from.yaw), Math.cos(yaw - from.yaw));
     this.auto = false; this.returnAt = null; this.view = 'site';
-    this.tw = { t0: this.t, dur: 1.4, from, to: { yaw: from.yaw + dYaw, pitch, dist, target: [...p] }, lift: 0.15 };
+    const to = { yaw: from.yaw + dYaw, pitch, dist, target: [...p] };
+    this.tw = new CamMove(from, this.camVel, to, Math.max(1.2, moveDuration(from, to).dur), 0.15); this.tw.t0 = this.t;
     this.goal = { yaw, pitch, dist, target: [...p] };
   }
   /** World position and outward skin normal of a named site (landmark or chest site 'R_mal5'), realistic body only. */
@@ -409,7 +412,7 @@ export class Scene {
   /** Draw one frame. p: Patient (or the preview patient behind the menu). */
   draw(realDt, p) {
     const r = this.r, B = this.body; if (!B) return; this.t += realDt;
-    // camera rig: presets are reached by an eased tween (setCamera), an action frames its site and then glides back to the overview (focus),
+    // camera rig (camera-rig.js): presets are reached by a velocity-matched minimum-jerk move (setCamera), an action frames its site and then glides back to the overview (focus),
     // a drag orbits the view and it drifts back to the framing a few seconds after release
     if (this.returnAt != null && this.t >= this.returnAt && !this.dragging) this.setCamera('default');
     let lift = 0;
@@ -418,17 +421,22 @@ export class Scene {
       this.yaw += (G.yaw - this.yaw) * k; this.pitch += (G.pitch - this.pitch) * k; this.dist += (G.dist - this.dist) * k; this.target = this.target.map((v, i) => v + (G.target[i] - v) * k);
       this.off.yaw = 0; this.off.pitch = 0;
     } else if (this.tw) {
-      const w = this.tw, u = clamp((this.t - w.t0) / w.dur, 0, 1), e = u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2, L = (a, b) => a + (b - a) * e;
-      this.yaw = L(w.from.yaw, w.to.yaw); this.pitch = L(w.from.pitch, w.to.pitch); this.dist = L(w.from.dist, w.to.dist); this.target = w.from.target.map((v, i) => L(v, w.to.target[i]));
-      lift = w.lift * Math.sin(Math.PI * u);
-      if (u >= 1) this.tw = null;
+      const o = this.tw.at(this.t - this.tw.t0);
+      this.yaw = o.yaw; this.pitch = o.pitch; this.dist = o.dist; this.target = o.target; lift = o.lift;
+      if (o.done) this.tw = null;
     }
+    { const pc = this._camPrev, h = Math.max(realDt, 1e-3);                     // camera velocity, so the next move starts from it
+      if (pc && realDt > 0) this.camVel = { yaw: (this.yaw - pc.yaw) / h, pitch: (this.pitch - pc.pitch) / h, dist: (this.dist - pc.dist) / h, target: this.target.map((v, i) => (v - pc.target[i]) / h) };
+      this._camPrev = { yaw: this.yaw, pitch: this.pitch, dist: this.dist, target: [...this.target] }; }
+    // hand-held: the operator's posture and breathing, strongest in close-ups and settled framings, never while travelling far
+    this.hh += ((this.reduceMotion ? 0 : (this.tw ? 0.25 : 1) * handheldAmp(this.dist)) - this.hh) * (1 - Math.exp(-realDt / 0.8));
+    const hh = handheld(this.t, this.hh), tgt = this.target.map((v, i) => v + hh.target[i]);
     if (!this.dragging && this.releasedAt != null && this.t - this.releasedAt > 3) { const k = 1 - Math.exp(-realDt * 1.6); this.off.yaw *= 1 - k; this.off.pitch *= 1 - k; }
-    const yawV = this.yaw + this.off.yaw + 0.004 * Math.sin(this.t * 0.31), pitchV = clamp(this.pitch + this.off.pitch + 0.003 * Math.sin(this.t * 0.23 + 1), 0.08, 1.52);
-    const asp = this.canvas.clientWidth / Math.max(1, this.canvas.clientHeight), D = (this.dist + lift) * (asp < 1.25 ? Math.min(2.1, 1.25 / asp) : 1);   // portrait screens: pull back so the whole bay still fits
-    const eye = [this.target[0] + D * Math.cos(pitchV) * Math.sin(yawV), this.target[1] + D * Math.sin(pitchV), this.target[2] + D * Math.cos(pitchV) * Math.cos(yawV)];
+    const yawV = this.yaw + this.off.yaw + hh.yaw, pitchV = clamp(this.pitch + this.off.pitch + hh.pitch, 0.08, 1.52);
+    const asp = this.canvas.clientWidth / Math.max(1, this.canvas.clientHeight), D = (this.dist + lift) * (1 + hh.dist) * (asp < 1.25 ? Math.min(2.1, 1.25 / asp) : 1);   // portrait screens: pull back so the whole bay still fits
+    const eye = [tgt[0] + D * Math.cos(pitchV) * Math.sin(yawV), tgt[1] + D * Math.sin(pitchV), tgt[2] + D * Math.cos(pitchV) * Math.cos(yawV)];
     eye[0] = clamp(eye[0], ROOM.x0 + 0.15, ROOM.x1 - 0.15); eye[2] = clamp(eye[2], ROOM.z0 + 0.15, ROOM.z1 - 0.15); eye[1] = clamp(eye[1], 0.4, ROOM.h - 0.12);   // never leave the bay
-    const cam = { eye, target: this.target, fov: 0.85 };
+    const cam = { eye, target: tgt, fov: 0.85 };
     { const W = Math.max(1, this.canvas.clientWidth), goal = clamp((this.inset.l - this.inset.r) / W, -0.5, 0.5); this.shift += (goal - this.shift) * (1 - Math.exp(-realDt * 5)); r.shiftX = this.shift;
       const H = Math.max(1, this.canvas.clientHeight), goalY = clamp(((this.inset.b || 0) - (this.inset.t || 0)) / H, -0.7, 0.7); this.shiftY += (goalY - this.shiftY) * (1 - Math.exp(-realDt * 5)); r.shiftY = this.shiftY; }
 
