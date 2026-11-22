@@ -69,7 +69,7 @@ vec3 breathDisp(vec3 p, vec3 n, float w){
   return w * (tc * mix(uBreath.y, uBreath.x, side) * g * dC + (1.0 - tc) * uBreath.z * dA);
 }`;
 
-const FACE0 = [0, 0, 0, 0], CPR0 = [0, 0, 0, 0], CPRREF0 = [99, 0, 99, 0], COMPPT0 = [0, 0, 99];
+const NOBLOOD = new Float32Array(4), FACE0 = [0, 0, 0, 0], CPR0 = [0, 0, 0, 0], CPRREF0 = [99, 0, 99, 0], COMPPT0 = [0, 0, 99];
 const BFRAME0 = { axes: [0, 1, 0, 0, 0, 1, 1, 0, 0], ref: [-9, 99, 0] };   // default: everything counts as chest
 
 const VS = `#version 300 es
@@ -133,6 +133,15 @@ vec3 perturb(vec3 N, vec3 p, vec2 uv, vec3 m){
 // pupils (patient eyes texture, MakeHuman brown: two eyeballs, each a 4 mm pupil in a ~12 mm iris): the texture coordinates
 // inside the iris are remapped radially so the pupil takes any diameter while the iris pattern keeps its outer edge
 uniform float uPupil;   // pupil diameter, mm
+// blood (blood.js): up to two stains in the mesh's own space (centre xyz, radius w; w = 0: none) on the skin and the sheet;
+// a ragged edge, darker at the centre, spreading further downhill (local -y: toward the bed), wet when fresh, brown and matt dry
+uniform vec4 uBloodA; uniform vec4 uBloodB; uniform float uBloodDry;
+float bloodW(vec3 p, vec4 s) {
+  if (s.w <= 0.0) return 0.0;
+  vec3 d = p - s.xyz; d.y *= d.y > 0.0 ? 1.6 : 0.55;
+  float r = length(d) / s.w, edge = 0.78 + 0.32 * vnoise(p * 38.0) + 0.12 * vnoise(p * 140.0);
+  return clamp((1.0 - smoothstep(edge - 0.1, edge, r)) * (0.82 + 0.18 * smoothstep(0.0, 0.6, edge - r)), 0.0, 1.0);
+}
 const vec2 EYE_A = vec2(0.7043, 0.2949); const vec2 EYE_B = vec2(0.2879, 0.7070); const float PUP0 = 0.0371; const float IRIS = 0.104;
 vec2 pupilUV(vec2 uv, out float irisW) {
   float dA = distance(uv, EYE_A), dB = distance(uv, EYE_B); vec2 c = dA < dB ? EYE_A : EYE_B; float d = min(dA, dB);
@@ -233,6 +242,14 @@ void main(){
     base *= 0.95 + 0.07 * vnoise(vWP * 60.0);
     base = mix(base, vec3(dot(base, vec3(0.2126, 0.7152, 0.0722))), 0.14);   // real nitrile is a slightly muted cobalt, not an electric blue
     rough = 0.46; f0 = 0.035; wrap = 0.22; spMul = 0.8; sss = 0.35; gloss = 1.0;   // satin sheen at grazing angles
+  }
+  if (uBloodA.w > 0.0 || uBloodB.w > 0.0) {
+    float bw = max(bloodW(vMP, uBloodA), bloodW(vMP, uBloodB));
+    if (bw > 0.0) {
+      vec3 bc = mix(vec3(0.17, 0.005, 0.009), vec3(0.07, 0.018, 0.012), uBloodDry) * (0.75 + 0.35 * vnoise(vMP * 90.0));
+      base = mix(base, bc, bw); rough = mix(rough, mix(0.12, 0.6, uBloodDry), bw); f0 = mix(f0, 0.03, bw);
+      spMul = mix(spMul, mix(1.6, 0.6, uBloodDry), bw); wrap = mix(wrap, 0.1, bw); sss *= 1.0 - bw;
+    }
   }
   // key light: ceiling spot with a soft shadow
   vec3 toL = uLightPos - vWP; float ld = length(toL); vec3 L = toL / ld;
@@ -336,7 +353,7 @@ export class Renderer {
     if (!gl) throw new Error('WebGL2 is not available in this browser.');
     this.gl = gl; this.canvas = canvas;
     this.prog = program(gl, VS, FS); this.progShadow = program(gl, VS_SHADOW, FS_SHADOW); this.progTex = program(gl, VS_TEX, FS_TEX);
-    this.u = uniforms(gl, this.prog, ['uModel', 'uVP', 'uBreath', 'uCompress', 'uColor', 'uEmissive', 'uSpec', 'uAlpha', 'uPattern', 'uEye', 'uLightPos', 'uLightDir', 'uLightK', 'uLightVP', 'uShadow', 'uDirect', 'uAlbedo', 'uNormalMap', 'uTexMode', 'uAlphaCut', 'uInflate', 'uCompDir', 'uBAxes', 'uBRef', 'uCloth', 'uFace', 'uCpr', 'uCprRef', 'uCompPt', 'uTremor', 'uTime', 'uSkinA', 'uSkinB', 'uMouth', 'uPupil']);
+    this.u = uniforms(gl, this.prog, ['uModel', 'uVP', 'uBreath', 'uCompress', 'uColor', 'uEmissive', 'uSpec', 'uAlpha', 'uPattern', 'uEye', 'uLightPos', 'uLightDir', 'uLightK', 'uLightVP', 'uShadow', 'uDirect', 'uAlbedo', 'uNormalMap', 'uTexMode', 'uAlphaCut', 'uInflate', 'uCompDir', 'uBAxes', 'uBRef', 'uCloth', 'uFace', 'uCpr', 'uCprRef', 'uCompPt', 'uTremor', 'uTime', 'uSkinA', 'uSkinB', 'uMouth', 'uPupil', 'uBloodA', 'uBloodB', 'uBloodDry']);
     this.us = uniforms(gl, this.progShadow, ['uModel', 'uVP', 'uBreath', 'uBAxes', 'uBRef', 'uCloth', 'uFace', 'uCpr', 'uCprRef', 'uCompPt', 'uTremor', 'uTime', 'uSkinA', 'uSkinB', 'uMouth', 'uCompress', 'uInflate', 'uCompDir']);
     this.ut = uniforms(gl, this.progTex, ['uModel', 'uVP', 'uTex', 'uGlow', 'uDirect']);
     gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
@@ -534,6 +551,7 @@ export class Renderer {
     gl.uniform1f(this.u.uSpec, o.spec ?? 0.15);
     gl.uniform1f(this.u.uAlpha, o.alpha ?? 1);
     gl.uniform1i(this.u.uPattern, o.pattern || 0); gl.uniform1f(this.u.uPupil, o.pupil ?? 4);
+    { const b = o.blood; gl.uniform4fv(this.u.uBloodA, b?.a || NOBLOOD); gl.uniform4fv(this.u.uBloodB, b?.b || NOBLOOD); gl.uniform1f(this.u.uBloodDry, b?.dry || 0); }
     this._breath(this.u, o);
     gl.uniform1f(this.u.uCompress, o.compress || 0);
     gl.uniform1f(this.u.uInflate, o.inflate || 0); gl.uniform3fv(this.u.uCompDir, o.compDir || [0, 0, 1]);

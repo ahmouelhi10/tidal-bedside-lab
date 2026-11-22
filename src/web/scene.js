@@ -7,6 +7,7 @@ import { CprAnim } from './cpr-anim.js';
 import { BodyAnim } from './body-anim.js';
 import { SkinAnim } from './skin.js';
 import { PupilAnim } from './pupils.js';
+import { bloodState } from './blood.js';
 import { CamMove, moveDuration, handheld, handheldAmp } from './camera-rig.js';
 import { Renderer, mat4, vec3 } from './gl/renderer.js';
 import { box, sphere, cylinder } from './gl/geometry.js';
@@ -321,6 +322,9 @@ export class Scene {
     this.equip = EQUIP.map(e => ({ id: e.id, label: e.label, c: e.c, rad: e.rad, equip: true }));
     this.world = Object.fromEntries(['sternum', 'padRight', 'padLeft', 'face', 'airway', 'rightArmIV', 'leftArm', 'neck', 'abdomen', 'femoral'].map(k => [k, localToWorld(this.body.M, ls[k])]));
     this.procSites = this._procSites();
+    { const R = this.sideSign || 1, s = b.scale || 1, toL = (w) => [(w[0] - CROWN_X) / s, (w[1] - BED_TOP) / s, w[2] / s];   // where blood comes from (blood.js)
+      const th = b.glb ? this.surfaceAt([this.world.femoral[0] - 0.14, this.world.femoral[1] + 0.03, this.world.femoral[2] + R * 0.02]) : null;
+      this.bloodSites = th ? { thighW: th.p, thighN: th.n, thighL: toL(th.p), sheetL: toL([th.p[0], th.p[1] + 0.035, th.p[2]]), mouthL: ls.airway, mouthW: this.world.airway, s } : null; }
     { const E = b.meshes?.eyes?.pos; if (E) { let c = [0, 0, 0]; for (let i = 0; i < E.length; i += 3) for (let j = 0; j < 3; j++) c[j] += E[i + j]; this.eyeC = localToWorld(this.body.M, c.map(v => v / (E.length / 3))); } else this.eyeC = this.world.face; }
     // floating markers: the parts of the patient you act on, and the equipment in the bay
     this.pins = [
@@ -526,6 +530,10 @@ export class Scene {
     const lidUp = pc ? clamp(pu / 0.15, 0, 1) * clamp((1 - pu) / 0.12, 0, 1) : 0, lightOn = !!pc && pu > 0.35 && pu < 0.78;
     const pupilMm = this.pupilAnim.update(realDt, p, this._pupT == null ? 0 : p.t - this._pupT, lightOn); this._pupT = p.t;
     const faceAll = [Math.min(1, faceW[0] + ba.face[0]) * (1 - 0.92 * lidUp), Math.min(1, faceW[1] + ba.face[1]), Math.min(1, faceW[2] + ba.face[2]), faceW[3]];
+    if (this._bloodFor !== p) { this._bloodFor = p; this._lost0 = p.vol?.totalLost ?? 0; }   // blood lost before the case was opened is not shown here
+    const bl = bloodState(p, this._lost0), BS = this.bloodSites;
+    const bloodSkin = BS && bl.source ? { a: bl.source === 'mouth' ? [...BS.mouthL, Math.min(0.04, 0.018 + bl.r.stain * 0.2) / BS.s] : [...BS.thighL, bl.r.stain * 0.55 / BS.s], dry: bl.dry } : null;
+    const bloodSheet = BS && bl.source === 'thigh' ? { a: [...BS.sheetL, bl.r.stain / BS.s], dry: bl.dry } : null;
     const o = { breath, bFrame: B.bFrame, compress: this.compAmt, face: faceAll, cpr: [cpr.head + ba.head, cpr.sink - ba.lift, cpr.arms + ba.arms, cpr.belly + ba.belly], tremor: ba.tremor, time: this.t % 600, skinA: [sk.sweat, sk.mottle, sk.cyanC, sk.cyanP], skinB: [sk.hives, sk.jvd, 0, 0] };
     const sheetCol = p.therm.cover < 1 ? [0.74, 0.58, 0.40] : [0.72, 0.79, 0.84];
     if (B.b.glb) {
@@ -534,7 +542,7 @@ export class Scene {
       // the chest is exposed for anything done on it: pads, leads, CPR, chest procedures and examinations in progress
       const exposed = p.flags.padsOn || p.flags.ecgLeads || arrested || !!this.echoProbe || !!(p.chest && (p.chest.needle || p.chest.tube)) || this.gest.list.some(g => ['needle', 'tube', 'steth', 'probe', 'step_pads', 'pericard'].includes(g.k) || (g.k === 'cvc' && g.site === 'scv'));
       const fem = (B.b.weights.female ?? 0) > 0.5, sx = (k) => (fem && B.g[k + '_f'] ? k + '_f' : k), skinT = fem && T.patient_body_female ? T.patient_body_female : A('body');
-      r.draw(B.g.body, M, { color: tint, spec: 0.3, pattern: 7, albedo: skinT.albedo, normalMap: skinT.normal, ...o });
+      r.draw(B.g.body, M, { color: tint, spec: 0.3, pattern: 7, albedo: skinT.albedo, normalMap: skinT.normal, ...o, blood: bloodSkin });
       r.draw(B.g.eyes, M, { color: [1, 1, 1], spec: 0.9, pattern: 6, albedo: A('eyes').albedo, pupil: pupilMm, ...o });
       r.draw(B.g[sx('eyebrows')], M, { color: [1, 1, 1], spec: 0.05, albedo: A(sx('eyebrows')).albedo, alphaCut: -1, cull: false, depthWrite: false, noShadow: true, ...o });
       if (B.g.eyelashes) r.draw(B.g.eyelashes, M, { color: [1, 1, 1], spec: 0.05, albedo: A('eyelashes').albedo, alphaCut: -1, cull: false, depthWrite: false, noShadow: true, ...o });
@@ -542,7 +550,7 @@ export class Scene {
       r.draw(B.g[sx('hair')], M, { color: [1 + grey * 1.6, 1 + grey * 1.55, 1 + grey * 1.5], spec: 0.2, pattern: 4, albedo: A(sx('hair')).albedo, alphaCut: 0.5, cull: false, noShadow: true, ...o });
       const infl = 0.004 + 0.016 * Math.min(1, B.b.weights.heavy + 0.5 * B.b.weights.female_heavy);   // heavier morphs need more clearance
       if (!exposed) r.draw(B.g.gown, M, { color: [0.36, 0.55, 0.66], spec: 0.05, pattern: 5, cull: false, inflate: infl, ...o });
-      r.draw(B.g.sheet, M, { color: sheetCol, spec: 0.05, pattern: 5, cull: false, ...o, breath: sheetBreath, cloth: true });   // the draped sheet's normals are not consistently outward: no inflate
+      r.draw(B.g.sheet, M, { color: sheetCol, spec: 0.05, pattern: 5, cull: false, ...o, breath: sheetBreath, cloth: true, blood: bloodSheet });   // the draped sheet's normals are not consistently outward: no inflate
       // arm board under the abducted right arm
       const ra = this.world.rightArmIV, sh = [this.world.padRight[0] + 0.07, BED_TOP, this.world.padRight[2] - 0.12], d = [ra[0] - sh[0], 0, ra[2] - sh[2]], dl = Math.hypot(d[0], d[2]) || 1, ex = [d[0] / dl, 0, d[2] / dl], ez = [-ex[2], 0, ex[0]];
       const c = [ra[0] + ex[0] * 0.08, BED_TOP - 0.025, ra[2] + ex[2] * 0.08];
@@ -555,12 +563,6 @@ export class Scene {
       r.draw(B.g.pupils, M, { color: arrested ? [0.02, 0.02, 0.02] : [0.05, 0.05, 0.05] });
       r.draw(B.g.lips, M, { color: [0.62 - cyan * 0.25, 0.28, 0.28 + cyan * 0.2] });
       r.draw(B.g.sheet, M, { color: sheetCol, spec: 0.05, pattern: 5, ...{ breath: breath.map(v => v * 0.2), bFrame: B.bFrame } });
-    }
-    // bleeding
-    const bleeding = p.vol.rates.bleed > 0, lost = p.vol.fractionLost;
-    if (bleeding || (lost > 0.03 && (p.bleedControlledAt === null))) {
-      const s = clamp(0.05 + lost * 0.8, 0.05, 0.4), f = this.world.femoral;
-      r.draw(fr.sph, mat4.multiply(mat4.translation(f[0] + 0.03, 0.935 + 0.0, f[2] + 0.02), mat4.scaling(s * 1.0, 0.012, s * 0.8)), { color: [0.55, 0.02, 0.03], spec: 0.5 });
     }
     // devices
     const W = this.world, fl = p.flags;
@@ -579,6 +581,28 @@ export class Scene {
     const SF = (k) => this.siteFrame?.(k);
     const onSkin = (f, h = 0.002) => [f.p[0] + f.n[0] * h, f.p[1] + f.n[1] * h, f.p[2] + f.n[2] * h];
     const ride = (q) => { const left = (q[2] - W.sternum[2]) * (this.sideSign || 1) < 0; return [q[0], q[1] + 0.85 * (left ? breath[0] : breath[1]) - cpr.sink * B.b.scale, q[2]]; };   // things stuck on the chest rise with it
+    // blood: pool on the mattress, over the edge, drops falling, pool on the floor; a pressure dressing once controlled; oozing punctures
+    if (bl.source && BS) {
+      const R = this.sideSign || 1, bc = [0.2 - 0.06 * bl.dry, 0.006 + 0.022 * bl.dry, 0.01 + 0.008 * bl.dry], wet = { spec: 0.6 - 0.4 * bl.dry, noShadow: true };
+      const src = bl.source === 'mouth' ? BS.mouthW : BS.thighW, EDGE = 0.4;
+      const pool = (c, rad, y) => { for (const [dx, dz, k] of [[0, 0, 1], [0.42, 0.22, 0.6], [-0.38, -0.16, 0.52], [0.12, -0.4, 0.42], [-0.18, 0.36, 0.38], [0.62, -0.05, 0.3], [-0.6, 0.12, 0.25]]) disc([c[0] + dx * rad, y, c[2] + dz * rad], [0, 1, 0], [1, 0, 0], rad * k * 1.25, rad * k * 0.8, bc, { alpha: 0.96, ...wet }); };
+      if (bl.r.mat > 0.005) { const rz = bl.r.mat * 0.8, zc = R * clamp(Math.abs(src[2]) + 0.1, 0, EDGE - rz * 0.9); pool([src[0] + (bl.source === 'mouth' ? -0.02 : 0), 0, zc], bl.r.mat, BED_TOP + 0.002); }
+      if (bl.r.floor > 0.005) {
+        pool([src[0], 0, R * (EDGE + 0.05 + bl.r.floor * 0.55)], bl.r.floor, 0.003);
+        seg([src[0], BED_TOP - 0.005, R * (EDGE + 0.006)], [src[0], BED_TOP - 0.12, R * (EDGE + 0.006)], 0.006, bc, { alpha: 0.9, ...wet });   // run down the mattress side
+      }
+      if (bl.drips > 0) for (let j = Math.floor(this.t * bl.drips) - 2; j <= Math.floor(this.t * bl.drips); j++) {   // drops in flight from the frame edge to the floor
+        const age = this.t - (j + 0.4 * (Math.sin(j * 12.9898) * 0.5 + 0.5)) / bl.drips, y = BED_TOP - 0.13 - 4.9 * age * age;
+        if (age > 0 && y > 0.005) blob([src[0] + 0.01 * Math.sin(j * 7.1), y, R * (EDGE + 0.01)], 0.0035, 0.006, 0.0035, bc, wet);
+      }
+      if (bl.source === 'thigh' && p.bleedControlledAt != null && !bl.active) {               // pressure dressing over the wound, soaked through at the centre
+        const c = [BS.thighW[0], BS.thighW[1] + 0.045, BS.thighW[2]];
+        disc(c, [0, 1, 0], [1, 0, 0], 0.06, 0.045, [0.95, 0.95, 0.93], { spec: 0.15 }); disc([c[0], c[1] + 0.002, c[2]], [0, 1, 0], [1, 0, 0], 0.03, 0.022, bc, { alpha: 0.85, ...wet });
+      }
+    }
+    if (bl.ooze > 0) for (const k of [fl.ivAccess && 'rightArmIV', fl.aline && 'wristR', fl.ioAccess && 'ioR'].filter(Boolean)) {   // coagulopathy: the punctures ooze under their dressings
+      const f = SF(k); if (f) disc(onSkin(f, 0.0025), f.n, [1, 0, 0], 0.004 + 0.012 * bl.ooze, 0.003 + 0.009 * bl.ooze, [0.42, 0.012, 0.018], { alpha: 0.9, spec: 0.9, noShadow: true });
+    }
     if (fl.padsOn) {                                            // multifunction pads stuck on the skin, red leads to the defibrillator
       for (const [k, nm] of [['padRight', 'defibPadRight'], ['padLeft', 'defibPadLeft']]) { const f = SF(k) || { p: W[k], n: [0, 1, 0] }; inst(nm, ride(onSkin(f, 0.003)), f.n, 0, { noHand: true }); }
       const pr = W.padRight; hose(up(pr, 0.02), [pr[0] + 0.3, 1.05, pr[2] - 0.35], [CART[0] + 0.19, 1.0, CART[2] + 0.17], 0.004, [0.72, 0.07, 0.06], { spec: 0.5 });
