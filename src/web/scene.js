@@ -4,6 +4,7 @@ import { Gestures } from './gestures.js';
 import { breathPose, breathFrame, drapeWeights } from './breathing.js';
 import { FaceAnim } from './face.js';
 import { CprAnim } from './cpr-anim.js';
+import { BodyAnim } from './body-anim.js';
 import { Renderer, mat4, vec3 } from './gl/renderer.js';
 import { box, sphere, cylinder } from './gl/geometry.js';
 import { morphology, buildBody, supineMatrix, SKIN_TONES, skinColor, localToWorld } from './gl/body.js';
@@ -74,7 +75,7 @@ export class Scene {
     this.goal = null; this.off = { yaw: 0, pitch: 0 }; this.hover = null; this.t = 0; this.breathPh = 0; this.compAmt = 0; this.shockT = 0; this.tone = 2; this.body = null;
     this.auto = false;            // slow cinematic orbit (case menu)
     this.inset = { l: 0, r: 0, t: 0, b: 0 }; this.shift = 0; this.shiftY = 0;   // screen px covered by panels on each side (ui.updateInsets)
-    this.faceAnim = new FaceAnim(); this.cprAnim = new CprAnim();
+    this.faceAnim = new FaceAnim(); this.cprAnim = new CprAnim(); this.bodyAnim = new BodyAnim();
     this.gest = new Gestures(); this.rescuerHands = true; this.pins = []; this._bindInput(canvas);
   }
 
@@ -433,15 +434,16 @@ export class Scene {
     const rrNow = p.resp.rr;
     this.breathPh += realDt * (rrNow / 60) * Math.PI * 2;
     const bp = breathPose(p, this.breathPh / (Math.PI * 2)), breath = [bp.L, bp.R, bp.A];   // left chest, right chest, abdomen (breathing.js)
-    // the sheet: rises with the belly at once (never lets the skin through), settles back a little behind it like real cloth, 3 mm clear
-    { const k = 1 - Math.exp(-realDt / 0.22); this.sheetB = (this.sheetB || [0, 0, 0]).map((v, i) => Math.max(breath[i], v + (breath[i] - v) * k)); }
-    const sheetBreath = this.sheetB.map(v => v * 1.08 + 0.003);
     // compressions: animate each engine compression event
     const cpr = this.cprAnim.update(realDt, p);              // sternum travel, mattress sink, head, arms, belly (cpr-anim.js)
     this.compAmt = cpr.sternum;
+    const ba = this.bodyAnim.update(realDt, p, cpr.active);  // shock jolt, seizure, shivering, fasciculations, coughing on the tube, agonal gasps (body-anim.js)
+    breath[0] += ba.chest; breath[1] += ba.chest; breath[2] += ba.abd;
+    // the sheet: rises with the belly at once (never lets the skin through), settles back a little behind it like real cloth, 3 mm clear
+    { const k = 1 - Math.exp(-realDt / 0.22); this.sheetB = (this.sheetB || [0, 0, 0]).map((v, i) => Math.max(breath[i], v + (breath[i] - v) * k)); }
+    const sheetBreath = this.sheetB.map(v => v * 1.08 + 0.003);
     if (p.shockLog.length && p.shockLog[p.shockLog.length - 1].t !== this._shockSeen) { this._shockSeen = p.shockLog[p.shockLog.length - 1].t; this.shockT = 0.35; }
     this.shockT = Math.max(0, this.shockT - realDt);
-    const jerk = this.shockT > 0 ? Math.sin(this.shockT * 60) * 0.004 : 0;
 
     const frame = () => {
     // ---------------- room and equipment
@@ -461,12 +463,13 @@ export class Scene {
     r.drawQuad(this.monTex, mat4.multiply(mat4.multiply(mat4.translation(standX, 1.55, standZ), mat4.rotationY(-0.55)), mat4.multiply(mat4.translation(0, 0, 0.05), mat4.scaling(0.94, 0.5, 1))), 1.15);   // screen decal 1 cm in front of the bezel
 
     // ---------------- patient
-    const M = mat4.multiply(mat4.translation(0, jerk, 0), B.M);
+    const M = B.M;                                           // the shock moves the body itself (body-anim.js)
     // face: blink, jaw, grimace and gaze (face.js); painful procedures under way on screen, and the side they are on
     const PAINFUL = ['needle', 'cannula', 'drain', 'fona', 'laryn', 'step_scalpel'], st = this.world.sternum;
     const hurt = this.gest.list.find(g => PAINFUL.includes(g.k) && this.t >= g.t0 && this.t <= g.t0 + g.dur);
     const faceW = this.faceAnim.update(realDt, p, { painful: !!hurt, side: hurt?.f?.p ? clamp(-(hurt.f.p[2] - st[2]) * (this.sideSign || 1) / 0.2, -1, 1) : 0 });
-    const o = { breath, bFrame: B.bFrame, compress: this.compAmt, face: faceW, cpr: [cpr.head, cpr.sink, cpr.arms, cpr.belly] };
+    const faceAll = [Math.min(1, faceW[0] + ba.face[0]), Math.min(1, faceW[1] + ba.face[1]), Math.min(1, faceW[2] + ba.face[2]), faceW[3]];
+    const o = { breath, bFrame: B.bFrame, compress: this.compAmt, face: faceAll, cpr: [cpr.head + ba.head, cpr.sink - ba.lift, cpr.arms + ba.arms, cpr.belly + ba.belly], tremor: ba.tremor, time: this.t % 600 };
     const sheetCol = p.therm.cover < 1 ? [0.74, 0.58, 0.40] : [0.72, 0.79, 0.84];
     if (B.b.glb) {
       const T = this.asset.tex, tint = skin.map((v, i) => v / TONE_REF[i]), A = (k) => T['patient_' + k] || {};

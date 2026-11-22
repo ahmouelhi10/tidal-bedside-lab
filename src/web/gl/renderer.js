@@ -14,18 +14,31 @@ uniform vec4 uBreath; uniform mat3 uBAxes; uniform vec3 uBRef; uniform float uCl
 uniform vec4 uCpr;      // CPR follow-through: head angle (rad), sink (m), arm jiggle (m), belly bulge (m)
 uniform vec4 uCprRef;   // neck level along the cranial axis, neck depth along the anterior axis, arm threshold (lateral m), unused
 uniform vec3 uCompPt;   // compression point (lower sternum), mesh space
+uniform vec4 uTremor;   // limb shake (m), head shake (rad), frequency (Hz), fasciculation (m)
+uniform float uTime;
+${GLSL_NOISE}
 // chest compressions: the sternum with the ribs around it (wider than the asset's sternum weight), the body sinking into the
 // mattress, the head rocking about the neck, the arms and the belly following
-vec3 cprDisp(vec3 p, float wb, float wc, out float wcomp){
+vec3 cprDisp(vec3 p, vec3 n, float wb, float wc, out float wcomp){
   wcomp = wc;
-  if (uCpr == vec4(0.0) && wc <= 0.0) return vec3(0.0);
+  if (uCpr == vec4(0.0) && uTremor == vec4(0.0) && wc <= 0.0) return vec3(0.0);
   vec3 cr = uBAxes[0], an = uBAxes[1];
   float c = dot(p, cr), a = dot(p, an), l = abs(dot(p, uBAxes[2]) - uBRef.z);
   vec3 dc = p - uCompPt; wcomp = max(wc, wb * exp(-dot(dc, dc) / (2.0 * 0.15 * 0.15)));
   vec3 d = -an * uCpr.y;
-  float hw = smoothstep(uCprRef.x - 0.03, uCprRef.x + 0.04, c);
-  if (hw > 0.0) { float th = uCpr.x * hw, qx = c - uCprRef.x, qy = a - uCprRef.y; d += cr * (cos(th) * qx + sin(th) * qy - qx) + an * (-sin(th) * qx + cos(th) * qy - qy); }
-  d += an * (uCpr.z * smoothstep(uCprRef.z, uCprRef.z + 0.05, l) * (1.0 - hw) * step(uBRef.x - 0.45, c));
+  float hw = smoothstep(uCprRef.x - 0.03, uCprRef.x + 0.04, c), w2 = 6.2831853 * uTremor.z * uTime;
+  float hshake = uTremor.y * (sin(w2 * 1.07 + 1.3) + 0.4 * sin(w2 * 1.9));
+  if (hw > 0.0) { float th = (uCpr.x + hshake) * hw, qx = c - uCprRef.x, qy = a - uCprRef.y; d += cr * (cos(th) * qx + sin(th) * qy - qx) + an * (-sin(th) * qx + cos(th) * qy - qy); }
+  float arm = smoothstep(uCprRef.z, uCprRef.z + 0.05, l) * (1.0 - hw) * step(uBRef.x - 0.45, c);
+  d += an * (uCpr.z * arm);
+  if (uTremor.x > 0.0) {                       // limbs shaking (seizure, shivering): each limb out of phase with the others
+    float leg = 1.0 - smoothstep(uBRef.x - 0.5, uBRef.x - 0.42, c), ph = dot(p, vec3(7.0, 3.0, 11.0));
+    d += an * (uTremor.x * (arm + leg) * (sin(w2 + ph) + 0.35 * sin(w2 * 2.3 + ph * 1.7)));
+  }
+  if (uTremor.w > 0.0) {                       // fasciculations: brief local twitches under the skin
+    float z = vnoise(p * 38.0 + vec3(0.0, uTime * 3.1, 0.0)), tw = max(0.0, z - 0.62) / 0.38;
+    d += n * (uTremor.w * tw * tw * sin(uTime * 47.0 + z * 20.0)) * (1.0 - hw);
+  }
   float tc = smoothstep(uBRef.x - 0.035, uBRef.x + 0.045, c);
   d += an * (uCpr.w * wb * (1.0 - tc) * smoothstep(uBRef.x - 0.3, uBRef.x - 0.05, c));
   return d;
@@ -50,7 +63,7 @@ uniform mat4 uModel; uniform mat4 uVP; uniform float uCompress; uniform float uI
 ${GLSL_BREATH}
 out vec3 vN; out vec3 vWP; out vec3 vTint; out vec2 vUV;
 void main(){
-  vec3 f = aPos + uFace.x * aF0 + uFace.y * aF1 + uFace.z * aF2 + uFace.w * aF3; float wcomp; vec3 cd = cprDisp(aPos, aW.x, aW.y, wcomp); vec3 p = f + aNorm * uInflate + breathDisp(aPos, aNorm, aW.x) + cd;
+  vec3 f = aPos + uFace.x * aF0 + uFace.y * aF1 + uFace.z * aF2 + uFace.w * aF3; float wcomp; vec3 cd = cprDisp(aPos, aNorm, aW.x, aW.y, wcomp); vec3 p = f + aNorm * uInflate + breathDisp(aPos, aNorm, aW.x) + cd;
   p -= uCompDir * (uCompress * wcomp);
   vec4 wp = uModel * vec4(p, 1.0);
   vWP = wp.xyz; vTint = aTint; vUV = aUV;
@@ -62,7 +75,7 @@ const VS_SHADOW = `#version 300 es
 in vec3 aPos; in vec3 aNorm; in vec2 aW; in vec3 aF0; in vec3 aF1; in vec3 aF2; in vec3 aF3;
 uniform mat4 uModel; uniform mat4 uVP; uniform float uCompress; uniform float uInflate; uniform vec3 uCompDir;
 ${GLSL_BREATH}
-void main(){ vec3 f = aPos + uFace.x * aF0 + uFace.y * aF1 + uFace.z * aF2 + uFace.w * aF3; float wcomp; vec3 cd = cprDisp(aPos, aW.x, aW.y, wcomp); vec3 p = f + aNorm * uInflate + breathDisp(aPos, aNorm, aW.x) + cd; p -= uCompDir * (uCompress * wcomp); gl_Position = uVP * uModel * vec4(p, 1.0); }`;
+void main(){ vec3 f = aPos + uFace.x * aF0 + uFace.y * aF1 + uFace.z * aF2 + uFace.w * aF3; float wcomp; vec3 cd = cprDisp(aPos, aNorm, aW.x, aW.y, wcomp); vec3 p = f + aNorm * uInflate + breathDisp(aPos, aNorm, aW.x) + cd; p -= uCompDir * (uCompress * wcomp); gl_Position = uVP * uModel * vec4(p, 1.0); }`;
 const FS_SHADOW = `#version 300 es
 precision mediump float; out vec4 o; void main(){ o = vec4(1.0); }`;
 
@@ -253,7 +266,7 @@ export class Renderer {
     if (!gl) throw new Error('WebGL2 is not available in this browser.');
     this.gl = gl; this.canvas = canvas;
     this.prog = program(gl, VS, FS); this.progShadow = program(gl, VS_SHADOW, FS_SHADOW); this.progTex = program(gl, VS_TEX, FS_TEX);
-    this.u = uniforms(gl, this.prog, ['uModel', 'uVP', 'uBreath', 'uCompress', 'uColor', 'uEmissive', 'uSpec', 'uAlpha', 'uPattern', 'uEye', 'uLightPos', 'uLightDir', 'uLightK', 'uLightVP', 'uShadow', 'uDirect', 'uAlbedo', 'uNormalMap', 'uTexMode', 'uAlphaCut', 'uInflate', 'uCompDir', 'uBAxes', 'uBRef', 'uCloth', 'uFace', 'uCpr', 'uCprRef', 'uCompPt']);
+    this.u = uniforms(gl, this.prog, ['uModel', 'uVP', 'uBreath', 'uCompress', 'uColor', 'uEmissive', 'uSpec', 'uAlpha', 'uPattern', 'uEye', 'uLightPos', 'uLightDir', 'uLightK', 'uLightVP', 'uShadow', 'uDirect', 'uAlbedo', 'uNormalMap', 'uTexMode', 'uAlphaCut', 'uInflate', 'uCompDir', 'uBAxes', 'uBRef', 'uCloth', 'uFace', 'uCpr', 'uCprRef', 'uCompPt', 'uTremor', 'uTime', 'uTremor', 'uTime']);
     this.us = uniforms(gl, this.progShadow, ['uModel', 'uVP', 'uBreath', 'uBAxes', 'uBRef', 'uCloth', 'uFace', 'uCpr', 'uCprRef', 'uCompPt', 'uCompress', 'uInflate', 'uCompDir']);
     this.ut = uniforms(gl, this.progTex, ['uModel', 'uVP', 'uTex', 'uGlow', 'uDirect']);
     gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
@@ -431,7 +444,7 @@ export class Renderer {
     const gl = this.gl, b = o.breath || 0, f = o.bFrame || BFRAME0;
     gl.uniform4f(u.uBreath, Array.isArray(b) ? b[0] : b, Array.isArray(b) ? b[1] : b, Array.isArray(b) ? b[2] : b, 0);
     gl.uniformMatrix3fv(u.uBAxes, false, f.axes); gl.uniform3fv(u.uBRef, f.ref); gl.uniform1f(u.uCloth, o.cloth ? 1 : 0); const fw = o.face || FACE0; gl.uniform4f(u.uFace, fw[0], fw[1], fw[2], fw[3]);
-    const cp = o.cpr || CPR0; gl.uniform4f(u.uCpr, cp[0], cp[1], cp[2], cp[3]); gl.uniform4fv(u.uCprRef, f.cprRef || CPRREF0); gl.uniform3fv(u.uCompPt, f.compPt || COMPPT0);
+    const cp = o.cpr || CPR0; gl.uniform4f(u.uCpr, cp[0], cp[1], cp[2], cp[3]); gl.uniform4fv(u.uCprRef, f.cprRef || CPRREF0); gl.uniform3fv(u.uCompPt, f.compPt || COMPPT0); const tr = o.tremor || CPR0; gl.uniform4f(u.uTremor, tr[0], tr[1], tr[2], tr[3]); gl.uniform1f(u.uTime, o.time || 0);
   }
 
   /** opts: color, emissive, spec, alpha, pattern, breath, bFrame, compress, noShadow */
