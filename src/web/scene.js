@@ -8,6 +8,7 @@ import { BodyAnim } from './body-anim.js';
 import { SkinAnim } from './skin.js';
 import { PupilAnim } from './pupils.js';
 import { bloodState } from './blood.js';
+import { WakeAnim, movePoint } from './wake-anim.js';
 import { CamMove, moveDuration, handheld, handheldAmp } from './camera-rig.js';
 import { Renderer, mat4, vec3 } from './gl/renderer.js';
 import { box, sphere, cylinder } from './gl/geometry.js';
@@ -18,7 +19,21 @@ import { buildGlbBody } from './gl/patient-glb.js';
 import { prepare as preparePick, rayMesh } from './gl/pick.js';
 
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
-const HAND_KEYS = ['act', 'relax'];                                             // hands.glb finger morph targets, weights in opts.act / opts.relax
+const HAND_KEYS = ['act', 'relax'];
+/** Joint weights for the waking movements (wake-anim.js, shader moveP): per vertex [left arm, left leg, right leg] from the body
+ *  regions (5 arms, 8 legs; the patient's left is +z), smoothed four times along the mesh edges so the shoulder and hip bend
+ *  softly while a hand resting against the thigh (no shared edges) stays separate. The sheet follows the legs, never the arm. */
+function jointWeights(m, sheet) {
+  const n = m.pos.length / 3, w = new Float32Array(n * 3), I = m.idx;
+  for (let i = 0; i < n; i++) { const r = m.region[i], left = m.pos[i * 3 + 2] > 0; w[i * 3] = !sheet && r === 5 && left ? 1 : 0; w[i * 3 + 1] = r === 8 && left ? 1 : 0; w[i * 3 + 2] = r === 8 && !left ? 1 : 0; }
+  const sum = new Float32Array(n * 3), cnt = new Uint16Array(n);
+  for (let it = 0; it < 4; it++) {
+    sum.fill(0); cnt.fill(0);
+    for (let t = 0; t < I.length; t += 3) for (let e = 0; e < 3; e++) { const a = I[t + e], b = I[t + (e + 1) % 3]; for (let c = 0; c < 3; c++) { sum[a * 3 + c] += w[b * 3 + c]; sum[b * 3 + c] += w[a * 3 + c]; } cnt[a]++; cnt[b]++; }
+    for (let i = 0; i < n; i++) if (cnt[i]) for (let c = 0; c < 3; c++) w[i * 3 + c] = 0.5 * w[i * 3 + c] + 0.5 * sum[i * 3 + c] / cnt[i];
+  }
+  return w;
+}                                             // hands.glb finger morph targets, weights in opts.act / opts.relax
 const HOTSPOTS = [
   ['head', 'airway', 0.17, 'hs_head'], ['chest', 'sternum', 0.17, 'hs_chest'], ['rarm', 'rightArmIV', 0.11, 'hs_rarm'], ['larm', 'leftArm', 0.11, 'hs_larm'],
   ['groin', 'femoral', 0.13, 'hs_groin'], ['abdomen', 'abdomen', 0.15, 'hs_abdomen'], ['neck', 'neck', 0.08, 'hs_neck'],
@@ -80,7 +95,7 @@ export class Scene {
     this.goal = null; this.off = { yaw: 0, pitch: 0 }; this.hover = null; this.t = 0; this.breathPh = 0; this.compAmt = 0; this.shockT = 0; this.tone = 2; this.body = null;
     this.auto = false;            // slow cinematic orbit (case menu)
     this.inset = { l: 0, r: 0, t: 0, b: 0 }; this.shift = 0; this.shiftY = 0;   // screen px covered by panels on each side (ui.updateInsets)
-    this.faceAnim = new FaceAnim(); this.pupilAnim = new PupilAnim(); this.cprAnim = new CprAnim(); this.bodyAnim = new BodyAnim(); this.skinAnim = new SkinAnim();
+    this.faceAnim = new FaceAnim(); this.wakeAnim = new WakeAnim(); this.pupilAnim = new PupilAnim(); this.cprAnim = new CprAnim(); this.bodyAnim = new BodyAnim(); this.skinAnim = new SkinAnim();
     this.camVel = { yaw: 0, pitch: 0, dist: 0, target: [0, 0, 0] }; this.hh = 0;   // camera velocity (per s) and hand-held strength (camera-rig.js)
     this.reduceMotion = typeof matchMedia === 'function' && !!matchMedia('(prefers-reduced-motion: reduce)')?.matches;
     this.gest = new Gestures(); this.rescuerHands = true; this.pins = []; this._bindInput(canvas);
@@ -203,6 +218,28 @@ export class Scene {
   /** Frame a site for an action, then glide back to the overview of the patient after holdS seconds. */
   focus(name, holdS = 2.5) { this.setCamera(name); this.returnAt = this.t + (this.tw ? this.tw.dur : 0) + holdS; }
 
+  /** Joints for the waking movements (wake-anim.js), from this patient's mesh: the left shoulder pivot and the arm's direction
+   *  (upper arm ~42 % of shoulder-to-fingertip), the hip at the groin crease and the knee a femur below it (~24.5 % of stature). */
+  _jointFrame(F, P, ls) {
+    const cr = F.axes.slice(0, 3), an = F.axes.slice(3, 6), lf = F.axes.slice(6, 9), d3 = (a, i) => a[0] * P[i] + a[1] * P[i + 1] + a[2] * P[i + 2];
+    const hwid = F.cprRef[2], mid = F.ref[2]; let top = -Infinity, tip = null;
+    for (let i = 0; i < P.length; i += 3) { const lat = d3(lf, i) - mid; if (lat < hwid + 0.03) continue; const c = d3(cr, i); if (c > top) top = c; if (!tip || c < tip[0]) tip = [c, d3(an, i), lat]; }
+    if (!tip) return;
+    let n = 0, sa = 0, sl = 0; for (let i = 0; i < P.length; i += 3) { const lat = d3(lf, i) - mid; if (lat < hwid + 0.03 || d3(cr, i) < top - 0.05) continue; n++; sa += d3(an, i); sl += lat; }
+    const S = [top - 0.035, sa / n, sl / n], toMesh = (c, a, l) => [0, 1, 2].map(j => cr[j] * c + an[j] * a + lf[j] * (l + mid));
+    const s0 = toMesh(...S), t0 = toMesh(...tip), D = vec3.sub(t0, s0), L = Math.hypot(...D);
+    F.arm = [...s0, 0.42 * L]; F.armD = [...vec3.scale(D, 1 / L), 0];
+    const hip = ls.femoral[0] * cr[0] + ls.femoral[1] * cr[1] + ls.femoral[2] * cr[2], knee = hip - 0.245 * -F.cprRef[3];
+    const depth = (lvl) => { let lo = Infinity, hi = -Infinity; for (let i = 0; i < P.length; i += 3) { if (Math.abs(d3(cr, i) - lvl) > 0.02 || Math.abs(d3(lf, i) - mid) > hwid - 0.02) continue; const a = d3(an, i); lo = Math.min(lo, a); hi = Math.max(hi, a); } return lo < hi ? (lo + hi) / 2 : 0.08; };
+    F.leg = [hip, knee, depth(hip), depth(knee)];
+  }
+  /** A world point on the body, carried by the waking movements (things attached to the head, the left arm or a leg).
+   *  j: [left arm, left leg, right leg] membership; the head moves by position. */
+  moved(w, j) {
+    const B = this.body, U = this._moveU; if (!B?.b?.glb || !U) return w;
+    const s = B.b.scale, q = movePoint([(w[0] - CROWN_X) / s, (w[1] - BED_TOP) / s, w[2] / s], U, j);
+    return [CROWN_X + q[0] * s, BED_TOP + q[1] * s, q[2] * s];
+  }
   /** Pupil examination: hold the lids open and shine a penlight (display only; the UI logs it as a note and reports the finding). */
   checkPupils() {
     this.pupilCheck = { t0: this.t, dur: 3.4 };
@@ -301,6 +338,7 @@ export class Scene {
     if (this.asset) {
       b = buildGlbBody(this.asset.glb, this.asset.meta, spec, morph);
       if (b.meshes.sheet) b.meshes.sheet = drapeWeights(b.meshes.sheet, b.meshes.body);   // the sheet rises with the belly under it
+      for (const [k, m] of Object.entries(b.meshes)) if (m.region && m.idx) m.jw = jointWeights(m, k === 'sheet');   // waking movements: which limb each vertex follows
       g = Object.fromEntries(Object.entries(b.meshes).map(([k, m]) => [k, r.upload(m)]));
       M = mat4.multiply(mat4.translation(CROWN_X, BED_TOP, 0), mat4.scaling(b.scale, b.scale, b.scale));
     } else {
@@ -308,8 +346,9 @@ export class Scene {
       g = { skin: r.upload(b.skin), hair: r.upload(b.hair), eyes: r.upload(b.eyes), pupils: r.upload(b.pupils), lips: r.upload(b.lips), sheet: r.upload(b.sheet) };
       M = supineMatrix(b);
     }
-    this.body = { b, g, M, spec, bFrame: breathFrame(b.landmarks, b.glb ? [0, 1, 0] : [0, 0, 1]) }; this.cut = null; this.skinAnim = new SkinAnim(); this._skinT = null; this.pupilAnim = new PupilAnim(); this._pupT = null; this.pupilCheck = null;
+    this.body = { b, g, M, spec, bFrame: breathFrame(b.landmarks, b.glb ? [0, 1, 0] : [0, 0, 1]) }; this.cut = null; this.skinAnim = new SkinAnim(); this._skinT = null; this.pupilAnim = new PupilAnim(); this._pupT = null; this.pupilCheck = null; this.wakeAnim = new WakeAnim();
     { const F = this.body.bFrame, P = b.meshes?.body?.pos; if (P) { let lo = Infinity; for (let i = 0; i < P.length; i += 3) lo = Math.min(lo, P[i] * F.axes[0] + P[i + 1] * F.axes[1] + P[i + 2] * F.axes[2]); F.cprRef[3] = lo; } }   // soles level (skin: feet, knees)
+    if (b.glb) this._jointFrame(this.body.bFrame, b.meshes.body.pos, b.landmarks);
     this.tone = tone; this.gest.clear();
     const ls = b.landmarks;
     this.hot = HOTSPOTS.map(([id, lm, rad, label]) => ({ id, label, c: localToWorld(this.body.M, ls[lm]), rad: rad * (0.8 + 0.5 * Math.min(1, morph.bmi / 40)) }));
@@ -524,6 +563,17 @@ export class Scene {
     // face: blink, jaw, grimace and gaze (face.js); painful procedures under way on screen, and the side they are on
     const PAINFUL = ['needle', 'cannula', 'drain', 'fona', 'laryn', 'step_scalpel'], st = this.world.sternum;
     const hurt = this.gest.list.find(g => PAINFUL.includes(g.k) && this.t >= g.t0 && this.t <= g.t0 + g.dur);
+    { // waking movements; a part a hand is working on keeps still
+      const busy = new Set(), W0 = this.world, R0 = this.sideSign || 1;
+      for (const g of this.gest.list) {
+        const q = g.f?.p; if (!q || g.k === 'laryn') { busy.add('head'); continue; }
+        if (q[0] > W0.neck[0] - 0.06) busy.add('head'); else if (q[0] < W0.femoral[0] - 0.04) busy.add(q[2] * R0 > 0 ? 'legR' : 'legL'); else if (q[2] * R0 < -0.18) busy.add('armL');
+      }
+      if (this.pupilCheck || this.ghost) busy.add('head');
+      const F = B.bFrame, mv = this.wakeAnim.update(realDt, p, { painful: !!hurt, busy });
+      this._moveU = F.arm ? { axes: [F.axes.slice(0, 3), F.axes.slice(3, 6), F.axes.slice(6, 9)], ref: F.ref, cprRef: F.cprRef, arm: F.arm, armD: F.armD, leg: F.leg, move: mv.move, move2: mv.move2 } : null;
+      this._moveO = this._moveU ? mv : null;
+    }
     const faceW = this.faceAnim.update(realDt, p, { painful: !!hurt, side: hurt?.f?.p ? clamp(-(hurt.f.p[2] - st[2]) * (this.sideSign || 1) / 0.2, -1, 1) : 0 });
     // pupil check: the eyelids are held open and a penlight swept onto the eyes (checkPupils)
     const pc = this.pupilCheck, pu = pc ? clamp((this.t - pc.t0) / pc.dur, 0, 1) : 0; if (pc && pu >= 1) this.pupilCheck = null;
@@ -534,7 +584,7 @@ export class Scene {
     const bl = bloodState(p, this._lost0), BS = this.bloodSites;
     const bloodSkin = BS && bl.source ? { a: bl.source === 'mouth' ? [...BS.mouthL, Math.min(0.04, 0.018 + bl.r.stain * 0.2) / BS.s] : [...BS.thighL, bl.r.stain * 0.55 / BS.s], dry: bl.dry } : null;
     const bloodSheet = BS && bl.source === 'thigh' ? { a: [...BS.sheetL, bl.r.stain / BS.s], dry: bl.dry } : null;
-    const o = { breath, bFrame: B.bFrame, compress: this.compAmt, face: faceAll, cpr: [cpr.head + ba.head, cpr.sink - ba.lift, cpr.arms + ba.arms, cpr.belly + ba.belly], tremor: ba.tremor, time: this.t % 600, skinA: [sk.sweat, sk.mottle, sk.cyanC, sk.cyanP], skinB: [sk.hives, sk.jvd, 0, 0] };
+    const o = { breath, bFrame: B.bFrame, compress: this.compAmt, face: faceAll, cpr: [cpr.head + ba.head, cpr.sink - ba.lift, cpr.arms + ba.arms, cpr.belly + ba.belly], tremor: ba.tremor, move: this._moveO, time: this.t % 600, skinA: [sk.sweat, sk.mottle, sk.cyanC, sk.cyanP], skinB: [sk.hives, sk.jvd, 0, 0] };
     const sheetCol = p.therm.cover < 1 ? [0.74, 0.58, 0.40] : [0.72, 0.79, 0.84];
     if (B.b.glb) {
       const T = this.asset.tex, tint = skin.map((v, i) => v / TONE_REF[i]), A = (k) => T['patient_' + k] || {};
@@ -615,8 +665,8 @@ export class Scene {
         hose([base[0] + n[0] * 0.006, base[1] + n[1] * 0.006, base[2] + n[2] * 0.006], [base[0] + 0.12, base[1] + 0.02, -0.45], [STAND[0] - 0.25, 0.95, STAND[1] + 0.35], 0.0018, col, { spec: 0.4 });
       }
     }
-    if (fl.spo2Probe) { const f = SF('leftArm') || { p: W.leftArm, n: [0, 1, 0] }; blob(up([f.p[0] - 0.24, f.p[1], f.p[2] + 0.03], 0.015), 0.022, 0.012, 0.014, [0.18, 0.22, 0.28], { spec: 0.5 }); }
-    if (fl.nibp) { const a = W.leftArm; seg(up([a[0] + 0.03, a[1] - 0.02, a[2]], 0.0), up([a[0] + 0.15, a[1] - 0.02, a[2]], 0.0), 0.05, [0.2, 0.22, 0.28], { spec: 0.15 }); }
+    if (fl.spo2Probe) { const f = SF('leftArm') || { p: W.leftArm, n: [0, 1, 0] }; blob(this.moved(up([f.p[0] - 0.24, f.p[1], f.p[2] + 0.03], 0.015), [1, 0, 0]), 0.022, 0.012, 0.014, [0.18, 0.22, 0.28], { spec: 0.5 }); }
+    if (fl.nibp) { const a = W.leftArm; seg(this.moved([a[0] + 0.03, a[1] - 0.02, a[2]], [1, 0, 0]), this.moved([a[0] + 0.15, a[1] - 0.02, a[2]], [1, 0, 0]), 0.05, [0.2, 0.22, 0.28], { spec: 0.15 }); }
     if (fl.ivAccess && this.gest.ok('iv', this.t)) {            // 18 G cannula taped under a clear dressing, giving set to the IV pole
       const f = SF('rightArmIV') || { p: W.rightArmIV, n: [0, 1, 0] }, ax = this.armAxis(), dir = vec3.norm(vec3.add(vec3.scale(f.n, -1), vec3.scale(ax, 2.7)));
       const tip = vec3.add(f.p, vec3.scale(dir, 0.02)); inst('ivCannula', tip, vec3.scale(dir, -1), 0, { skip: ['steel'], noHand: true });
@@ -628,7 +678,7 @@ export class Scene {
     const PS = this.procSites || {}, R = this.sideSign || 1, inPlane = (f, d) => vec3.norm(vec3.sub(d, vec3.scale(f.n, vec3.dot(d, f.n))));
     const along = (a, d, k) => vec3.add(a, vec3.scale(d, k));
     if (fl.ioAccess && PS.ioR && this.gest.ok('io', this.t)) {     // intraosseous needle in the tibia: short hub on a stabilising flange, extension set to the pole
-      const f = PS.ioR, b = onSkin(f, 0.002);
+      const f = PS.ioR, b = this.moved(onSkin(f, 0.002), [0, 0, 1]);
       disc(b, f.n, [1, 0, 0], 0.014, 0.014, [0.95, 0.95, 0.93], { spec: 0.2 }); seg(b, along(b, f.n, 0.014), 0.0055, [0.85, 0.18, 0.16], { spec: 0.5 });
       hose(along(b, f.n, 0.014), [b[0] + 0.1, b[1] + 0.12, b[2] - R * 0.05], [POLE[0] + 0.07, 1.25, POLE[2]], 0.0022, [0.86, 0.93, 0.97], { alpha: 0.75, spec: 0.9 });
     }
@@ -652,7 +702,7 @@ export class Scene {
       }
     }
     if (fl.ngTube && PS.nostril && this.gest.ok('ng', this.t)) {    // nasogastric tube taped to the nose, over the cheek, to a drainage bag
-      const f = PS.nostril, b = vec3.add(along(f.p, f.n, 0.008), [0.012, 0, 0]), cheek = [b[0] - 0.03, b[1] - 0.045, b[2] + R * 0.09];
+      const f = { ...PS.nostril, p: this.moved(PS.nostril.p) }, b = this.moved(vec3.add(along(PS.nostril.p, f.n, 0.008), [0.012, 0, 0])), cheek = this.moved([b[0] - 0.03, b[1] - 0.045, b[2] + R * 0.09]);
       seg(f.p, b, 0.0026, [0.93, 0.9, 0.7], { alpha: 0.85, spec: 0.8 }); disc(along(b, f.n, 0.003), f.n, [1, 0, 0], 0.012, 0.007, [0.93, 0.92, 0.86], { spec: 0.1 });
       hose(b, [b[0] + 0.01, b[1] + 0.01, b[2] + R * 0.05], cheek, 0.0026, [0.93, 0.9, 0.7], { alpha: 0.85, spec: 0.8 });
       hose(cheek, [cheek[0], cheek[1] + 0.04, R * 0.38], [W.airway[0] - 0.12, 0.66, R * 0.46], 0.0026, [0.93, 0.9, 0.7], { alpha: 0.85, spec: 0.8 });
@@ -674,11 +724,11 @@ export class Scene {
     }
     // airway devices
     const dev = p.airway.device;
-    if (p.o2 && dev !== 'ett') blob([face[0] + 0.02, face[1] + 0.035, face[2]], 0.075, 0.05, 0.065, [0.7, 0.85, 0.9], { alpha: 0.55, spec: 0.5 });
+    if (p.o2 && dev !== 'ett') blob(this.moved([face[0] + 0.02, face[1] + 0.035, face[2]]), 0.075, 0.05, 0.065, [0.7, 0.85, 0.9], { alpha: 0.55, spec: 0.5 });
     if ((dev === 'ett' || p.airway.intubated) && dev !== 'fona' && this.gest.ok('ett', this.t)) {   // clear PVC tube with its blue line, taped at the corner of the mouth, 15 mm connector
-      const m0 = up(W.airway, 0.006), m1 = up([W.airway[0] + 0.07, W.airway[1], W.airway[2] + 0.01], 0.05), m2 = up([W.airway[0] + 0.17, W.airway[1], W.airway[2] + 0.01], 0.075);
+      const m0 = this.moved(up(W.airway, 0.006)), m1 = this.moved(up([W.airway[0] + 0.07, W.airway[1], W.airway[2] + 0.01], 0.05)), m2 = up([W.airway[0] + 0.17, W.airway[1], W.airway[2] + 0.01], 0.075);   // the tube turns with the head; the connector stays with the circuit
       hose(m0, m1, m2, 0.0058, [0.88, 0.94, 0.96], { alpha: 0.8, spec: 1 }); seg(m2, [m2[0] + 0.025, m2[1] + 0.004, m2[2]], 0.0085, [0.95, 0.95, 0.93], { spec: 0.5 });
-      seg(up([W.airway[0] - 0.005, W.airway[1], W.airway[2] - 0.035], 0.004), up([W.airway[0] + 0.01, W.airway[1], W.airway[2] + 0.04], 0.004), 0.004, [0.93, 0.92, 0.86], { spec: 0.1 });   // tape
+      seg(this.moved(up([W.airway[0] - 0.005, W.airway[1], W.airway[2] - 0.035], 0.004)), this.moved(up([W.airway[0] + 0.01, W.airway[1], W.airway[2] + 0.04], 0.004)), 0.004, [0.93, 0.92, 0.86], { spec: 0.1 });   // tape
     }
     if (p.tube?.scopeIn) {                                     // bronchoscope: insertion cord into the tube connector, control body held above the head, light cable
       const port = up([W.airway[0] + 0.2, W.airway[1], W.airway[2]], 0.075), body = [port[0] + 0.02, port[1] + 0.34, port[2] + 0.16], top = [body[0] + 0.03, body[1] + 0.13, body[2]];
