@@ -59,7 +59,7 @@ test('patient asset: size budget and expected content', { skip: !have && 'patien
   const ins = parseGlb(ab(fs.readFileSync(path.join(ASSETS, 'instruments.glb'))));
   for (const k of ['stethoscope', 'usProbe', 'laryngoscope', 'faceMask']) assert.ok(ins.meshes[k], 'instrument ' + k);
   const hands = parseGlb(ab(fs.readFileSync(path.join(ASSETS, 'hands.glb'))));
-  for (const k of ['hand_stethoscope', 'hand_usProbe']) assert.ok(hands.meshes[k], k);
+  for (const k of ['hand_stethoscope', 'hand_usProbe', 'hand_cprBottom', 'hand_cprTop']) assert.ok(hands.meshes[k], k);
   assert.ok(fs.statSync(path.join(ASSETS, 'hands.glb')).size < 1.5e6, 'hands.glb under 1.5 MB');
   assert.deepEqual(g.meshes.patient_body.targetNames, ['female', 'heavy', 'thin', 'old', 'female_heavy', 'female_thin', 'female_old', 'face_blink', 'face_jaw', 'face_pain', 'face_gaze']);
   // face expressions are stored sparse: they must decode to real movement on the face and none elsewhere

@@ -123,6 +123,17 @@ GRIPS = {
                         pre={'index': ('curl', [4, 6, 4], 16), 'middle': ('curl', [8, 12, 8], 2),
                              'ring': ('curl', [11, 15, 10], -7), 'pinky': ('curl', [14, 18, 12], -16)}, post={'thumb': (0.02, 0.085, 0.001)},
                         label='left hand tensing the skin: thumb and index spread on the skin, other fingers resting'),
+    # chest compressions: the heel of the lower (right) hand on the lower half of the sternum, wrist strongly extended so the
+    # forearm stands over the chest, fingers lifted off the ribs; origin = heel of the hand on the skin
+    'hand_cprBottom': dict(instrument=None, wrist=(62, 0), mode='frame', flat=True, p=(0, 0, 0), q=(-0.03, 0, 0), z=(0, 0, -1), x=(1, 0, 0),
+                           pre={'index': ('curl', [-22, 6, 4], 4), 'middle': ('curl', [-22, 6, 4], 0),
+                                'ring': ('curl', [-22, 6, 4], -4), 'pinky': ('curl', [-22, 6, 4], -8)}, post={'thumb': (0.03, 0.05, 0.014)},
+                           label='CPR, lower hand: heel on the sternum, fingers raised off the ribs; origin = heel of the hand'),
+    # the upper (left) hand on the back of the lower one, its fingers hooked down between the lower hand's fingers
+    'hand_cprTop': dict(instrument=None, wrist=(56, 0), mode='frame', flat=True, mirror=True, p=(0, 0, 0), q=(-0.03, 0, 0), z=(0, 0, -1), x=(1, 0, 0),
+                        pre={'index': ('curl', [38, 62, 40], 2), 'middle': ('curl', [40, 64, 42], 0),
+                             'ring': ('curl', [42, 66, 44], -2), 'pinky': ('curl', [44, 66, 44], -4)}, post={'thumb': (0.02, 0.045, 0.004)},
+                        label='CPR, upper hand: palm on the back of the lower hand, fingers interlaced; origin = heel of the hand'),
 }
 
 

@@ -73,7 +73,11 @@ export function breathFrame(ls, anterior) {
   let left = cross(cran, anterior); if (ls.padLeft && ls.padRight && dot(sub(ls.padLeft, ls.padRight), left) < 0) left = left.map(v => -v);
   const lerp = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
   const xiph = dot(lerp(ls.sternum, ls.abdomen, 0.28), cran), clav = dot(lerp(ls.sternum, ls.airway, 0.3), cran);
-  return { axes: [...cran, ...anterior, ...left], ref: [xiph, clav, dot(ls.sternum, left)] };
+  // CPR (cpr-anim.js, renderer cprDisp): the head pivots about the cervical spine, below the front of the neck; the arms are
+  // what lies outside the chest wall; compressions land on the lower half of the sternum
+  const mid = dot(ls.sternum, left), half = ls.L_mal5 ? Math.abs(dot(ls.L_mal5, left) - mid) + 0.03 : 0.18;
+  const neck = ls.neck || ls.airway;
+  return { axes: [...cran, ...anterior, ...left], ref: [xiph, clav, mid], cprRef: [dot(neck, cran), 0.4 * dot(neck, anterior), half, 0], compPt: lerp(ls.sternum, ls.abdomen, 0.12) };
 }
 
 /** Drape: give each vertex of a cloth lying on the body (the sheet) the strongest breathing weight of the skin within

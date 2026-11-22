@@ -188,7 +188,7 @@ Total: 6,404 triangles, 0.21 MB. Materials are plain colours (no textures). Clea
 
 ## hands.glb
 
-A gloved adult hand per grip: 12 top-level mesh nodes (11 right hands and one left), about 5,400 triangles each, 1.06 MB, no textures. Two
+A gloved adult hand per grip: 14 top-level mesh nodes (12 right hands and two left), about 5,400 triangles each, 1.21 MB, no textures. Two
 materials: `nitrile_glove` (#4c75d1, roughness 0.55: nitrile is satin) and `gown_sleeve` (pale blue). The app draws the glove
 with a nitrile shader (fine stipple, slight translucency) and the sleeve with the fabric shader. The hand is the
 MakeHuman/MPFB base-mesh right hand (sex-neutral adult, glove size about 7.5 to 8). It is posed with the MakeHuman
@@ -217,6 +217,8 @@ instruments.glb above). The node transform is identity.
 | `hand_usProbe` | `usProbe` | palmar grip around the body, lens below the little finger, thumb on the marked side |
 | `hand_press` | its own | flat palm: origin = palm centre on the skin, +Y = back of the hand (outward normal), fingers along +X |
 | `hand_pressL` | its own (same as `hand_press`) | **left** hand resting flat beside a puncture or incision, thumb and index spread to tense the skin: the right-hand pose mirrored across the fingers (glTF z -> -z) |
+| `hand_cprBottom` | its own: origin = heel of the hand on the skin | CPR, lower (right) hand: heel on the lower half of the sternum, wrist extended about 60° so the forearm stands over the chest, fingers lifted off the ribs |
+| `hand_cprTop` | its own (same as `hand_cprBottom`) | CPR, upper (**left**) hand on the back of the lower one, fingers hooked down between its fingers. The app stacks it 26 mm above the lower hand and turns the two about 10° apart so the forearms meet as from two shoulders |
 
 The forearm leaves each hand at a natural angle: wrist extended 32 degrees for the flat-palm grips (22 for the left hand)
 and 8 to 14 degrees for the others, except the 14G needle, which is held with the wrist flexed 10 degrees so that a needle

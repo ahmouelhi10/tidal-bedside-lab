@@ -3,6 +3,7 @@
 import { Gestures } from './gestures.js';
 import { breathPose, breathFrame, drapeWeights } from './breathing.js';
 import { FaceAnim } from './face.js';
+import { CprAnim } from './cpr-anim.js';
 import { Renderer, mat4, vec3 } from './gl/renderer.js';
 import { box, sphere, cylinder } from './gl/geometry.js';
 import { morphology, buildBody, supineMatrix, SKIN_TONES, skinColor, localToWorld } from './gl/body.js';
@@ -73,7 +74,7 @@ export class Scene {
     this.goal = null; this.off = { yaw: 0, pitch: 0 }; this.hover = null; this.t = 0; this.breathPh = 0; this.compAmt = 0; this.shockT = 0; this.tone = 2; this.body = null;
     this.auto = false;            // slow cinematic orbit (case menu)
     this.inset = { l: 0, r: 0, t: 0, b: 0 }; this.shift = 0; this.shiftY = 0;   // screen px covered by panels on each side (ui.updateInsets)
-    this.faceAnim = new FaceAnim();
+    this.faceAnim = new FaceAnim(); this.cprAnim = new CprAnim();
     this.gest = new Gestures(); this.rescuerHands = true; this.pins = []; this._bindInput(canvas);
   }
 
@@ -436,9 +437,8 @@ export class Scene {
     { const k = 1 - Math.exp(-realDt / 0.22); this.sheetB = (this.sheetB || [0, 0, 0]).map((v, i) => Math.max(breath[i], v + (breath[i] - v) * k)); }
     const sheetBreath = this.sheetB.map(v => v * 1.08 + 0.003);
     // compressions: animate each engine compression event
-    let comp = 0; const ev = p.cpr.events;
-    if (arrested && ev.length) { const age = p.t - ev[ev.length - 1].t, d = ev[ev.length - 1].depth / 100; if (age >= 0 && age < 0.28) comp = d * Math.sin(Math.PI * age / 0.28); }
-    this.compAmt += (comp - this.compAmt) * (1 - Math.exp(-realDt * 40));
+    const cpr = this.cprAnim.update(realDt, p);              // sternum travel, mattress sink, head, arms, belly (cpr-anim.js)
+    this.compAmt = cpr.sternum;
     if (p.shockLog.length && p.shockLog[p.shockLog.length - 1].t !== this._shockSeen) { this._shockSeen = p.shockLog[p.shockLog.length - 1].t; this.shockT = 0.35; }
     this.shockT = Math.max(0, this.shockT - realDt);
     const jerk = this.shockT > 0 ? Math.sin(this.shockT * 60) * 0.004 : 0;
@@ -466,7 +466,7 @@ export class Scene {
     const PAINFUL = ['needle', 'cannula', 'drain', 'fona', 'laryn', 'step_scalpel'], st = this.world.sternum;
     const hurt = this.gest.list.find(g => PAINFUL.includes(g.k) && this.t >= g.t0 && this.t <= g.t0 + g.dur);
     const faceW = this.faceAnim.update(realDt, p, { painful: !!hurt, side: hurt?.f?.p ? clamp(-(hurt.f.p[2] - st[2]) * (this.sideSign || 1) / 0.2, -1, 1) : 0 });
-    const o = { breath, bFrame: B.bFrame, compress: this.compAmt, face: faceW };
+    const o = { breath, bFrame: B.bFrame, compress: this.compAmt, face: faceW, cpr: [cpr.head, cpr.sink, cpr.arms, cpr.belly] };
     const sheetCol = p.therm.cover < 1 ? [0.74, 0.58, 0.40] : [0.72, 0.79, 0.84];
     if (B.b.glb) {
       const T = this.asset.tex, tint = skin.map((v, i) => v / TONE_REF[i]), A = (k) => T['patient_' + k] || {};
@@ -518,7 +518,7 @@ export class Scene {
     const hose = (a, ctrl, b, rad, col, extra = {}) => { let prev = a; for (let i = 1; i <= 12; i++) { const k = i / 12, q = [0, 1, 2].map(j => (1 - k) * (1 - k) * a[j] + 2 * (1 - k) * k * ctrl[j] + k * k * b[j]); seg(prev, q, rad, col, extra); prev = q; } };
     const SF = (k) => this.siteFrame?.(k);
     const onSkin = (f, h = 0.002) => [f.p[0] + f.n[0] * h, f.p[1] + f.n[1] * h, f.p[2] + f.n[2] * h];
-    const ride = (q) => { const left = (q[2] - W.sternum[2]) * (this.sideSign || 1) < 0; return [q[0], q[1] + 0.85 * (left ? breath[0] : breath[1]), q[2]]; };   // things stuck on the chest rise with it
+    const ride = (q) => { const left = (q[2] - W.sternum[2]) * (this.sideSign || 1) < 0; return [q[0], q[1] + 0.85 * (left ? breath[0] : breath[1]) - cpr.sink * B.b.scale, q[2]]; };   // things stuck on the chest rise with it
     if (fl.padsOn) {                                            // multifunction pads stuck on the skin, red leads to the defibrillator
       for (const [k, nm] of [['padRight', 'defibPadRight'], ['padLeft', 'defibPadLeft']]) { const f = SF(k) || { p: W[k], n: [0, 1, 0] }; inst(nm, ride(onSkin(f, 0.003)), f.n, 0, { noHand: true }); }
       const pr = W.padRight; hose(up(pr, 0.02), [pr[0] + 0.3, 1.05, pr[2] - 0.35], [CART[0] + 0.19, 1.0, CART[2] + 0.17], 0.004, [0.72, 0.07, 0.06], { spec: 0.5 });
@@ -563,7 +563,15 @@ export class Scene {
         let prev = a; for (let i = 1; i <= 16; i++) { const t = i / 16, q = [0, 1, 2].map(j => (1 - t) * (1 - t) * a[j] + 2 * (1 - t) * t * ctrl[j] + t * t * b[j]); seg(prev, q, i % 2 ? 0.0105 : 0.0115, k < 0 ? [0.55, 0.68, 0.8] : [0.82, 0.86, 0.9], { alpha: 0.85, spec: 0.7 }); prev = q; }
       }
     }
-    // chest compressions are shown by the chest itself (compression weights) and the monitor's CPR artefact
+    // chest compressions: the chest itself (compression weights), the monitor's CPR artefact, and the rescuer's two hands, heel of the
+    // lower hand on the lower half of the sternum, fingers interlaced, arms coming straight down from the rescuer at the patient's side
+    if (cpr.active && this.hands?.hand_cprBottom && B.bFrame.compPt) {
+      const k = B.b.scale, cp = localToWorld(B.M, B.bFrame.compPt), n = this.normalAt?.(cp) || [0, 1, 0];
+      const skin = [cp[0] + n[0] * 0.004, cp[1] + n[1] * 0.004 - (cpr.sternum + cpr.sink) * k, cp[2] + n[2] * 0.004];
+      const ax = vec3.norm([n[0] * 0.3, 1, n[2] * 0.3]), op = vec3.norm([0, 0.8, -1]);
+      inst('cprBottom', skin, ax, -0.18, { toward: op });                   // the two forearms meet at a slight angle, as from two shoulders
+      inst('cprTop', vec3.add(skin, vec3.scale(ax, 0.026)), ax, 0.18, { toward: op });
+    }
     // surgical gestures: catheter, chest drain, surgical airway, ultrasound mark
     const ch = p.chest, nk = p.neck;
     if (ch) {
