@@ -188,7 +188,7 @@ Total: 6,404 triangles, 0.21 MB. Materials are plain colours (no textures). Clea
 
 ## hands.glb
 
-A gloved adult hand per grip: 14 top-level mesh nodes (12 right hands and two left), about 5,400 triangles each, 1.21 MB, no textures. Two
+A gloved adult hand per grip: 18 top-level mesh nodes (13 right hands and five left), about 5,400 triangles each, 1.73 MB, no textures. Two
 materials: `nitrile_glove` (#4c75d1, roughness 0.55: nitrile is satin) and `gown_sleeve` (pale blue). The app draws the glove
 with a nitrile shader (fine stipple, slight translucency) and the sleeve with the fabric shader. The hand is the
 MakeHuman/MPFB base-mesh right hand (sex-neutral adult, glove size about 7.5 to 8). It is posed with the MakeHuman
@@ -219,6 +219,19 @@ instruments.glb above). The node transform is identity.
 | `hand_pressL` | its own (same as `hand_press`) | **left** hand resting flat beside a puncture or incision, thumb and index spread to tense the skin: the right-hand pose mirrored across the fingers (glTF z -> -z) |
 | `hand_cprBottom` | its own: origin = heel of the hand on the skin | CPR, lower (right) hand: heel on the lower half of the sternum, wrist extended about 60° so the forearm stands over the chest, fingers lifted off the ribs |
 | `hand_cprTop` | its own (same as `hand_cprBottom`) | CPR, upper (**left**) hand on the back of the lower one, fingers hooked down between its fingers. The app stacks it 26 mm above the lower hand and turns the two about 10° apart so the forearms meet as from two shoulders |
+| `hand_laryngoscope` | `laryngoscope` | **left** hand, palmar grip low on the handle next to the blade hinge, thumb along the handle; the handle crosses the palm 15° obliquely so the forearm leans back toward the operator |
+| `hand_ett` | its own: origin on the tracheal tube axis, +Y along the tube toward its connector | right hand, pencil grip on the tube (the app draws the tube itself) |
+| `hand_faceMask` | `faceMask` | **left** hand, E-C grip: thumb and index make a C on the mask body around the connector, the other three fingers hook under the mandible |
+| `hand_bronchoscope` | `bronchoscope` | right hand, pencil grip on the insertion tube 10 cm from the tip |
+
+**Finger movements (morph targets).** Hands that work have position-only morph targets (sparse), in the same instrument
+frame: `act` is what the fingers do during the act (syringe: the thumb pushes the plunger 11 mm; cannula and 14G needle:
+the index slides the catheter forward 10 mm off the needle; press and stethoscope: the fingertips press; probe, drain,
+laryngoscope: the grip firms up; scalpel: the index presses on the blade; face mask: the three E fingers lift the jaw;
+left skin hand: thumb and index spread to stretch the skin). `relax` (press hands only) is an empty hand in the air,
+fingers loosely curled. They are built by re-posing the same rig (`KEYS` in `build_hands.py`), so every key has the same
+vertices as the base mesh; the build refuses to decimate a hand that has keys. The app blends them on the GPU
+(`opts.act`, `opts.relax` of `scene._instrument`, weights 0..1 set by `gestures.js`).
 
 The forearm leaves each hand at a natural angle: wrist extended 32 degrees for the flat-palm grips (22 for the left hand)
 and 8 to 14 degrees for the others, except the 14G needle, which is held with the wrist flexed 10 degrees so that a needle

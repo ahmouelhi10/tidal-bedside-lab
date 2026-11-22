@@ -59,8 +59,14 @@ test('patient asset: size budget and expected content', { skip: !have && 'patien
   const ins = parseGlb(ab(fs.readFileSync(path.join(ASSETS, 'instruments.glb'))));
   for (const k of ['stethoscope', 'usProbe', 'laryngoscope', 'faceMask']) assert.ok(ins.meshes[k], 'instrument ' + k);
   const hands = parseGlb(ab(fs.readFileSync(path.join(ASSETS, 'hands.glb'))));
-  for (const k of ['hand_stethoscope', 'hand_usProbe', 'hand_cprBottom', 'hand_cprTop']) assert.ok(hands.meshes[k], k);
-  assert.ok(fs.statSync(path.join(ASSETS, 'hands.glb')).size < 1.5e6, 'hands.glb under 1.5 MB');
+  for (const k of ['hand_stethoscope', 'hand_usProbe', 'hand_cprBottom', 'hand_cprTop', 'hand_laryngoscope', 'hand_ett', 'hand_faceMask', 'hand_bronchoscope']) assert.ok(hands.meshes[k], k);
+  // 18 hands of ~5,400 triangles plus their finger morph targets (positions only, sparse)
+  assert.ok(fs.statSync(path.join(ASSETS, 'hands.glb')).size < 1.9e6, 'hands.glb under 1.9 MB');
+  // finger movements: the syringe thumb travels about the plunger stroke; the gown sleeve does not move
+  const sy = hands.meshes.hand_syringe.prims, glovePr = sy.find(p => /glove/.test(p.material?.name)), sleevePr = sy.find(p => /sleeve/.test(p.material?.name));
+  const mx = (pr, k) => { const d = pr.targets[pr.targetNames.indexOf(k)]?.pos; let m = 0; if (d) for (let i = 0; i < d.length; i += 3) m = Math.max(m, Math.hypot(d[i], d[i + 1], d[i + 2])); return m; };
+  assert.ok(mx(glovePr, 'act') > 0.008 && mx(glovePr, 'act') < 0.03 && mx(sleevePr, 'act') < 1e-6, `syringe thumb ${mx(glovePr, 'act')}`);
+  for (const k of ['hand_press', 'hand_pressL']) assert.ok(mx(hands.meshes[k].prims.find(p => /glove/.test(p.material?.name)), 'relax') > 0.01, k + ' relaxes');
   assert.deepEqual(g.meshes.patient_body.targetNames, ['female', 'heavy', 'thin', 'old', 'female_heavy', 'female_thin', 'female_old', 'face_blink', 'face_jaw', 'face_pain', 'face_gaze']);
   // face expressions are stored sparse: they must decode to real movement on the face and none elsewhere
   const b = g.meshes.patient_body, blink = b.targets[7].pos, jaw = b.targets[8].pos; let moved = 0, far = 0;

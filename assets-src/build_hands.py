@@ -134,6 +134,47 @@ GRIPS = {
                         pre={'index': ('curl', [38, 62, 40], 2), 'middle': ('curl', [40, 64, 42], 0),
                              'ring': ('curl', [42, 66, 44], -2), 'pinky': ('curl', [44, 66, 44], -4)}, post={'thumb': (0.02, 0.045, 0.004)},
                         label='CPR, upper hand: palm on the back of the lower hand, fingers interlaced; origin = heel of the hand'),
+    # laryngoscopy: the left hand grips the handle low, next to the blade hinge, the blade leaving the fist on the little-finger
+    # side and the thumb along the handle; the handle crosses the palm a little obliquely (15 deg) so the forearm leans back toward the
+    # operator without filling the head-end camera (built right, mirrored)
+    'hand_laryngoscope': dict(instrument='laryngoscope', wrist=(8, 0), mode='frame', mirror=True, p=(0.058, 0, 0.131), q=(0.033, 0.0, 0.0175), z=(-0.97, 0.26, 0), x=(0.26, 0.97, 0),
+                              pre={'index': ('curl', [50, 70, 40], 0), 'middle': ('curl', [54, 74, 42], 0), 'ring': ('curl', [56, 76, 44], 0), 'pinky': ('curl', [58, 78, 46], 0)},
+                              post={'thumb': (0.098, 0.011, 0.140)},
+                              label='left hand, palmar grip low on the handle, thumb along it'),
+    # the right hand passes the tracheal tube like a pen; origin = a point on the tube axis, +Z along the tube toward its connector
+    'hand_ett': dict(instrument=None, wrist=(14, -6), mode='pencil', p=(0, 0, 0), axis_r=0.0075, pre=PENCIL_PRE,
+                     label='right hand, pencil grip on the tracheal tube (origin on the tube axis)'),
+    # face mask, E-C grip (left hand, built right then mirrored): thumb and index make a C on the mask body around the
+    # connector, the other three fingers hook under the mandible; instrument +X (along the mask) points down the fingers
+    'hand_faceMask': dict(instrument='faceMask', wrist=(10, 0), mode='frame', mirror=True, p=(0, 0, 0.062), q=(0.036, 0.038, -0.004), z=(0, 0, -1), x=(1, 0, 0),
+                          pre={'middle': ('curl', [40, 58, 40], -2), 'ring': ('curl', [44, 60, 42], -6), 'pinky': ('curl', [48, 62, 44], -12)},
+                          post={'thumb': (-0.032, 0.0, 0.042), 'index': (0.030, 0.0, 0.040)},
+                          label='left hand, E-C grip on the face mask'),
+    # flexible bronchoscope: the right hand feeds the insertion tube a few centimetres from the mouth
+    'hand_bronchoscope': dict(instrument='bronchoscope', wrist=(14, -6), mode='pencil', p=(0, 0, 0.10), axis_r=0.0028, pre=PENCIL_PRE,
+                              label='right hand, pencil grip on the insertion tube'),
+}
+
+# Finger movements while working, stored as morph targets of each hand (glTF shape keys) and blended by the app:
+#   act   - what the fingers do during the act (thumb pushes the plunger, index slides the catheter off the needle,
+#           fingertips press, the grip tightens);
+#   relax - an empty hand in the air: fingers loosely curled, flattening as it lands on the skin.
+# Ops run on the finished grip pose: ('curl', finger, [mcp, pip, dip] degrees added, abduction degrees),
+# ('shift', finger, (x, y, z) metres in the instrument frame) moves the fingertip by IK, ('shiftH', ...) in the hand frame (u, w, n).
+_ALL4 = ('index', 'middle', 'ring', 'pinky')
+_RELAX = [('curl', f, [10, 18, 10], 0) for f in _ALL4] + [('curl', 'thumb', [5, 8, 6], 0)]
+KEYS = {
+    'hand_syringe': {'act': [('shift', 'thumb', (0, 0, -0.011))]},                # plunger pushed home (11 mm)
+    'hand_ivCannula': {'act': [('shift', 'index', (0, 0, -0.010))]},              # index pushes the catheter off the needle
+    'hand_needle14G': {'act': [('shift', 'index', (0, 0, -0.010))]},
+    'hand_press': {'act': [('curl', f, [4, 16, 14], 0) for f in ('index', 'middle', 'ring')], 'relax': _RELAX},
+    'hand_pressL': {'act': [('curl', 'index', [0, 0, 0], 8), ('shiftH', 'thumb', (-0.004, 0.008, 0))], 'relax': _RELAX},   # thumb and index spread: skin stretched
+    'hand_stethoscope': {'act': [('curl', f, [4, 10, 8], 0) for f in ('index', 'middle')]},
+    'hand_usProbe': {'act': [('curl', f, [5, 6, 4], 0) for f in _ALL4]},
+    'hand_scalpel': {'act': [('curl', 'index', [5, 8, 4], 0)]},
+    'hand_chestDrain': {'act': [('curl', f, [4, 5, 3], 0) for f in _ALL4]},
+    'hand_laryngoscope': {'act': [('curl', f, [4, 6, 4], 0) for f in _ALL4]},
+    'hand_faceMask': {'act': [('curl', f, [8, 12, 10], 0) for f in ('middle', 'ring', 'pinky')]},   # jaw thrust into the mask
 }
 
 
@@ -262,8 +303,9 @@ def curl_finger(rig, f, angles, abd, n):
         rot_world(rig, b, axis_now(rig, b, ks[b]), math.radians(a))
 
 
-def ik_finger(rig, f, target, n, iters=40, maxflex=110):
-    """CCD: knuckle (MCP / thumb CMC) may flex and spread, the two distal joints only flex (0..110 deg)."""
+def ik_finger(rig, f, target, n, iters=40, maxflex=110, minflex=0):
+    """CCD: knuckle (MCP / thumb CMC) may flex and spread, the two distal joints only flex (0..110 deg; minflex < 0 lets them
+    straighten from the current pose)."""
     ch = chain(f)
     ks = flex_axes(rig, f, n)
     flex = {b: 0.0 for b in ch}
@@ -283,7 +325,7 @@ def ik_finger(rig, f, target, n, iters=40, maxflex=110):
                 if a2.length < 1e-6 or c2.length < 1e-6:
                     continue
                 ang = math.atan2(k.dot(a2.cross(c2)), a2.dot(c2))
-                new = max(0.0, min(math.radians(maxflex), flex[b] + ang))
+                new = max(math.radians(minflex), min(math.radians(maxflex), flex[b] + ang))
                 rot_world(rig, b, k, new - flex[b])
                 flex[b] = new
         if (Tl(rig, ch[-1]) - target).length < 0.0008:
@@ -474,11 +516,29 @@ def mirror_left(ob):
     ob.data.update()
 
 
-def build_hand_object(name, human, rig, tmpl, orig, M, T, edges, mats):
-    Pw = evaluated_world(human)[orig]
-    Pg = glove(Pw, T, edges)
+def glove_world(human, rig, orig, T, edges):
+    """The gloved hand surface in the current pose (world space)."""
+    Pg = glove(evaluated_world(human)[orig], T, edges)
     wr0, el0 = np.array(Hd(rig, 'wrist.R')), np.array(Hd(rig, 'lowerarm01.R'))
-    Pg = glove_folds(Pg, T, rig, wr0, (wr0 - el0) / np.linalg.norm(wr0 - el0))
+    return glove_folds(Pg, T, rig, wr0, (wr0 - el0) / np.linalg.norm(wr0 - el0))
+
+
+def apply_ops(rig, ops, M, d_palm):
+    """Finger movements on top of a grip pose (see KEYS)."""
+    errs = {}
+    for op in ops:
+        _, u, w, n = hand_frame(rig, d_palm)
+        kind, f, v = op[0], op[1], op[2]
+        if kind == 'curl':
+            curl_finger(rig, f, v, op[3], n)
+        else:
+            d = (M.to_3x3() @ Vector(v)) if kind == 'shift' else (u * v[0] + w * v[1] + n * v[2])
+            errs[f] = round(ik_finger(rig, f, Tl(rig, chain(f)[-1]) + d, n, iters=120, minflex=-40) * 1000, 1)
+    return errs
+
+
+def build_hand_object(name, human, rig, tmpl, orig, M, T, edges, mats):
+    Pg = glove_world(human, rig, orig, T, edges)
     Minv = np.array(M.inverted())
     wr, el = np.array(Hd(rig, 'wrist.R')), np.array(Hd(rig, 'lowerarm01.R'))
     f = (wr - el) / np.linalg.norm(wr - el)
@@ -530,6 +590,7 @@ def build_hand_object(name, human, rig, tmpl, orig, M, T, edges, mats):
     bpy.context.scene.collection.objects.link(ob)
     tris = sum(len(p.vertices) - 2 for p in me.polygons)
     if tris > TRI_BUDGET:
+        assert name not in KEYS, name + ': over the triangle budget, decimating would break its finger morph targets'
         dec = ob.modifiers.new('dec', 'DECIMATE')
         dec.ratio = TRI_BUDGET / tris
         with bpy.context.temp_override(object=ob, active_object=ob, selected_objects=[ob]):
@@ -561,6 +622,24 @@ def main():
         ob = build_hand_object(name, human, rig, tmpl, orig, M, T, edges, mats)
         if g.get('mirror'):
             mirror_left(ob)
+        if name in KEYS:                                          # finger movements: same vertices, other pose, in the instrument frame
+            base = glove_world(human, rig, orig, T, edges)
+            R = np.array(M.inverted().to_3x3())
+            co0 = np.empty(len(ob.data.vertices) * 3)
+            ob.data.vertices.foreach_get('co', co0)
+            co0 = co0.reshape(-1, 3)
+            ob.shape_key_add(name='Basis', from_mix=False)
+            for kname, ops in KEYS[name].items():
+                pose_grip(rig, g, d_palm)
+                errs['%s:%s' % (kname, ','.join(sorted({o[1] for o in ops})))] = apply_ops(rig, ops, M, d_palm)
+                d = (glove_world(human, rig, orig, T, edges) - base) @ R.T
+                if g.get('mirror'):
+                    d[:, 1] *= -1
+                co = co0.copy()
+                co[:len(d)] += d
+                kb = ob.shape_key_add(name=kname, from_mix=False)
+                kb.data.foreach_set('co', co.astype(np.float32).ravel())
+                errs['%s_maxMm' % kname] = round(float(np.linalg.norm(d, axis=1).max()) * 1000, 1)
         ob['instrument'] = g['instrument'] or ''
         ob['grip'] = g['label']
         ob['frame'] = 'instrument' if g['instrument'] else 'skin contact: origin = palm centre, +Y = back of the hand'
@@ -576,7 +655,7 @@ def main():
     props = bpy.ops.export_scene.gltf.get_rna_type().properties.keys()
     kw = dict(filepath=OUT_GLB, export_format='GLB', use_selection=True, export_yup=True, export_apply=False,
               export_normals=True, export_texcoords=False, export_tangents=False, export_materials='EXPORT',
-              export_extras=True, export_animations=False, export_skins=False, export_morph=False, export_cameras=False,
+              export_extras=True, export_animations=False, export_skins=False, export_morph=True, export_morph_normal=False, export_cameras=False,
               export_lights=False)
     if 'export_vertex_color' in props:
         kw['export_vertex_color'] = 'NONE'

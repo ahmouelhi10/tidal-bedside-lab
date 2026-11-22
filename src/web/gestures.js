@@ -9,8 +9,11 @@
 //  - a hand does not slide in on a rail: it arrives on a curve from the operator's side, the wrist turning and rolling
 //    into the working angle on the way, and leaves the same way;
 //  - while it holds, it shows a faint physiological tremor (~9 Hz, 0.2 mm) and a slow postural sway (~0.6 Hz);
-//  - for punctures and incisions the other gloved hand arrives first and stretches the skin beside the site.
-const ease = (x) => { x = Math.min(1, Math.max(0, x)); return x * x * x * (x * (6 * x - 15) + 10); };   // minimum jerk
+//  - for punctures and incisions the other gloved hand arrives first and stretches the skin beside the site;
+//  - the fingers work (hands.glb morph targets, opts.act / opts.relax): the thumb pushes the plunger, the index slides the
+//    catheter off the needle, fingertips press, grips firm up; an empty hand comes in loosely curled and flattens on the skin;
+//  - at intubation the right hand passes the tube while the left holds the laryngoscope.
+const ease = (x) => { x = Math.min(1, Math.max(0, x)); return Math.min(1, x * x * x * (x * (6 * x - 15) + 10)); };   // minimum jerk (never past 1 by rounding)
 const seg01 = (u, a, b) => ease((u - a) / (b - a));       // 0 before a, 1 after b
 const add = (p, v, k = 1) => [p[0] + v[0] * k, p[1] + v[1] * k, p[2] + v[2] * k];
 const norm = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
@@ -89,7 +92,7 @@ export class Gestures {
     const h = g.help; if (!h || !c.scene?.hands?.hand_pressL) return;
     const k = 1 - seg01(u, 0, 0.16) + seg01(u, 0.9, 1);
     const p = add(add(add(h.p, h.n, 0.004 + 0.12 * k), g.side || h.n, 0.05 * Math.sin(k * Math.PI * 0.5)), this._tremor(g, t + 1.3, 0.6 * (1 - k)));
-    c.inst('pressL', p, h.n, this._angleFor(h.n, h.d), { noShadow: false });
+    c.inst('pressL', p, h.n, this._angleFor(h.n, h.d), { noShadow: false, relax: k, act: (1 - k) * seg01(u, 0.18, 0.3) });   // fingers loose in the air, flat on the skin, then thumb and index spread it
   }
 
   /** Generic gesture for a guided-procedure step that has no engine event of its own. site: world point. */
@@ -131,10 +134,10 @@ export class Gestures {
     return { tip, d, r, op: g?.op };
   }
   _insert(c, name, p, dir, inside, away, roll = 0, g = null, t = 0, opts) { const q = this._pose(p, dir, inside, away, roll, g, t); c.inst(name, q.tip, neg(q.d), q.r, { toward: g?.op, ...opts }); }
-  /** Syringe with a moving plunger: the barrel stays, the plunger and the thumb on it travel `push` metres toward the tip. */
+  /** Syringe with a moving plunger: the hand holds the barrel by its flange and the thumb pushes the plunger `push` metres toward the tip. */
   _syringeAt(c, q, push) {
-    c.inst('syringe', q.tip, neg(q.d), q.r, { noHand: true, skip: ['white_plastic', 'black_rubber'], toward: q.op });
-    c.inst('syringe', add(q.tip, q.d, push), neg(q.d), q.r, { only: ['white_plastic', 'black_rubber'], toward: q.op });
+    c.inst('syringe', q.tip, neg(q.d), q.r, { skip: ['white_plastic', 'black_rubber'], toward: q.op, act: Math.min(1, push / 0.011) });
+    c.inst('syringe', add(q.tip, q.d, push), neg(q.d), q.r, { noHand: true, only: ['white_plastic', 'black_rubber'], toward: q.op });
   }
   _mark(c, m, t) {
     const k = Math.min(1, Math.max(0, (t - m.t0) / m.grow)); if (k <= 0) return;
@@ -156,13 +159,13 @@ export class Gestures {
   _cannula(c, g, u, t) {
     const f = g.f, dir = norm(add(neg(f.n), g.arm, 2.7));                       // 15-20 degrees to the skin, toward the hand... the vein runs proximally
     const away = 0.16 * (1 - seg01(u, 0, 0.3)), inside = 0.022 * seg01(u, 0.32, 0.55) - 0.03 * seg01(u, 0.75, 0.95);
-    if (u < 0.62) this._insert(c, 'ivCannula', f.p, dir, inside, away, 0, g, t);
-    else if (u < 0.98) { const back = 0.12 * seg01(u, 0.62, 0.95); c.inst('ivCannula', add(add(add(f.p, dir, 0.02), neg(dir), back), this._tremor(g, t, 1 - back * 6)), neg(dir), 0, { only: ['steel'], toward: g.op }); }   // the needle is withdrawn, the catheter stays
+    if (u < 0.62) this._insert(c, 'ivCannula', f.p, dir, inside, away, 0, g, t, { act: seg01(u, 0.5, 0.6) });   // flashback: the index slides the catheter off the needle
+    else if (u < 0.98) { const back = 0.12 * seg01(u, 0.62, 0.95); c.inst('ivCannula', add(add(add(f.p, dir, 0.02), neg(dir), back), this._tremor(g, t, 1 - back * 6)), neg(dir), 0, { only: ['steel'], toward: g.op, act: 1 }); }   // the needle is withdrawn, the catheter stays
   }
   _needle(c, g, u, t) {
     const f = g.f, dir = neg(f.n), away = 0.14 * (1 - seg01(u, 0, 0.3)), inside = g.depth * seg01(u, 0.3, 0.55);
-    if (u < 0.72) this._insert(c, 'needle14G', f.p, dir, inside, away, 0, g, t);
-    else { const back = 0.14 * seg01(u, 0.72, 1), m = this._path(g, back / REACH, t); c.inst('needle14G', add(add(add(f.p, dir, g.depth), f.n, back), m.off), norm(add(f.n, g.side || f.n, m.tilt)), m.roll, { only: ['steel', 'orange_14G', 'flash_orange'], toward: g.op }); }
+    if (u < 0.72) this._insert(c, 'needle14G', f.p, dir, inside, away, 0, g, t, { act: seg01(u, 0.56, 0.7) });   // the catheter is advanced off the needle
+    else { const back = 0.14 * seg01(u, 0.72, 1), m = this._path(g, back / REACH, t); c.inst('needle14G', add(add(add(f.p, dir, g.depth), f.n, back), m.off), norm(add(f.n, g.side || f.n, m.tilt)), m.roll, { only: ['steel', 'orange_14G', 'flash_orange'], toward: g.op, act: 1 }); }
     if (g.puff && u > 0.5 && u < 0.85) {                                         // pressurised air escaping through the catheter
       const k = (u - 0.5) / 0.35;
       for (let i = 0; i < 6; i++) { const ph = (k * 1.8 + i * 0.17) % 1, q = add(add(f.p, f.n, 0.05 + 0.07 * ph), [Math.sin(i * 2.3) * 0.01, 0, Math.cos(i * 1.7) * 0.01]); c.blob(q, 0.004 + 0.012 * ph, 0.004 + 0.012 * ph, 0.004 + 0.012 * ph, [0.95, 0.97, 1.0], { alpha: 0.35 * (1 - ph), noShadow: true }); }
@@ -174,19 +177,19 @@ export class Gestures {
     if (u < 0.32) {
       const s = seg01(u, 0.08, 0.28), away = 0.12 * (1 - seg01(u, 0, 0.08)) + 0.12 * seg01(u, 0.28, 0.32), m = this._path(g, away / REACH, t);
       const tip = add(add(add(f.p, along, (s - 0.5) * 0.03), f.n, away - 0.004), m.off), blade = norm(add(neg(f.n), along, -0.9));
-      c.inst('scalpel', tip, norm(add(neg(blade), g.side, m.tilt)), Math.PI / 2 + m.roll);
+      c.inst('scalpel', tip, norm(add(neg(blade), g.side, m.tilt)), Math.PI / 2 + m.roll, { act: seg01(u, 0.06, 0.1) * (1 - seg01(u, 0.27, 0.3)) });
     }
     if (u >= 0.08 && !g._m) { g._m = { kind: 'cut', p: f.p, n: f.n, tan: along, len: 0.03, t0: g.t0 + g.dur * 0.08, grow: g.dur * 0.2 }; this.marks.push(g._m); }
     // 2. blunt dissection with the forceps: opened and spread twice in the track
     if (u >= 0.32 && u < 0.5) { const k = Math.sin(seg01(u, 0.34, 0.48) * Math.PI), wob = 0.25 * Math.sin(seg01(u, 0.36, 0.46) * Math.PI * 4); this._insert(c, 'forcepsGauze', f.p, neg(f.n), 0.02 * k, 0.1 * (1 - k), wob, g, t); }
     // 3. the drain is fed through, aimed at the apex, with a slight twist as it is advanced
-    if (u >= 0.5) { const dir = norm(add(neg(f.n), HEAD, 0.9)); this._insert(c, 'chestDrain', f.p, dir, 0.11 * seg01(u, 0.55, 0.9), 0.2 * (1 - seg01(u, 0.5, 0.6)), 0.35 * Math.sin(seg01(u, 0.55, 0.9) * Math.PI * 2), g, t); }
+    if (u >= 0.5) { const dir = norm(add(neg(f.n), HEAD, 0.9)); this._insert(c, 'chestDrain', f.p, dir, 0.11 * seg01(u, 0.55, 0.9), 0.2 * (1 - seg01(u, 0.5, 0.6)), 0.35 * Math.sin(seg01(u, 0.55, 0.9) * Math.PI * 2), g, t, { act: seg01(u, 0.53, 0.6) }); }
   }
   _fona(c, g, u, t) {
     const f = g.f, tan = g.vertical ? this._tan(f, HEAD) : this._tan(f, [0, 0, 1]);
     if (u < 0.4) {                                                              // stab, then turn the blade 90 degrees
       const away = 0.12 * (1 - seg01(u, 0, 0.12)) + 0.12 * seg01(u, 0.36, 0.4), slide = g.vertical ? (seg01(u, 0.12, 0.3) - 0.5) * 0.06 : 0, m = this._path(g, away / REACH, t);
-      c.inst('scalpel', add(add(add(f.p, tan, slide), f.n, away - 0.008), m.off), norm(add(f.n, g.side, m.tilt)), (Math.PI / 2) * seg01(u, 0.22, 0.32) + m.roll);
+      c.inst('scalpel', add(add(add(f.p, tan, slide), f.n, away - 0.008), m.off), norm(add(f.n, g.side, m.tilt)), (Math.PI / 2) * seg01(u, 0.22, 0.32) + m.roll, { act: seg01(u, 0.1, 0.14) * (1 - seg01(u, 0.34, 0.38)) });
     }
     if (u >= 0.12 && !g._m) { g._m = { kind: 'cut', p: f.p, n: f.n, tan, len: g.vertical ? 0.06 : 0.015, t0: g.t0 + g.dur * 0.12, grow: g.dur * 0.15 }; this.marks.push(g._m); }
     if (u >= 0.4 && u < 0.92) { const dir = norm(add(neg(f.n), FOOT, 0.7)); this._insert(c, 'bougie', f.p, dir, 0.08 * seg01(u, 0.45, 0.75), 0.25 * (1 - seg01(u, 0.4, 0.5)), 0, g, t); }
@@ -196,16 +199,16 @@ export class Gestures {
     const m = this._path(g, lift / REACH, t);
     c.inst(name, add(add(p, n, lift), m.off), norm(add(n, g.side || n, m.tilt)), roll + m.roll, { toward: g.op, ...opts });
   }
-  _press(c, g, u, t) {                                                         // a gloved hand palpates / presses the site: lands, presses three times, lifts off
-    const f = g.f, lift = 0.1 * (1 - seg01(u, 0, 0.25)) + 0.1 * seg01(u, 0.8, 1) - 0.004 * Math.sin(Math.min(1, Math.max(0, (u - 0.3) / 0.45)) * Math.PI * 3);
-    this._onto(c, g, 'press', f.p, f.n, lift, 0, t);
+  _press(c, g, u, t) {                                                         // a gloved hand palpates / presses the site: lands, presses three times with the fingertips, lifts off
+    const f = g.f, air = 1 - seg01(u, 0, 0.25) + seg01(u, 0.8, 1), push = Math.abs(Math.sin(Math.min(1, Math.max(0, (u - 0.3) / 0.45)) * Math.PI * 3));
+    this._onto(c, g, 'press', f.p, f.n, 0.1 * air - 0.004 * push, 0, t, { relax: air, act: push });
   }
   _probe(c, g, u, t) {                                                         // phased-array probe in a palmar grip: lens on the gel, slow sweep and a fanning tilt
     const f = g.f, side = this._tan(f, [0, 0, 1]), sw = Math.sin(seg01(u, 0.2, 0.84) * Math.PI * 2), fan = 0.22 * Math.sin(seg01(u, 0.2, 0.84) * Math.PI * 3);
     const lift = 0.12 * (1 - seg01(u, 0, 0.2)) + 0.12 * seg01(u, 0.86, 1), m = this._path(g, lift / REACH, t);
     const p = add(add(add(f.p, side, 0.035 * sw), f.n, lift + 0.0015), m.off), axis = norm(add(add(f.n, side, fan), g.side || f.n, m.tilt));
     c.disc(add(f.p, f.n, 0.001), f.n, side, 0.032, 0.022, [0.72, 0.86, 0.96], { alpha: 0.4 * (1 - seg01(u, 0.86, 1)), spec: 1, noShadow: true });   // gel
-    c.inst('usProbe', p, axis, m.roll, { toward: g.op });
+    c.inst('usProbe', p, axis, m.roll, { toward: g.op, act: (1 - lift / 0.12) * (0.4 + 0.6 * Math.abs(fan) / 0.22) });   // grip tightens as the probe is fanned
   }
   _steth(c, g, u, t) {                                                         // stethoscope chest piece under the fingers, lifted and placed on four listening points
     const f = g.f, side = this._tan(f, [0, 0, 1]), along = this._tan(f, HEAD), pts = [[0.07, 0.08], [0.07, -0.08], [-0.05, 0.09], [-0.05, -0.09]];
@@ -213,15 +216,19 @@ export class Gestures {
     const move = ease(Math.min(1, s / 0.25)), arc = i > 0 && s < 0.25 ? 0.03 * Math.sin(move * Math.PI) : 0;   // travel in a small arc from the previous point
     const at = [prev[0] + (P[0] - prev[0]) * move, prev[1] + (P[1] - prev[1]) * move];
     const lead = i === 0 ? 0.12 * (1 - seg01(u, 0, 0.12)) : 0, out = i === 3 ? 0.12 * seg01(s, 0.7, 1) : 0, press = s > 0.3 && s < 0.85 ? -0.0015 : 0;
-    this._onto(c, g, 'stethoscope', add(add(f.p, along, at[0]), side, at[1]), f.n, 0.001 + arc + lead + out + press, 0, t);
+    this._onto(c, g, 'stethoscope', add(add(f.p, along, at[0]), side, at[1]), f.n, 0.001 + arc + lead + out + press, 0, t, { act: seg01(s, 0.25, 0.35) * (1 - seg01(s, 0.8, 0.9)) });   // fingertips press the diaphragm on while listening
   }
   _laryn(c, g, u, t) {                                                         // Macintosh 3 laryngoscope: blade slid along the tongue, lifted along the handle axis, tube passed, withdrawn
     const sc = c.scene, a = sc.world.airway, mouth = [a[0], a[1] + 0.01, a[2] - 0.006];
     const blade = norm([0.52, 0.85, 0]), handle = norm([-0.85, 0.52, 0]);   // blade axis out of the mouth toward the head; handle up and toward the feet
     const inn = seg01(u, 0.06, 0.32) * (1 - seg01(u, 0.82, 0.97)), lift = 0.012 * seg01(u, 0.32, 0.42) * (1 - seg01(u, 0.78, 0.84));
     const tip = add(add(add(mouth, blade, 0.13 - 0.2 * inn), handle, lift), this._tremor(g, t, inn));
-    c.inst('laryngoscope', tip, blade, Math.PI / 2);
-    if (u > 0.38 && u < 0.82) { const s = seg01(u, 0.38, 0.62), away = 0.22 * (1 - s); c.seg(add(mouth, [0.02 + away, 0.01 + away * 0.3, -0.012]), add(mouth, [0.16 + away, 0.05 + away * 0.3, -0.012]), 0.0075, [0.9, 0.95, 0.97], { alpha: 0.8, spec: 0.8 }); }
+    c.inst('laryngoscope', tip, blade, Math.PI / 2, { act: lift / 0.012 });     // left hand: the grip firms up for the lift
+    if (u > 0.38 && u < 0.82) {                                                 // right hand passes the tube like a pen, from the right corner of the mouth
+      const s = seg01(u, 0.38, 0.62), away = 0.22 * (1 - s), A = add(mouth, [0.02 + away, 0.01 + away * 0.3, -0.012]), B = add(mouth, [0.16 + away, 0.05 + away * 0.3, -0.012]), d = norm(add(B, A, -1));
+      c.seg(A, B, 0.0075, [0.9, 0.95, 0.97], { alpha: 0.8, spec: 0.8 });
+      c.inst('ett', add(add(A, d, 0.105), this._tremor(g, t, s)), d, 0, { toward: norm([0.6, 0.5, -1]) });
+    }
   }
   _swab(c, g, u, t) {                                                          // sponge forceps with iodine gauze, spiral outwards
     const f = g.f, a = this._tan(f, HEAD), b = this._tan(f, [0, 0, 1]), k = seg01(u, 0.2, 0.85), r = 0.004 + 0.03 * k, ang = u * Math.PI * 9;
@@ -232,12 +239,12 @@ export class Gestures {
   }
   _scalpelStep(c, g, u, t) {
     const f = g.f, along = this._tan(f, HEAD), s = seg01(u, 0.25, 0.75), away = 0.12 * (1 - seg01(u, 0, 0.25)) + 0.12 * seg01(u, 0.8, 1), m = this._path(g, away / REACH, t);
-    c.inst('scalpel', add(add(add(f.p, along, (s - 0.5) * 0.035), f.n, away - 0.004), m.off), norm(add(add(f.n, along, 0.9), g.side || f.n, m.tilt)), Math.PI / 2 + m.roll);
+    c.inst('scalpel', add(add(add(f.p, along, (s - 0.5) * 0.035), f.n, away - 0.004), m.off), norm(add(add(f.n, along, 0.9), g.side || f.n, m.tilt)), Math.PI / 2 + m.roll, { act: seg01(u, 0.2, 0.27) * (1 - seg01(u, 0.75, 0.82)) });
     if (u >= 0.25 && !g._m) { g._m = { kind: 'cut', p: f.p, n: f.n, tan: along, len: 0.035, t0: t, grow: g.dur * 0.5 }; this.marks.push(g._m); }
   }
-  _mask(c, g, u, t) {                                                          // anaesthetic face mask lowered over nose and mouth, rim along the face, seal held
-    const f = g.f, squeeze = u > 0.3 && u < 0.85 ? -0.002 * (0.5 + 0.5 * Math.sin((u - 0.3) * Math.PI * 6)) : 0;
-    this._onto(c, g, 'faceMask', f.p, f.n, 0.006 + 0.12 * (1 - seg01(u, 0, 0.25)) + 0.12 * seg01(u, 0.85, 1) + squeeze, Math.PI / 2, t);
+  _mask(c, g, u, t) {                                                          // anaesthetic face mask lowered over nose and mouth in an E-C grip (the hand turns it: forearm toward the head), seal held
+    const f = g.f, sq = u > 0.3 && u < 0.85 ? 0.5 + 0.5 * Math.sin((u - 0.3) * Math.PI * 6) : 0;
+    this._onto(c, g, 'faceMask', f.p, f.n, 0.006 + 0.12 * (1 - seg01(u, 0, 0.25)) + 0.12 * seg01(u, 0.85, 1) - 0.002 * sq, 0, t, { act: seg01(u, 0.22, 0.3) * (1 - seg01(u, 0.85, 0.92)) * (0.6 + 0.4 * sq) });   // E-C grip: fingers lift the jaw into the mask
   }
   _syringeStep(c, g, u, t) {                                                   // a syringe at any site: approach at 30 degrees, small injection or aspiration, withdraw
     const f = g.f, dir = norm(add(neg(f.n), this._tan(f, HEAD), 0.6));

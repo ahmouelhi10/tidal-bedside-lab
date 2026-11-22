@@ -15,6 +15,7 @@ import { buildGlbBody } from './gl/patient-glb.js';
 import { prepare as preparePick, rayMesh } from './gl/pick.js';
 
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+const HAND_KEYS = ['act', 'relax'];                                             // hands.glb finger morph targets, weights in opts.act / opts.relax
 const HOTSPOTS = [
   ['head', 'airway', 0.17, 'hs_head'], ['chest', 'sternum', 0.17, 'hs_chest'], ['rarm', 'rightArmIV', 0.11, 'hs_rarm'], ['larm', 'leftArm', 0.11, 'hs_larm'],
   ['groin', 'femoral', 0.13, 'hs_groin'], ['abdomen', 'abdomen', 0.15, 'hs_abdomen'], ['neck', 'neck', 0.08, 'hs_neck'],
@@ -214,7 +215,9 @@ export class Scene {
       this.instruments = out;
       // gloved hands posed in each instrument's frame (assets/hands.glb, optional)
       const hb = await fetch(base + 'hands.glb').then(r => (r.ok ? r.arrayBuffer() : null)).catch(() => null);
-      if (hb) { const hg = parseGlb(hb), hands = {}; for (const [name, m] of Object.entries(hg.meshes)) hands[name] = m.prims.map(pr => { const f = pr.material?.pbrMetallicRoughness?.baseColorFactor || [0.23, 0.44, 0.85, 1], sleeve = /sleeve/i.test(pr.material?.name || ''); return { g: this.r.upload({ pos: pr.pos, nrm: pr.nrm, w: new Float32Array(pr.pos.length / 3 * 2), idx: pr.idx }), color: f.slice(0, 3), sleeve, pos: sleeve ? pr.pos : null }; });
+      if (hb) { const hg = parseGlb(hb), hands = {}; for (const [name, m] of Object.entries(hg.meshes)) hands[name] = m.prims.map(pr => { const f = pr.material?.pbrMetallicRoughness?.baseColorFactor || [0.23, 0.44, 0.85, 1], sleeve = /sleeve/i.test(pr.material?.name || '');
+          const key = (k) => { const i = pr.targetNames.indexOf(k); return i >= 0 ? pr.targets[i]?.pos || null : null; }, face = HAND_KEYS.map(key);   // finger movements (act, relax)
+          return { g: this.r.upload({ pos: pr.pos, nrm: pr.nrm, w: new Float32Array(pr.pos.length / 3 * 2), idx: pr.idx, face: face.some(Boolean) ? [...face, null, null] : null }), color: f.slice(0, 3), sleeve, pos: sleeve ? pr.pos : null }; });
         for (const h of Object.values(hands)) {                                   // which way the forearm leaves the hand, across the instrument axis (+Y): lets a gesture bring the arm from the operator
           let x = 0, z = 0; for (const pt of h) if (pt.pos) for (let i = 0; i < pt.pos.length; i += 3) { x += pt.pos[i]; z += pt.pos[i + 2]; }
           const l = Math.hypot(x, z); h.fa = l > 1e-6 ? Math.atan2(z / l, x / l) : null; for (const pt of h) delete pt.pos;
@@ -245,7 +248,8 @@ export class Scene {
     ex = vec3.norm(vec3.add(vec3.scale(ex, Math.cos(angle)), vec3.scale(ez0, Math.sin(angle)))); const ez = vec3.cross(ex, ey);
     const M = mat4.fromBasis(ex, ey, ez, p);
     // nitrile glove (satin rubber, textured fingertips, a little translucent) and the cotton gown sleeve
-    if (hand) for (const pt of hand) this.r.draw(pt.g, M, pt.sleeve ? { color: pt.color, spec: 0.05, pattern: 5 } : { color: pt.color, spec: 0.32, pattern: 8 });
+    const fw = opts.act || opts.relax ? [opts.act || 0, opts.relax || 0, 0, 0] : undefined;   // finger movements (hands.glb morph targets)
+    if (hand) for (const pt of hand) this.r.draw(pt.g, M, pt.sleeve ? { color: pt.color, spec: 0.05, pattern: 5, face: fw } : { color: pt.color, spec: 0.32, pattern: 8, face: fw });
     for (const pt of parts) { if (opts.only && !opts.only.includes(pt.mat)) continue; if (opts.skip && opts.skip.includes(pt.mat)) continue; this.r.draw(pt.g, M, { color: pt.color, alpha: pt.alpha, spec: pt.metal > 0.5 ? 0.95 : 0.4, noShadow: pt.alpha < 0.9 }); }
   }
 
