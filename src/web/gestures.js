@@ -46,17 +46,25 @@ export class Gestures {
       case 'exam.chest': g = { k: 'steth', dur: 3.6, f: site('sternum', W.sternum) }; cam = 'chest'; break;
       case 'exam.neck': g = { k: 'press', dur: 2.2, f: site('neck', W.neck) }; cam = 'neck'; break;
       case 'airway.intubate': g = { k: 'laryn', dur: 3.6 }; cam = 'head'; this.hold.ett = t0 + 3.6 * 0.8; break;
+      case 'io.access': g = { k: 'io', dur: 4.2, f: site('ioR', W.femoral) }; cam = 'groin'; this.hold.io = t0 + 4.2 * 0.9; break;
+      case 'procedure.arterial_line': { const ax = scene.armAxis(); g = { k: 'cannula', dur: 3.6, f: site('wristR', W.rightArmIV), arm: [-ax[0], -ax[1], -ax[2]], steep: 1.7 }; cam = 'arm'; break; }   // 30 deg, pointing up the forearm
+      case 'procedure.central_line': { const key = { ijv: 'ijvR', scv: 'scvR', fem: 'femR' }[ev.site] || 'ijvR'; g = { k: 'cvc', dur: 6.5, f: site(key, W.neck), site: ev.site || 'ijv', R: scene.sideSign || 1, notch: W.neck }; cam = ev.site === 'fem' ? 'groin' : ev.site === 'scv' ? 'chest' : 'neck'; break; }
+      case 'procedure.pericardiocentesis': g = { k: 'pericard', dur: 4.8, f: site('subxiph', W.sternum), R: scene.sideSign || 1 }; cam = 'chest'; break;
+      case 'procedure.ng_tube': g = { k: 'ng', dur: 4.4, f: site('nostril', W.airway) }; cam = 'head'; this.hold.ng = t0 + 4.4 * 0.95; break;
       default: break;
     }
     if (!g) return cam;
-    g.t0 = t0; g.ev = ev; this._dress(scene, g, { 'iv.access': 'arm', 'procedure.needle_decompression': 'chest', 'procedure.cricothyroidotomy': 'neck' }[ev.type]);
+    g.t0 = t0; g.ev = ev;
+    const helper = { 'iv.access': 'arm', 'procedure.needle_decompression': 'chest', 'procedure.cricothyroidotomy': 'neck', 'procedure.arterial_line': 'pulse', 'io.access': 'leg' }[ev.type]
+      || (ev.type === 'procedure.central_line' ? { ijv: 'neck', scv: 'chest', fem: 'groin' }[g.site] : null);
+    this._dress(scene, g, helper, ev.type === 'procedure.central_line' && g.site === 'ijv');
     this.list.push(g); return cam;
   }
 
   /** Motion context of a gesture: the operator's side (where the hand comes from) and, for punctures, the other hand. */
-  _dress(scene, g, helper) {
+  _dress(scene, g, helper, fromHead = false) {
     const f = g.f; if (!f) return;
-    const W = scene.world, atHead = W && f.p[0] > W.neck[0] - 0.03;                // face and neck: worked on from the head of the bed
+    const W = scene.world, atHead = fromHead || (W && f.p[0] > W.neck[0] - 0.03);   // face and neck (and the internal jugular): worked on from the head of the bed
     const toOp = atHead ? HEAD : [0, 0, -1];                                        // otherwise the operator stands at the patient's right
     g.side = norm(add(f.n, this._tan(f, toOp), 1.1));                               // out of the skin and toward the operator
     g.op = atHead ? norm([1, 0.7, 0]) : norm([0, 0.8, -1]);                          // where the operator's shoulder is: forearms come from there
@@ -65,7 +73,11 @@ export class Gestures {
     // where the other hand rests and where its fingers point, so that its forearm comes from the operator's side and
     // never crosses the working hand: distal on the forearm (fingers toward the patient's hand); caudal on the chest,
     // fingers across it; beside the larynx on the neck, fingers toward the feet (the operator is at the head)
-    const L = { arm: [scene.armAxis(), 0.08, scene.armAxis()], chest: [this._tan(f, FOOT), 0.07, this._tan(f, [0, 0, 1])], neck: [this._tan(f, [0, 0, 1]), 0.05, this._tan(f, FOOT)] }[helper];
+    // radial pulse: two fingers on the artery a few cm up the forearm; shin: the hand steadies the leg beside the site;
+    // groin: fingers on the femoral pulse just lateral to the vein
+    const ax = scene.armAxis(), lat = [0, 0, Math.sign(f.p[2]) || 1];
+    const L = { arm: [ax, 0.08, ax], pulse: [[-ax[0], 0, -ax[2]], 0.05, ax], chest: [this._tan(f, FOOT), 0.07, this._tan(f, [0, 0, 1])], neck: [this._tan(f, [0, 0, 1]), 0.05, this._tan(f, FOOT)],
+      leg: [this._tan(f, HEAD), 0.07, this._tan(f, lat)], groin: [this._tan(f, lat), 0.03, this._tan(f, HEAD)] }[helper];
     const s = scene.surfaceAt(add(f.p, L[0], L[1]));
     g.help = { p: s.p, n: s.n, d: this._tan(s, L[2]) };
   }
@@ -117,7 +129,7 @@ export class Gestures {
       this._helper(c, g, u, t);
       ({ syringe: this._syringe, cannula: this._cannula, needle: this._needle, drain: this._drain, fona: this._fona, probe: this._probe, steth: this._steth, laryn: this._laryn,
         press: this._press, step_swab: this._swab, step_scalpel: this._scalpelStep, step_mask: this._mask, step_pads: this._pads,
-        step_syringe: this._syringeStep, step_tourniquet: this._tourniquet, step_scope: this._scope })[g.k]?.call(this, c, g, u, t);
+        step_syringe: this._syringeStep, step_tourniquet: this._tourniquet, step_scope: this._scope, io: this._io, cvc: this._cvc, pericard: this._pericard, ng: this._ng })[g.k]?.call(this, c, g, u, t);
     }
   }
 
@@ -136,7 +148,7 @@ export class Gestures {
   _insert(c, name, p, dir, inside, away, roll = 0, g = null, t = 0, opts) { const q = this._pose(p, dir, inside, away, roll, g, t); c.inst(name, q.tip, neg(q.d), q.r, { toward: g?.op, ...opts }); }
   /** Syringe with a moving plunger: the hand holds the barrel by its flange and the thumb pushes the plunger `push` metres toward the tip. */
   _syringeAt(c, q, push) {
-    c.inst('syringe', q.tip, neg(q.d), q.r, { skip: ['white_plastic', 'black_rubber'], toward: q.op, act: Math.min(1, push / 0.011) });
+    c.inst('syringe', q.tip, neg(q.d), q.r, { skip: ['white_plastic', 'black_rubber'], toward: q.op, act: Math.min(1, Math.max(0, push / 0.011)) });   // drawing back (push < 0): the thumb stays
     c.inst('syringe', add(q.tip, q.d, push), neg(q.d), q.r, { noHand: true, only: ['white_plastic', 'black_rubber'], toward: q.op });
   }
   _mark(c, m, t) {
@@ -157,7 +169,7 @@ export class Gestures {
     this._syringeAt(c, q, 0.011 * seg01(u, 0.36, 0.74));                         // a slow, steady push
   }
   _cannula(c, g, u, t) {
-    const f = g.f, dir = norm(add(neg(f.n), g.arm, 2.7));                       // 15-20 degrees to the skin, toward the hand... the vein runs proximally
+    const f = g.f, dir = norm(add(neg(f.n), g.arm, g.steep || 2.7));            // IV: 15-20 degrees to the skin; arterial line (steep 1.7): 30 degrees
     const away = 0.16 * (1 - seg01(u, 0, 0.3)), inside = 0.022 * seg01(u, 0.32, 0.55) - 0.03 * seg01(u, 0.75, 0.95);
     if (u < 0.62) this._insert(c, 'ivCannula', f.p, dir, inside, away, 0, g, t, { act: seg01(u, 0.5, 0.6) });   // flashback: the index slides the catheter off the needle
     else if (u < 0.98) { const back = 0.12 * seg01(u, 0.62, 0.95); c.inst('ivCannula', add(add(add(f.p, dir, 0.02), neg(dir), back), this._tremor(g, t, 1 - back * 6)), neg(dir), 0, { only: ['steel'], toward: g.op, act: 1 }); }   // the needle is withdrawn, the catheter stays
@@ -258,6 +270,52 @@ export class Gestures {
   _scope(c, g, u, t) {                                                         // fibre-optic scope fed into the mouth / tube connector and drawn back
     const sc = c.scene, a = sc.world?.airway || g.f.p, mouth = [a[0], a[1] + 0.01, a[2] - 0.006], dir = norm([-0.45, -0.89, 0]);
     this._insert(c, 'bronchoscope', mouth, dir, 0.04 * seg01(u, 0.25, 0.6) * (1 - seg01(u, 0.8, 0.95)), 0.18 * (1 - seg01(u, 0, 0.25)) + 0.18 * seg01(u, 0.9, 1), 0, g, t);
+  }
+  /** Syringe on a needle: the needle tip `inside` metres into the skin along dir; the plunger is drawn back `back` m and the
+   *  barrel fills with what is aspirated (blood / effusion), seen through the clear barrel. */
+  _aspirate(c, g, u, t, dir, inside, away, back, fill = [0.42, 0.03, 0.05]) {
+    const q = this._pose(g.f.p, dir, inside - 0.045, away, 0, g, t), d = q.d;
+    c.seg(q.tip, add(q.tip, d, 0.045), 0.0007, [0.8, 0.82, 0.85], { spec: 1 });   // 21 G needle
+    this._syringeAt(c, q, -back);
+    if (back > 0.0005) c.seg(add(q.tip, d, -0.014), add(q.tip, d, -0.05 - back), 0.0072, fill, { alpha: Math.min(0.9, back / 0.006), spec: 0.8, noShadow: true });
+  }
+  _io(c, g, u, t) {                                                            // manual intraosseous needle: square to the bone, slightly away from the knee; twisted in, the trocar removed
+    const f = g.f, dir = norm(add(neg(f.n), FOOT, 0.15)), away = 0.14 * (1 - seg01(u, 0, 0.28)), inside = 0.014 * seg01(u, 0.3, 0.62);
+    const twist = u > 0.3 && u < 0.64 ? 0.7 * Math.sin((u - 0.3) * Math.PI * 9) : 0;   // rotary, back and forth, pressing down
+    if (u < 0.72) this._insert(c, 'needle14G', f.p, dir, inside, away, twist, g, t, { act: 0 });
+    else { const back = 0.14 * seg01(u, 0.72, 1), m = this._path(g, back / REACH, t); c.inst('needle14G', add(add(add(f.p, dir, 0.014), f.n, back), m.off), norm(add(f.n, g.side || f.n, m.tilt)), m.roll, { only: ['steel'], toward: g.op }); }
+  }
+  _cvc(c, g, u, t) {                                                           // Seldinger: needle on a syringe aspirating until dark venous blood, wire through the needle, needle out over the wire
+    const f = g.f, R = g.R || 1, lat = [0, 0, R];
+    const tanToNotch = g.notch ? this._tan(f, add(g.notch, f.p, -1)) : this._tan(f, HEAD);
+    const dir = g.site === 'fem' ? norm(add(neg(f.n), HEAD, 1.0))                                   // 45 deg, toward the head
+      : g.site === 'scv' ? norm(add(neg(f.n), tanToNotch, 3.7))                                    // ~15 deg under the clavicle, toward the sternal notch
+      : norm(add(add(neg(f.n), FOOT, 1.4), lat, 0.45));                                            // ~30 deg, toward the ipsilateral nipple
+    const depth = g.site === 'fem' ? 0.035 : 0.03;
+    if (u < 0.5) {                                                                                    // 1. find the vein with negative pressure
+      const away = 0.15 * (1 - seg01(u, 0, 0.22)), inside = depth * seg01(u, 0.24, 0.42), back = 0.006 * seg01(u, 0.26, 0.36) + 0.003 * seg01(u, 0.4, 0.46);
+      this._aspirate(c, g, u, t, dir, inside, away, back, inside > depth * 0.9 ? [0.3, 0.02, 0.05] : [0.75, 0.75, 0.78]);
+      return;
+    }
+    const hub = add(f.p, dir, depth - 0.045), wireIn = seg01(u, 0.55, 0.78), out = 0.16 * (1 - wireIn) + 0.03;   // 2. syringe off, J-wire fed through the needle
+    if (u < 0.86) c.seg(add(f.p, dir, depth), hub, 0.0007, [0.8, 0.82, 0.85], { spec: 1 });                    // the needle stays, held at its hub
+    const wEnd = add(hub, neg(dir), out); c.seg(add(f.p, dir, depth + 0.05 * wireIn), wEnd, 0.00045, [0.55, 0.57, 0.6], { spec: 1 });
+    c.blob(add(wEnd, neg(dir), 0.03), 0.045, 0.006, 0.045, [0.92, 0.94, 0.97], { alpha: 0.6, spec: 0.6, noShadow: true });      // the wire's coiled sheath
+    if (u >= 0.86) {                                                                                  // 3. needle withdrawn over the wire
+      const back = 0.12 * seg01(u, 0.86, 1); c.seg(add(add(f.p, dir, depth), neg(dir), back), add(hub, neg(dir), back), 0.0007, [0.8, 0.82, 0.85], { spec: 1 });
+    }
+  }
+  _pericard(c, g, u, t) {                                                      // subxiphoid needle at 30-45 deg toward the left shoulder, aspirating as it advances
+    const f = g.f, R = g.R || 1, dir = norm(add(add(neg(f.n), HEAD, 0.85), [0, 0, -R], 0.35));
+    const away = 0.15 * (1 - seg01(u, 0, 0.25)) + 0.15 * seg01(u, 0.88, 1), inside = 0.05 * seg01(u, 0.28, 0.55) * (1 - seg01(u, 0.82, 0.88));
+    this._aspirate(c, g, u, t, dir, inside, away, 0.003 * seg01(u, 0.3, 0.4) + 0.009 * seg01(u, 0.55, 0.8), [0.55, 0.12, 0.1]);   // non-clotting blood-stained effusion
+  }
+  _ng(c, g, u, t) {                                                            // nasogastric tube fed along the floor of the nose (straight back, i.e. down in a supine patient) in short pushes
+    const f = g.f, upN = f.n, k = seg01(u, 0, 0.2) * (1 - seg01(u, 0.9, 1)), push = u > 0.22 && u < 0.88 ? ((u - 0.22) * 9) % 1 : 0;
+    const grip = add(f.p, upN, 0.06 - 0.018 * ease(push) + 0.12 * (1 - k));
+    const far = add(add(grip, upN, 0.2), [0, 0.1, -0.3]);
+    let prev = f.p; for (let i = 1; i <= 10; i++) { const s = i / 10, q = [0, 1, 2].map(j => (1 - s) * (1 - s) * f.p[j] + 2 * (1 - s) * s * add(grip, upN, 0.05)[j] + s * s * far[j]); c.seg(prev, q, 0.0026, [0.93, 0.9, 0.7], { alpha: 0.85, spec: 0.8 }); prev = q; }
+    if (k > 0.01) c.inst('bronchoscope', add(grip, upN, -0.1), upN, 0, { only: [], toward: g.op });   // right hand, pencil grip on the tube (bronchoscope frame: grip 10 cm up the axis)
   }
   _pads(c, g, u) {
     for (const [i, pad] of g.pads.entries()) {

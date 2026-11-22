@@ -115,6 +115,7 @@ export class Scene {
   /** World position and outward skin normal of a named site (landmark or chest site 'R_mal5'), realistic body only. */
   siteFrame(key) {
     const B = this.body; if (!B) return null;
+    if (this.procSites?.[key]) return this.procSites[key];
     if (B.b.glb) {
       const lm = this.asset.meta.landmarks[key]; if (!lm) return null;
       const m = B.b.meshes.body, v = lm.anchorVertex, s = B.b.scale;
@@ -138,12 +139,36 @@ export class Scene {
     for (let v = 0, n = m.pos.length / 3; v < n; v++) { const dx = m.pos[v * 3] - q[0], dy = m.pos[v * 3 + 1] - q[1], dz = m.pos[v * 3 + 2] - q[2], d = dx * dx + dy * dy + dz * dz; if (d < bd) { bd = d; best = v; } }
     return { p: [CROWN_X + m.pos[best * 3] * s, BED_TOP + m.pos[best * 3 + 1] * s, m.pos[best * 3 + 2] * s], n: [m.nrm[best * 3], m.nrm[best * 3 + 1], m.nrm[best * 3 + 2]] };
   }
+  /** Sites of the procedures that have no landmark of their own, found on this patient's skin (right side unless stated):
+   *  ioR - proximal tibia, 1-2 cm medial to the shin crest, about a quarter of the stature above the sole;
+   *  wristR - radial artery at the wrist, thumb side (the arm lies palm up, so the thumb points to the head);
+   *  ijvR - internal jugular, apex of the sternocleidomastoid triangle; scvR - subclavian, below the clavicle at mid-clavicle;
+   *  femR - femoral vein, just medial to the artery; subxiph - just below and left of the xiphoid; nostril - right nostril.
+   *  Proportions are anatomical rules of thumb (design values). */
+  _procSites() {
+    const B = this.body, W = this.world, R = this.sideSign || 1, glb = !!B.b.glb, sk = (p, above = 0.03) => glb ? this.surfaceAt([p[0], p[1] + above, p[2]]) : { p, n: [0, 1, 0] };
+    const s = B.b.scale || 1, sole = glb ? CROWN_X + B.bFrame.cprRef[3] * s : W.femoral[0] - 0.85, H = CROWN_X - sole;
+    const out = {};
+    { const x = sole + 0.25 * H; let best = null;                                        // shin crest: highest skin point of the right leg at that level
+      const P = glb ? B.b.meshes.body.pos : null;
+      if (P) for (let i = 0; i < P.length; i += 3) { const w = [CROWN_X + P[i] * s, BED_TOP + P[i + 1] * s, P[i + 2] * s]; if (Math.abs(w[0] - x) < 0.012 && w[2] * R > 0.03 && (!best || w[1] > best[1])) best = w; }
+      const c = best || [x, BED_TOP + 0.1, R * 0.1]; out.ioR = sk([c[0], c[1], c[2] - Math.sign(c[2]) * 0.014], 0.02); }
+    { const ax = this.armAxis(), perp = [-ax[2], 0, ax[0]], k = perp[0] >= 0 ? 1 : -1, w = vec3.add(W.rightArmIV, vec3.scale(ax, 0.146 * H));
+      out.wristR = sk(vec3.add(w, vec3.scale(perp, k * 0.012)), 0.04); }
+    out.ijvR = sk([W.neck[0] - 0.025, W.neck[1], W.neck[2] + R * 0.035]);
+    { const c = this.chestSites.R.mcl2; out.scvR = sk([c[0] + 0.035, c[1], c[2] - R * 0.01]); }
+    out.femR = sk([W.femoral[0], W.femoral[1], W.femoral[2] - Math.sign(W.femoral[2] || R) * 0.01]);
+    { const xx = glb ? CROWN_X + B.bFrame.ref[0] * s : W.sternum[0] - 0.08; out.subxiph = sk([xx - 0.025, W.sternum[1], W.sternum[2] - R * 0.008]); }
+    out.nostril = sk([W.airway[0] + 0.025, W.airway[1] + 0.01, W.airway[2] + R * 0.007], 0.02);
+    return out;
+  }
   /** Direction of the right forearm on its board, from the antecubital fossa toward the hand. */
   armAxis() { const a = this.world.rightArmIV, b = this.world.padRight, d = [a[0] - b[0], 0, a[2] - b[2]], l = Math.hypot(d[0], d[2]) || 1; return [d[0] / l, 0, d[2] / l]; }
   /** The operator's eye for a site: at the head of the bed for the face, neck and airway, otherwise standing at the patient's
    *  side nearest the site (the right side, by the IV arm, for midline sites), eyes about 1.55 m high, looking down at it. */
   operatorEye(key, p) {
-    if (['face', 'airway'].includes(key)) return [p[0] + 0.5, 1.48, p[2] + 0.05];
+    if (['face', 'airway', 'nostril'].includes(key)) return [p[0] + 0.5, 1.48, p[2] + 0.05];
+    if (key === 'ijvR') return [p[0] + 0.12, p[1] + 0.5, p[2] + (this.sideSign || 1) * 0.38];   // the operator works from the head: watch from beside the right shoulder, clear of their forearm
     if (key === 'neck') return [p[0] - 0.04, p[1] + 0.55, p[2] - 0.22];          // from the right shoulder, looking down at the front of the neck: from the head the chin, a face mask and the sheet hide it
     const side = key.startsWith('L_') || key === 'padLeft' || key === 'leftArm' ? 1 : key.startsWith('R_') || key === 'rightArmIV' || key === 'padRight' || key === 'femoral' ? -1 : (p[2] > 0.03 ? 1 : -1);
     const reach = key === 'rightArmIV' ? 0.32 : 0.5;                          // the arm board already brings the forearm out to the operator
@@ -164,6 +189,11 @@ export class Scene {
       case 'procedure.chest_tube': return `${ev.side || 'R'}_mal5`;
       case 'procedure.cricothyroidotomy': case 'exam.neck': return 'neck';
       case 'airway.intubate': return 'airway';
+      case 'io.access': return 'ioR';
+      case 'procedure.arterial_line': return 'wristR';
+      case 'procedure.central_line': return { ijv: 'ijvR', scv: 'scvR', fem: 'femR' }[ev.site] || 'ijvR';
+      case 'procedure.pericardiocentesis': return 'subxiph';
+      case 'procedure.ng_tube': return 'nostril';
       case 'exam.chest': case 'exam.pocus': return 'sternum';
       default: return null;
     }
@@ -284,6 +314,7 @@ export class Scene {
       this.hot.push({ id: 'flank', label: 'hs_flank', c: this.chestSites[this.sideSign > 0 ? 'R' : 'L'].mal5, rad: 0.11 * k }); }
     this.equip = EQUIP.map(e => ({ id: e.id, label: e.label, c: e.c, rad: e.rad, equip: true }));
     this.world = Object.fromEntries(['sternum', 'padRight', 'padLeft', 'face', 'airway', 'rightArmIV', 'leftArm', 'neck', 'abdomen', 'femoral'].map(k => [k, localToWorld(this.body.M, ls[k])]));
+    this.procSites = this._procSites();
     // floating markers: the parts of the patient you act on, and the equipment in the bay
     this.pins = [
       ...this.hot.filter(h => PIN_PATIENT.has(h.id)).map(h => ({ id: h.id, label: h.label, pos: [h.c[0], h.c[1] + 0.14, h.c[2]], h })),
@@ -490,7 +521,7 @@ export class Scene {
       const T = this.asset.tex, tint = skin.map((v, i) => v / TONE_REF[i]), A = (k) => T['patient_' + k] || {};
       o.compDir = [0, 1, 0];                                   // the asset's anterior axis is +y (procedural body: +z)
       // the chest is exposed for anything done on it: pads, leads, CPR, chest procedures and examinations in progress
-      const exposed = p.flags.padsOn || p.flags.ecgLeads || arrested || !!this.echoProbe || !!(p.chest && (p.chest.needle || p.chest.tube)) || this.gest.list.some(g => ['needle', 'tube', 'steth', 'probe', 'step_pads'].includes(g.k));
+      const exposed = p.flags.padsOn || p.flags.ecgLeads || arrested || !!this.echoProbe || !!(p.chest && (p.chest.needle || p.chest.tube)) || this.gest.list.some(g => ['needle', 'tube', 'steth', 'probe', 'step_pads', 'pericard'].includes(g.k) || (g.k === 'cvc' && g.site === 'scv'));
       const fem = (B.b.weights.female ?? 0) > 0.5, sx = (k) => (fem && B.g[k + '_f'] ? k + '_f' : k), skinT = fem && T.patient_body_female ? T.patient_body_female : A('body');
       r.draw(B.g.body, M, { color: tint, spec: 0.3, pattern: 7, albedo: skinT.albedo, normalMap: skinT.normal, ...o });
       r.draw(B.g.eyes, M, { color: [1, 1, 1], spec: 0.9, pattern: 6, albedo: A('eyes').albedo, ...o });
@@ -557,6 +588,54 @@ export class Scene {
       disc(onSkin(f, 0.003), f.n, ax, 0.022, 0.018, [0.92, 0.96, 1.0], { alpha: 0.18, spec: 1, noShadow: true });
       const hub = vec3.add(f.p, vec3.add(vec3.scale(dir, -0.05), vec3.scale(f.n, 0.012)));
       hose(hub, [hub[0] + 0.05, hub[1] + 0.25, hub[2] - 0.2], [POLE[0] + 0.07, 1.25, POLE[2]], 0.0025, [0.86, 0.93, 0.97], { alpha: 0.75, spec: 0.9 });
+    }
+    // lines, tubes and catheters left in place after their procedure
+    const PS = this.procSites || {}, R = this.sideSign || 1, inPlane = (f, d) => vec3.norm(vec3.sub(d, vec3.scale(f.n, vec3.dot(d, f.n))));
+    const along = (a, d, k) => vec3.add(a, vec3.scale(d, k));
+    if (fl.ioAccess && PS.ioR && this.gest.ok('io', this.t)) {     // intraosseous needle in the tibia: short hub on a stabilising flange, extension set to the pole
+      const f = PS.ioR, b = onSkin(f, 0.002);
+      disc(b, f.n, [1, 0, 0], 0.014, 0.014, [0.95, 0.95, 0.93], { spec: 0.2 }); seg(b, along(b, f.n, 0.014), 0.0055, [0.85, 0.18, 0.16], { spec: 0.5 });
+      hose(along(b, f.n, 0.014), [b[0] + 0.1, b[1] + 0.12, b[2] - R * 0.05], [POLE[0] + 0.07, 1.25, POLE[2]], 0.0022, [0.86, 0.93, 0.97], { alpha: 0.75, spec: 0.9 });
+    }
+    if (fl.aline && PS.wristR) {                                    // radial arterial cannula, red-striped pressure line to the transducer on the pole
+      const f = PS.wristR, ax = this.armAxis(), dir = vec3.norm(vec3.add(vec3.scale(f.n, -1), vec3.scale(ax, -1.7)));
+      inst('ivCannula', along(f.p, dir, 0.015), vec3.scale(dir, -1), 0, { skip: ['steel'], noHand: true });
+      disc(onSkin(f, 0.003), f.n, ax, 0.02, 0.016, [0.92, 0.96, 1.0], { alpha: 0.18, spec: 1, noShadow: true });
+      const hub = vec3.add(along(f.p, dir, -0.045), vec3.scale(f.n, 0.01));
+      hose(hub, [hub[0] + 0.1, hub[1] + 0.2, hub[2] - R * 0.1], [POLE[0] + 0.05, 1.12, POLE[2]], 0.0022, [0.92, 0.3, 0.28], { alpha: 0.85, spec: 0.8 });
+      r.draw(fr.ub, mat4.multiply(mat4.translation(POLE[0] + 0.05, 1.12, POLE[2]), mat4.scaling(0.025, 0.05, 0.02)), { color: [0.9, 0.92, 0.95], spec: 0.6 });   // transducer
+    }
+    if (fl.cvc) {                                                   // triple-lumen central catheter: hub sutured flat on the skin, three coloured lumens, clear dressing
+      const site = [...(p.log || [])].reverse().find(e => e.type === 'procedure.central_line')?.site || 'ijv', f = PS[{ ijv: 'ijvR', scv: 'scvR', fem: 'femR' }[site] || 'ijvR'];
+      if (f) {
+        const tan = inPlane(f, site === 'fem' ? [-1, 0, 0] : site === 'scv' ? [0, 0, R] : [1, 0, 0]), side = vec3.norm(vec3.cross(f.n, tan)), a = onSkin(f, 0.004), b = along(a, tan, 0.03);
+        disc(onSkin(f, 0.003), f.n, tan, 0.04, 0.03, [0.92, 0.96, 1.0], { alpha: 0.2, spec: 1, noShadow: true });
+        seg(a, b, 0.0045, [0.95, 0.95, 0.94], { spec: 0.5 }); disc(along(a, tan, 0.012), f.n, side, 0.012, 0.005, [0.95, 0.95, 0.94], { spec: 0.4 });   // hub and suture wings
+        for (const [i, col] of [[-1, [0.2, 0.35, 0.8]], [0, [0.95, 0.95, 0.95]], [1, [0.45, 0.26, 0.12]]]) {
+          const e = vec3.add(along(b, tan, 0.045), vec3.scale(side, i * 0.016)); seg(b, e, 0.0016, [0.92, 0.94, 0.95], { alpha: 0.85, spec: 0.8 }); blob(e, 0.004, 0.004, 0.004, col, { spec: 0.5 });
+        }
+      }
+    }
+    if (fl.ngTube && PS.nostril && this.gest.ok('ng', this.t)) {    // nasogastric tube taped to the nose, over the cheek, to a drainage bag
+      const f = PS.nostril, b = vec3.add(along(f.p, f.n, 0.008), [0.012, 0, 0]), cheek = [b[0] - 0.03, b[1] - 0.045, b[2] + R * 0.09];
+      seg(f.p, b, 0.0026, [0.93, 0.9, 0.7], { alpha: 0.85, spec: 0.8 }); disc(along(b, f.n, 0.003), f.n, [1, 0, 0], 0.012, 0.007, [0.93, 0.92, 0.86], { spec: 0.1 });
+      hose(b, [b[0] + 0.01, b[1] + 0.01, b[2] + R * 0.05], cheek, 0.0026, [0.93, 0.9, 0.7], { alpha: 0.85, spec: 0.8 });
+      hose(cheek, [cheek[0], cheek[1] + 0.04, R * 0.38], [W.airway[0] - 0.12, 0.66, R * 0.46], 0.0026, [0.93, 0.9, 0.7], { alpha: 0.85, spec: 0.8 });
+      blob([W.airway[0] - 0.12, 0.58, R * 0.465], 0.06, 0.08, 0.012, [0.9, 0.95, 0.9], { alpha: 0.35, spec: 0.9, noShadow: true });
+      seg([W.airway[0] - 0.12, 0.66, R * 0.465], [W.airway[0] - 0.12, 0.74, R * 0.44], 0.002, [0.85, 0.87, 0.9]);   // hanger on the bed frame
+    }
+    if (fl.urineCath) {                                             // Foley catheter from under the sheet to a drainage bag hung on the bed frame, filling with this patient's urine
+      const s0 = [W.femoral[0] - 0.1, W.femoral[1] + 0.02, W.femoral[2] + R * 0.08], bag = [W.femoral[0] - 0.05, 0.55, R * 0.47];
+      hose(s0, [s0[0], s0[1] + 0.03, R * 0.46], [bag[0], bag[1] + 0.12, bag[2]], 0.0035, [0.9, 0.85, 0.6], { alpha: 0.8, spec: 0.8 });
+      seg([bag[0], bag[1] + 0.13, bag[2]], [bag[0], 0.74, bag[2] - R * 0.03], 0.002, [0.85, 0.87, 0.9]);   // hanger
+      blob(bag, 0.09, 0.13, 0.015, [0.92, 0.95, 0.97], { alpha: 0.3, spec: 1, noShadow: true });
+      const ml = (p.vol.urine || 0) + (p.vol.urineBasal || 0) - (p.urine0 || 0), h = 0.13 * clamp(ml / 2000, 0.03, 1);
+      blob([bag[0], bag[1] - 0.13 + h, bag[2]], 0.085 * Math.sqrt(Math.min(1, h / 0.065 + 0.2)), h, 0.013, [0.86, 0.66, 0.16], { alpha: 0.8, spec: 0.8, noShadow: true });
+    }
+    if (p.neuraxial?.kind === 'epidural' && this.chestSites) {      // epidural catheter taped up the back and over the shoulder, filter on the upper chest
+      const sh = this.chestSites.R.mcl2, st = [sh[0] + 0.07, sh[1] - 0.05, sh[2] + R * 0.1], fil = ride([sh[0] + 0.03, sh[1] + 0.02, sh[2] + R * 0.02]);
+      hose(st, [st[0] - 0.01, st[1] + 0.08, st[2]], fil, 0.0011, [0.95, 0.96, 0.97], { alpha: 0.8, spec: 0.9 });
+      disc(fil, [0, 1, 0], [1, 0, 0], 0.017, 0.017, [0.97, 0.85, 0.2], { spec: 0.5 });
     }
     // airway devices
     const dev = p.airway.device;
