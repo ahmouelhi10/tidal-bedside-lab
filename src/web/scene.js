@@ -5,6 +5,7 @@ import { breathPose, breathFrame, drapeWeights } from './breathing.js';
 import { FaceAnim } from './face.js';
 import { CprAnim } from './cpr-anim.js';
 import { BodyAnim } from './body-anim.js';
+import { SkinAnim } from './skin.js';
 import { Renderer, mat4, vec3 } from './gl/renderer.js';
 import { box, sphere, cylinder } from './gl/geometry.js';
 import { morphology, buildBody, supineMatrix, SKIN_TONES, skinColor, localToWorld } from './gl/body.js';
@@ -75,7 +76,7 @@ export class Scene {
     this.goal = null; this.off = { yaw: 0, pitch: 0 }; this.hover = null; this.t = 0; this.breathPh = 0; this.compAmt = 0; this.shockT = 0; this.tone = 2; this.body = null;
     this.auto = false;            // slow cinematic orbit (case menu)
     this.inset = { l: 0, r: 0, t: 0, b: 0 }; this.shift = 0; this.shiftY = 0;   // screen px covered by panels on each side (ui.updateInsets)
-    this.faceAnim = new FaceAnim(); this.cprAnim = new CprAnim(); this.bodyAnim = new BodyAnim();
+    this.faceAnim = new FaceAnim(); this.cprAnim = new CprAnim(); this.bodyAnim = new BodyAnim(); this.skinAnim = new SkinAnim();
     this.gest = new Gestures(); this.rescuerHands = true; this.pins = []; this._bindInput(canvas);
   }
 
@@ -263,7 +264,8 @@ export class Scene {
       g = { skin: r.upload(b.skin), hair: r.upload(b.hair), eyes: r.upload(b.eyes), pupils: r.upload(b.pupils), lips: r.upload(b.lips), sheet: r.upload(b.sheet) };
       M = supineMatrix(b);
     }
-    this.body = { b, g, M, spec, bFrame: breathFrame(b.landmarks, b.glb ? [0, 1, 0] : [0, 0, 1]) }; this.cut = null;
+    this.body = { b, g, M, spec, bFrame: breathFrame(b.landmarks, b.glb ? [0, 1, 0] : [0, 0, 1]) }; this.cut = null; this.skinAnim = new SkinAnim(); this._skinT = null;
+    { const F = this.body.bFrame, P = b.meshes?.body?.pos; if (P) { let lo = Infinity; for (let i = 0; i < P.length; i += 3) lo = Math.min(lo, P[i] * F.axes[0] + P[i + 1] * F.axes[1] + P[i + 2] * F.axes[2]); F.cprRef[3] = lo; } }   // soles level (skin: feet, knees)
     this.tone = tone; this.gest.clear();
     const ls = b.landmarks;
     this.hot = HOTSPOTS.map(([id, lm, rad, label]) => ({ id, label, c: localToWorld(this.body.M, ls[lm]), rad: rad * (0.8 + 0.5 * Math.min(1, morph.bmi / 40)) }));
@@ -428,8 +430,9 @@ export class Scene {
 
     // ---------------- physiology -> appearance
     const sao2 = p.resp.sao2, arrested = p.arrest.arrested, perf = p.circ.mapArt;
-    const cyan = clamp((0.93 - sao2) / 0.35, 0, 1), pallor = clamp((p.vol.fractionLost - 0.1) / 0.3, 0, 1) * 0.9 + (perf < 55 ? 0.3 : 0) + (arrested ? 0.4 : 0);
-    const skin = skinColor(SKIN_TONES[this.tone] || SKIN_TONES[2], { cyanosis: cyan, pallor: clamp(pallor, 0, 1), flush: clamp((p.therm.tc - 37.8) / 2, 0, 1) });
+    const sk = this.skinAnim.update(realDt, p, this._skinT == null ? 0 : p.t - this._skinT); this._skinT = p.t;   // sweat, mottling, cyanosis, hives, neck veins (skin.js)
+    const cyan = clamp((0.85 - sao2) / 0.3, 0, 1), pallor = clamp((p.vol.fractionLost - 0.1) / 0.3, 0, 1) * 0.9 + (perf < 55 ? 0.3 : 0) + (arrested ? 0.4 : 0);
+    const skin = skinColor(SKIN_TONES[this.tone] || SKIN_TONES[2], { cyanosis: cyan, pallor: clamp(pallor, 0, 1), flush: Math.max(clamp((p.therm.tc - 37.8) / 2, 0, 1), sk.flush) });
     // breathing: from the engine respiratory rate and tidal volume; ventilated chest rise during BVM / vent
     const rrNow = p.resp.rr;
     this.breathPh += realDt * (rrNow / 60) * Math.PI * 2;
@@ -469,7 +472,7 @@ export class Scene {
     const hurt = this.gest.list.find(g => PAINFUL.includes(g.k) && this.t >= g.t0 && this.t <= g.t0 + g.dur);
     const faceW = this.faceAnim.update(realDt, p, { painful: !!hurt, side: hurt?.f?.p ? clamp(-(hurt.f.p[2] - st[2]) * (this.sideSign || 1) / 0.2, -1, 1) : 0 });
     const faceAll = [Math.min(1, faceW[0] + ba.face[0]), Math.min(1, faceW[1] + ba.face[1]), Math.min(1, faceW[2] + ba.face[2]), faceW[3]];
-    const o = { breath, bFrame: B.bFrame, compress: this.compAmt, face: faceAll, cpr: [cpr.head + ba.head, cpr.sink - ba.lift, cpr.arms + ba.arms, cpr.belly + ba.belly], tremor: ba.tremor, time: this.t % 600 };
+    const o = { breath, bFrame: B.bFrame, compress: this.compAmt, face: faceAll, cpr: [cpr.head + ba.head, cpr.sink - ba.lift, cpr.arms + ba.arms, cpr.belly + ba.belly], tremor: ba.tremor, time: this.t % 600, skinA: [sk.sweat, sk.mottle, sk.cyanC, sk.cyanP], skinB: [sk.hives, sk.jvd, 0, 0] };
     const sheetCol = p.therm.cover < 1 ? [0.74, 0.58, 0.40] : [0.72, 0.79, 0.84];
     if (B.b.glb) {
       const T = this.asset.tex, tint = skin.map((v, i) => v / TONE_REF[i]), A = (k) => T['patient_' + k] || {};

@@ -8,11 +8,26 @@ float vnoise(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * 
   return mix(mix(mix(hash13(i), hash13(i + vec3(1,0,0)), f.x), mix(hash13(i + vec3(0,1,0)), hash13(i + vec3(1,1,0)), f.x), f.y),
              mix(mix(hash13(i + vec3(0,0,1)), hash13(i + vec3(1,0,1)), f.x), mix(hash13(i + vec3(0,1,1)), hash13(i + vec3(1,1,1)), f.x), f.y), f.z); }`;
 
+const GLSL_FRAME = `
+uniform mat3 uBAxes; uniform vec3 uBRef; uniform vec4 uCprRef;
+uniform vec4 uSkinA;   // skin state: sweat, mottling, central cyanosis, peripheral cyanosis (0..1)
+uniform vec4 uSkinB;   // skin state: urticaria, distended neck veins, unused, unused
+uniform vec3 uMouth;   // the lips, mesh space
+// external jugular vein (both sides): from below the angle of the jaw obliquely down to the middle of the clavicle
+// (uCprRef.x is the neck landmark at the base of the neck)
+float jugular(vec3 p){
+  float c = dot(p, uBAxes[0]) - uCprRef.x, l = abs(dot(p, uBAxes[2]) - uBRef.z);
+  vec2 A = vec2(0.085, 0.04), B = vec2(-0.012, 0.072), q = vec2(c, l), ab = B - A;
+  float t = clamp(dot(q - A, ab) / dot(ab, ab), 0.0, 1.0), d = length(q - (A + ab * t));
+  return (1.0 - smoothstep(0.0022, 0.0055, d)) * smoothstep(0.0, 0.15, t) * (1.0 - smoothstep(0.85, 1.0, t));
+}`;
+
 const GLSL_BREATH = `
+${GLSL_FRAME}
 uniform vec4 uFace;   // face expression weights (blink, jaw, pain, gaze), deltas in aF0..aF3
-uniform vec4 uBreath; uniform mat3 uBAxes; uniform vec3 uBRef; uniform float uCloth;
+uniform vec4 uBreath; uniform float uCloth;
 uniform vec4 uCpr;      // CPR follow-through: head angle (rad), sink (m), arm jiggle (m), belly bulge (m)
-uniform vec4 uCprRef;   // neck level along the cranial axis, neck depth along the anterior axis, arm threshold (lateral m), unused
+// uCprRef: neck level along the cranial axis, neck depth along the anterior axis, arm threshold (lateral m), soles level
 uniform vec3 uCompPt;   // compression point (lower sternum), mesh space
 uniform vec4 uTremor;   // limb shake (m), head shake (rad), frequency (Hz), fasciculation (m)
 uniform float uTime;
@@ -61,10 +76,12 @@ const VS = `#version 300 es
 in vec3 aPos; in vec3 aNorm; in vec2 aW; in vec3 aTint; in vec2 aUV; in vec3 aF0; in vec3 aF1; in vec3 aF2; in vec3 aF3;
 uniform mat4 uModel; uniform mat4 uVP; uniform float uCompress; uniform float uInflate; uniform vec3 uCompDir;
 ${GLSL_BREATH}
-out vec3 vN; out vec3 vWP; out vec3 vTint; out vec2 vUV;
+out vec3 vN; out vec3 vWP; out vec3 vTint; out vec2 vUV; out vec3 vMP;
 void main(){
   vec3 f = aPos + uFace.x * aF0 + uFace.y * aF1 + uFace.z * aF2 + uFace.w * aF3; float wcomp; vec3 cd = cprDisp(aPos, aNorm, aW.x, aW.y, wcomp); vec3 p = f + aNorm * uInflate + breathDisp(aPos, aNorm, aW.x) + cd;
   p -= uCompDir * (uCompress * wcomp);
+  if (uSkinB.y > 0.0) p += aNorm * (0.0035 * uSkinB.y * jugular(aPos) * step(-0.2, dot(aNorm, uBAxes[1])));   // distended neck veins stand out
+  vMP = aPos;
   vec4 wp = uModel * vec4(p, 1.0);
   vWP = wp.xyz; vTint = aTint; vUV = aUV;
   vN = transpose(inverse(mat3(uModel))) * aNorm;
@@ -81,7 +98,7 @@ precision mediump float; out vec4 o; void main(){ o = vec4(1.0); }`;
 
 const FS = `#version 300 es
 precision highp float; precision highp sampler2DShadow;
-in vec3 vN; in vec3 vWP; in vec3 vTint; in vec2 vUV;
+in vec3 vN; in vec3 vWP; in vec3 vTint; in vec2 vUV; in vec3 vMP;
 uniform sampler2D uAlbedo; uniform sampler2D uNormalMap; uniform int uTexMode; uniform float uAlphaCut;
 uniform vec3 uColor; uniform vec3 uEmissive; uniform float uSpec; uniform float uAlpha;
 uniform int uPattern; uniform vec3 uEye; uniform vec3 uLightPos; uniform vec3 uLightDir; uniform float uLightK;
@@ -89,6 +106,7 @@ uniform mat4 uLightVP; uniform sampler2DShadow uShadow; uniform int uDirect;
 out vec4 o;
 const float PI = 3.14159265;
 ${GLSL_NOISE}
+${GLSL_FRAME}
 float shadowAt(vec3 wp, vec3 n){
   vec4 lp = uLightVP * vec4(wp + n * 0.014, 1.0);
   vec3 pc = lp.xyz / lp.w * 0.5 + 0.5;
@@ -139,6 +157,44 @@ void main(){
     float mott = vnoise(vWP * 22.0) - 0.5;
     base *= vec3(1.0 + 0.04 * mott, 1.0 - 0.02 * mott, 1.0 - 0.04 * mott);
     rough = 0.5; f0 = 0.028; wrap = 0.42; sss = 1.0; spMul = 0.65;
+    if (uSkinA != vec4(0.0) || uSkinB != vec4(0.0)) {       // the state the skin shows (skin.js)
+      vec3 cr = uBAxes[0], an = uBAxes[1], lf = uBAxes[2];
+      float c = dot(vMP, cr), l = abs(dot(vMP, lf) - uBRef.z), lum = dot(base, vec3(0.299, 0.587, 0.114));
+      // central cyanosis: the lips
+      vec3 dm = vMP - uMouth; float lip = (1.0 - smoothstep(0.011, 0.024, length(vec2(dot(dm, cr) * 1.7, dot(dm, lf))))) * step(-0.015, dot(dm, an));
+      base = mix(base, vec3(0.34, 0.27, 0.46) * lum * 2.2, uSkinA.z * lip * 0.85);
+      // peripheral cyanosis: hands and feet, strongest at the tips
+      float hand = smoothstep(uCprRef.z + 0.03, uCprRef.z + 0.08, l) * (1.0 - smoothstep(uBRef.x - 0.32, uBRef.x - 0.2, c));
+      float foot = 1.0 - smoothstep(uCprRef.w + 0.1, uCprRef.w + 0.28, c);
+      base = mix(base, vec3(0.26, 0.25, 0.52) * lum * 2.0, uSkinA.w * max(hand, foot) * 0.85);
+      // mottling: a lacy purple network starting at the knees, spreading up the thighs as it gets worse
+      float knee = uCprRef.w + 0.5, spread = 0.07 + 0.5 * uSkinA.y;
+      float region = 1.0 - smoothstep(spread, spread + 0.1, max(knee - c - 0.06, c - knee));
+      float net = 1.0 - abs(2.0 * vnoise(vMP * 24.0) - 1.0); net = smoothstep(0.6, 0.92, net) * (0.55 + 0.45 * vnoise(vMP * 6.0));
+      base = mix(base, vec3(0.45, 0.24, 0.40) * lum * 2.0, uSkinA.y * region * net * 0.75);
+      // urticaria: raised wheals, pale centre and red flare, on the trunk and limbs
+      if (uSkinB.x > 0.0) {
+        float hv = vnoise(vMP * 15.0 + 3.7), wheal = smoothstep(0.6, 0.7, hv), flare = smoothstep(0.48, 0.6, hv) - wheal;
+        float body = 1.0 - smoothstep(uCprRef.x - 0.02, uCprRef.x + 0.06, c) * 0.7;
+        base = mix(base, base * vec3(1.4, 0.72, 0.7), uSkinB.x * body * (flare * 0.9 + wheal * 0.3));
+        base = mix(base, base * vec3(1.1, 0.95, 0.93), uSkinB.x * wheal * body);
+        n = normalize(n + n * 0.0 + (vec3(vnoise(vMP * 15.0 + 4.0), vnoise(vMP * 15.0 + 9.0), vnoise(vMP * 15.0 + 2.0)) - 0.5) * 0.25 * wheal * uSkinB.x);
+      }
+      // sweat: a wet sheen with beads, most on the face, chest and arms
+      if (uSkinA.x > 0.0) {
+        float sw = uSkinA.x * mix(0.45, 1.0, smoothstep(uCprRef.w + 0.6, uCprRef.w + 0.85, c));
+        float dz = vnoise(vMP * 210.0), drop = smoothstep(0.72, 0.8, dz);
+        n = normalize(n + (vec3(vnoise(vMP * 210.0 + 1.3), vnoise(vMP * 210.0 + 7.1), vnoise(vMP * 210.0 + 3.3)) - 0.5) * 0.5 * drop * sw);
+        rough = mix(rough, 0.2, sw); spMul = mix(spMul, 2.0, sw) + 2.5 * drop * sw; gloss = max(gloss, sw);
+      }
+      // distended neck veins: a bluish cord that catches the light
+      if (uSkinB.y > 0.0) {
+        float e = 0.002, j = jugular(vMP);
+        vec2 dj = vec2(jugular(vMP + cr * e) - jugular(vMP - cr * e), jugular(vMP + lf * e) - jugular(vMP - lf * e)) / (2.0 * e);
+        base = mix(base, vec3(0.40, 0.45, 0.62) * lum * 1.9, j * uSkinB.y * 0.5);
+        n = normalize(n - (cr * dj.x + lf * dj.y) * 0.006 * uSkinB.y);
+      }
+    }
   } else if (uPattern == 3) { // skin
     float fadeP = 1.0 - smoothstep(1.2, 3.8, dist);
     vec3 pn = vec3(vnoise(vWP * 900.0), vnoise(vWP * 900.0 + 17.3), vnoise(vWP * 900.0 + 41.7)) - 0.5;
@@ -266,8 +322,8 @@ export class Renderer {
     if (!gl) throw new Error('WebGL2 is not available in this browser.');
     this.gl = gl; this.canvas = canvas;
     this.prog = program(gl, VS, FS); this.progShadow = program(gl, VS_SHADOW, FS_SHADOW); this.progTex = program(gl, VS_TEX, FS_TEX);
-    this.u = uniforms(gl, this.prog, ['uModel', 'uVP', 'uBreath', 'uCompress', 'uColor', 'uEmissive', 'uSpec', 'uAlpha', 'uPattern', 'uEye', 'uLightPos', 'uLightDir', 'uLightK', 'uLightVP', 'uShadow', 'uDirect', 'uAlbedo', 'uNormalMap', 'uTexMode', 'uAlphaCut', 'uInflate', 'uCompDir', 'uBAxes', 'uBRef', 'uCloth', 'uFace', 'uCpr', 'uCprRef', 'uCompPt', 'uTremor', 'uTime', 'uTremor', 'uTime']);
-    this.us = uniforms(gl, this.progShadow, ['uModel', 'uVP', 'uBreath', 'uBAxes', 'uBRef', 'uCloth', 'uFace', 'uCpr', 'uCprRef', 'uCompPt', 'uCompress', 'uInflate', 'uCompDir']);
+    this.u = uniforms(gl, this.prog, ['uModel', 'uVP', 'uBreath', 'uCompress', 'uColor', 'uEmissive', 'uSpec', 'uAlpha', 'uPattern', 'uEye', 'uLightPos', 'uLightDir', 'uLightK', 'uLightVP', 'uShadow', 'uDirect', 'uAlbedo', 'uNormalMap', 'uTexMode', 'uAlphaCut', 'uInflate', 'uCompDir', 'uBAxes', 'uBRef', 'uCloth', 'uFace', 'uCpr', 'uCprRef', 'uCompPt', 'uTremor', 'uTime', 'uSkinA', 'uSkinB', 'uMouth']);
+    this.us = uniforms(gl, this.progShadow, ['uModel', 'uVP', 'uBreath', 'uBAxes', 'uBRef', 'uCloth', 'uFace', 'uCpr', 'uCprRef', 'uCompPt', 'uTremor', 'uTime', 'uSkinA', 'uSkinB', 'uMouth', 'uCompress', 'uInflate', 'uCompDir']);
     this.ut = uniforms(gl, this.progTex, ['uModel', 'uVP', 'uTex', 'uGlow', 'uDirect']);
     gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -445,6 +501,7 @@ export class Renderer {
     gl.uniform4f(u.uBreath, Array.isArray(b) ? b[0] : b, Array.isArray(b) ? b[1] : b, Array.isArray(b) ? b[2] : b, 0);
     gl.uniformMatrix3fv(u.uBAxes, false, f.axes); gl.uniform3fv(u.uBRef, f.ref); gl.uniform1f(u.uCloth, o.cloth ? 1 : 0); const fw = o.face || FACE0; gl.uniform4f(u.uFace, fw[0], fw[1], fw[2], fw[3]);
     const cp = o.cpr || CPR0; gl.uniform4f(u.uCpr, cp[0], cp[1], cp[2], cp[3]); gl.uniform4fv(u.uCprRef, f.cprRef || CPRREF0); gl.uniform3fv(u.uCompPt, f.compPt || COMPPT0); const tr = o.tremor || CPR0; gl.uniform4f(u.uTremor, tr[0], tr[1], tr[2], tr[3]); gl.uniform1f(u.uTime, o.time || 0);
+    const ka = o.skinA || CPR0, kb = o.skinB || CPR0; gl.uniform4f(u.uSkinA, ka[0], ka[1], ka[2], ka[3]); gl.uniform4f(u.uSkinB, kb[0], kb[1], kb[2], kb[3]); gl.uniform3fv(u.uMouth, f.mouth || COMPPT0);
   }
 
   /** opts: color, emissive, spec, alpha, pattern, breath, bFrame, compress, noShadow */
