@@ -130,6 +130,18 @@ vec3 perturb(vec3 N, vec3 p, vec2 uv, vec3 m){
   float k = inversesqrt(max(max(dot(T, T), dot(B, B)), 1e-12));
   return normalize(mat3(T * k, B * k, N) * m);
 }
+// pupils (patient eyes texture, MakeHuman brown: two eyeballs, each a 4 mm pupil in a ~12 mm iris): the texture coordinates
+// inside the iris are remapped radially so the pupil takes any diameter while the iris pattern keeps its outer edge
+uniform float uPupil;   // pupil diameter, mm
+const vec2 EYE_A = vec2(0.7043, 0.2949); const vec2 EYE_B = vec2(0.2879, 0.7070); const float PUP0 = 0.0371; const float IRIS = 0.104;
+vec2 pupilUV(vec2 uv, out float irisW) {
+  float dA = distance(uv, EYE_A), dB = distance(uv, EYE_B); vec2 c = dA < dB ? EYE_A : EYE_B; float d = min(dA, dB);
+  irisW = 1.0 - smoothstep(IRIS - 0.004, IRIS + 0.004, d);
+  if (d >= IRIS) return uv;
+  float pr = clamp(PUP0 * uPupil / 4.0, 0.012, IRIS - 0.02);
+  float s = d < pr ? d * PUP0 / pr : PUP0 + (d - pr) * (IRIS - PUP0) / (IRIS - pr);
+  return c + (uv - c) * (s / max(d, 1e-5));
+}
 void main(){
   vec3 n = normalize(vN);
   if (!gl_FrontFacing) n = -n;
@@ -137,9 +149,11 @@ void main(){
   vec3 base = pow(clamp(uColor * vTint, 0.0, 1.0), vec3(2.2));
   float texA = 1.0;
   if (uTexMode > 0) {                                       // albedo texture (sRGB) tinted by uColor (skin tone / pallor / cyanosis ratio)
-    vec4 tx = texture(uAlbedo, vUV); texA = tx.a;
+    float irisW = 0.0; vec2 tuv = uPattern == 6 ? pupilUV(vUV, irisW) : vUV;
+    vec4 tx = texture(uAlbedo, tuv); texA = tx.a;
     if (tx.a < uAlphaCut) discard;
     base = pow(tx.rgb, vec3(2.2)) * clamp(uColor, 0.0, 2.0);
+    if (irisW > 0.0) { float l = dot(base, vec3(0.6, 0.3, 0.1)); base = mix(base, l * vec3(3.5, 1.4, 0.5), irisW); }   // the texture's iris is too red: a natural brown
     if (uTexMode > 1) n = perturb(n, vWP, vUV, texture(uNormalMap, vUV).xyz * 2.0 - 1.0);
   }
   float rough = clamp(1.0 - uSpec * 1.7, 0.2, 0.95), f0 = 0.04, wrap = 0.0, sss = 0.0, spMul = 1.0;
@@ -322,7 +336,7 @@ export class Renderer {
     if (!gl) throw new Error('WebGL2 is not available in this browser.');
     this.gl = gl; this.canvas = canvas;
     this.prog = program(gl, VS, FS); this.progShadow = program(gl, VS_SHADOW, FS_SHADOW); this.progTex = program(gl, VS_TEX, FS_TEX);
-    this.u = uniforms(gl, this.prog, ['uModel', 'uVP', 'uBreath', 'uCompress', 'uColor', 'uEmissive', 'uSpec', 'uAlpha', 'uPattern', 'uEye', 'uLightPos', 'uLightDir', 'uLightK', 'uLightVP', 'uShadow', 'uDirect', 'uAlbedo', 'uNormalMap', 'uTexMode', 'uAlphaCut', 'uInflate', 'uCompDir', 'uBAxes', 'uBRef', 'uCloth', 'uFace', 'uCpr', 'uCprRef', 'uCompPt', 'uTremor', 'uTime', 'uSkinA', 'uSkinB', 'uMouth']);
+    this.u = uniforms(gl, this.prog, ['uModel', 'uVP', 'uBreath', 'uCompress', 'uColor', 'uEmissive', 'uSpec', 'uAlpha', 'uPattern', 'uEye', 'uLightPos', 'uLightDir', 'uLightK', 'uLightVP', 'uShadow', 'uDirect', 'uAlbedo', 'uNormalMap', 'uTexMode', 'uAlphaCut', 'uInflate', 'uCompDir', 'uBAxes', 'uBRef', 'uCloth', 'uFace', 'uCpr', 'uCprRef', 'uCompPt', 'uTremor', 'uTime', 'uSkinA', 'uSkinB', 'uMouth', 'uPupil']);
     this.us = uniforms(gl, this.progShadow, ['uModel', 'uVP', 'uBreath', 'uBAxes', 'uBRef', 'uCloth', 'uFace', 'uCpr', 'uCprRef', 'uCompPt', 'uTremor', 'uTime', 'uSkinA', 'uSkinB', 'uMouth', 'uCompress', 'uInflate', 'uCompDir']);
     this.ut = uniforms(gl, this.progTex, ['uModel', 'uVP', 'uTex', 'uGlow', 'uDirect']);
     gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
@@ -519,7 +533,7 @@ export class Renderer {
     gl.uniform3fv(this.u.uEmissive, o.emissive || [0, 0, 0]);
     gl.uniform1f(this.u.uSpec, o.spec ?? 0.15);
     gl.uniform1f(this.u.uAlpha, o.alpha ?? 1);
-    gl.uniform1i(this.u.uPattern, o.pattern || 0);
+    gl.uniform1i(this.u.uPattern, o.pattern || 0); gl.uniform1f(this.u.uPupil, o.pupil ?? 4);
     this._breath(this.u, o);
     gl.uniform1f(this.u.uCompress, o.compress || 0);
     gl.uniform1f(this.u.uInflate, o.inflate || 0); gl.uniform3fv(this.u.uCompDir, o.compDir || [0, 0, 1]);

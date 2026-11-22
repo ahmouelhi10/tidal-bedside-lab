@@ -47,7 +47,7 @@ const EN = {
   new_case: 'New case', briefing: 'Briefing', hints: 'Markers', menu_title: 'Choose your case', menu_sub: 'Pick a scenario or build any patient, then walk into the room.', patient_builder: 'Build your patient', start_case: 'Start the case', back_to_patient: 'Back to the patient',
   alarm_arrest: 'CARDIAC ARREST', alarm_hypox: 'LOW OXYGEN SATURATION', panel_close: 'Close panel', dock_label: 'Actions', collapse: 'Hide', expand: 'Show', preview_note: 'Live preview of the patient you are building',
   ok_done: 'Done', err_generic: 'Not possible', ev_arrest: 'Cardiac arrest', ev_rosc: 'Return of spontaneous circulation', ev_shock: 'Shock delivered', ev_intubated: 'Intubated',
-  face_unresp: 'Unresponsive', face_resp: 'Responsive', pupils_pin: 'pupils pinpoint', pupils_dil: 'pupils dilated', pupils_norm: 'pupils normal',
+  face_unresp: 'Unresponsive', face_resp: 'Responsive', pupils_pin: 'pupils pinpoint', pupils_dil: 'pupils dilated', pupils_norm: 'pupils normal', ex_pupils: 'Check pupils', pupils_react: 'reacting to light', pupils_fixed: 'not reacting to light',
   cam_head: 'Head', cam_chest: 'Chest', cam_arm: 'Arm', cam_side: 'Side', cam_top: 'Top', cam_foot: 'Foot end', cam_reset: 'Reset view',
   speed_x: '×', sim_unit: 'sim', pick_start: 'Choose a scenario or build a custom patient, then press Start.', no_webgl: 'WebGL2 is not available in this browser: the 3D view is disabled, all simulation, monitor and controls still work.', offline_note: 'Server not reachable: running locally (no verification).',
 };
@@ -99,7 +99,7 @@ const FR = {
   new_case: 'Nouveau cas', briefing: 'Briefing', hints: 'Repères', menu_title: 'Choisissez votre cas', menu_sub: "Choisissez un scénario ou créez n'importe quel patient, puis entrez dans la salle.", patient_builder: 'Créez votre patient', start_case: 'Démarrer le cas', back_to_patient: 'Retour au patient',
   alarm_arrest: 'ARRÊT CARDIAQUE', alarm_hypox: 'SATURATION EN OXYGÈNE BASSE', panel_close: 'Fermer le panneau', dock_label: 'Actions', collapse: 'Masquer', expand: 'Afficher', preview_note: 'Aperçu en direct du patient que vous créez',
   ok_done: 'Fait', err_generic: 'Impossible', ev_arrest: 'Arrêt cardiaque', ev_rosc: 'Reprise d\'une activité circulatoire spontanée', ev_shock: 'Choc délivré', ev_intubated: 'Intubé',
-  face_unresp: 'Ne répond pas', face_resp: 'Répond', pupils_pin: 'pupilles en myosis serré', pupils_dil: 'pupilles dilatées', pupils_norm: 'pupilles normales',
+  face_unresp: 'Ne répond pas', face_resp: 'Répond', pupils_pin: 'pupilles en myosis serré', pupils_dil: 'pupilles dilatées', pupils_norm: 'pupilles normales', ex_pupils: 'Examiner les pupilles', pupils_react: 'réactives à la lumière', pupils_fixed: 'aréactives à la lumière',
   cam_head: 'Tête', cam_chest: 'Thorax', cam_arm: 'Bras', cam_side: 'Profil', cam_top: 'Dessus', cam_foot: 'Pieds', cam_reset: 'Vue par défaut',
   speed_x: '×', sim_unit: 'sim', pick_start: 'Choisissez un scénario ou créez un patient, puis appuyez sur Démarrer.', no_webgl: "WebGL2 n'est pas disponible dans ce navigateur : la vue 3D est désactivée, la simulation, le scope et les commandes restent fonctionnels.", offline_note: 'Serveur injoignable : exécution locale (sans vérification).',
 };

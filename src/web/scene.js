@@ -6,6 +6,7 @@ import { FaceAnim } from './face.js';
 import { CprAnim } from './cpr-anim.js';
 import { BodyAnim } from './body-anim.js';
 import { SkinAnim } from './skin.js';
+import { PupilAnim } from './pupils.js';
 import { CamMove, moveDuration, handheld, handheldAmp } from './camera-rig.js';
 import { Renderer, mat4, vec3 } from './gl/renderer.js';
 import { box, sphere, cylinder } from './gl/geometry.js';
@@ -78,7 +79,7 @@ export class Scene {
     this.goal = null; this.off = { yaw: 0, pitch: 0 }; this.hover = null; this.t = 0; this.breathPh = 0; this.compAmt = 0; this.shockT = 0; this.tone = 2; this.body = null;
     this.auto = false;            // slow cinematic orbit (case menu)
     this.inset = { l: 0, r: 0, t: 0, b: 0 }; this.shift = 0; this.shiftY = 0;   // screen px covered by panels on each side (ui.updateInsets)
-    this.faceAnim = new FaceAnim(); this.cprAnim = new CprAnim(); this.bodyAnim = new BodyAnim(); this.skinAnim = new SkinAnim();
+    this.faceAnim = new FaceAnim(); this.pupilAnim = new PupilAnim(); this.cprAnim = new CprAnim(); this.bodyAnim = new BodyAnim(); this.skinAnim = new SkinAnim();
     this.camVel = { yaw: 0, pitch: 0, dist: 0, target: [0, 0, 0] }; this.hh = 0;   // camera velocity (per s) and hand-held strength (camera-rig.js)
     this.reduceMotion = typeof matchMedia === 'function' && !!matchMedia('(prefers-reduced-motion: reduce)')?.matches;
     this.gest = new Gestures(); this.rescuerHands = true; this.pins = []; this._bindInput(canvas);
@@ -201,6 +202,11 @@ export class Scene {
   /** Frame a site for an action, then glide back to the overview of the patient after holdS seconds. */
   focus(name, holdS = 2.5) { this.setCamera(name); this.returnAt = this.t + (this.tw ? this.tw.dur : 0) + holdS; }
 
+  /** Pupil examination: hold the lids open and shine a penlight (display only; the UI logs it as a note and reports the finding). */
+  checkPupils() {
+    this.pupilCheck = { t0: this.t, dur: 3.4 };
+    if (this.eyeC) { this.frameSite(this.eyeC, [-0.3, 0.95, 0], 0.3); this.returnAt = this.t + (this.tw ? this.tw.dur : 1.4) + 3.6; } else this.focus('head', 3.6);   // close over the face, upright
+  }
   /** An engine action happened: play the matching hand gesture, frame it, then return to the overview. */
   gesture(ev, res) {
     const cam = this.gest.start(this, ev, res); if (!cam) return;
@@ -301,7 +307,7 @@ export class Scene {
       g = { skin: r.upload(b.skin), hair: r.upload(b.hair), eyes: r.upload(b.eyes), pupils: r.upload(b.pupils), lips: r.upload(b.lips), sheet: r.upload(b.sheet) };
       M = supineMatrix(b);
     }
-    this.body = { b, g, M, spec, bFrame: breathFrame(b.landmarks, b.glb ? [0, 1, 0] : [0, 0, 1]) }; this.cut = null; this.skinAnim = new SkinAnim(); this._skinT = null;
+    this.body = { b, g, M, spec, bFrame: breathFrame(b.landmarks, b.glb ? [0, 1, 0] : [0, 0, 1]) }; this.cut = null; this.skinAnim = new SkinAnim(); this._skinT = null; this.pupilAnim = new PupilAnim(); this._pupT = null; this.pupilCheck = null;
     { const F = this.body.bFrame, P = b.meshes?.body?.pos; if (P) { let lo = Infinity; for (let i = 0; i < P.length; i += 3) lo = Math.min(lo, P[i] * F.axes[0] + P[i + 1] * F.axes[1] + P[i + 2] * F.axes[2]); F.cprRef[3] = lo; } }   // soles level (skin: feet, knees)
     this.tone = tone; this.gest.clear();
     const ls = b.landmarks;
@@ -315,6 +321,7 @@ export class Scene {
     this.equip = EQUIP.map(e => ({ id: e.id, label: e.label, c: e.c, rad: e.rad, equip: true }));
     this.world = Object.fromEntries(['sternum', 'padRight', 'padLeft', 'face', 'airway', 'rightArmIV', 'leftArm', 'neck', 'abdomen', 'femoral'].map(k => [k, localToWorld(this.body.M, ls[k])]));
     this.procSites = this._procSites();
+    { const E = b.meshes?.eyes?.pos; if (E) { let c = [0, 0, 0]; for (let i = 0; i < E.length; i += 3) for (let j = 0; j < 3; j++) c[j] += E[i + j]; this.eyeC = localToWorld(this.body.M, c.map(v => v / (E.length / 3))); } else this.eyeC = this.world.face; }
     // floating markers: the parts of the patient you act on, and the equipment in the bay
     this.pins = [
       ...this.hot.filter(h => PIN_PATIENT.has(h.id)).map(h => ({ id: h.id, label: h.label, pos: [h.c[0], h.c[1] + 0.14, h.c[2]], h })),
@@ -514,7 +521,11 @@ export class Scene {
     const PAINFUL = ['needle', 'cannula', 'drain', 'fona', 'laryn', 'step_scalpel'], st = this.world.sternum;
     const hurt = this.gest.list.find(g => PAINFUL.includes(g.k) && this.t >= g.t0 && this.t <= g.t0 + g.dur);
     const faceW = this.faceAnim.update(realDt, p, { painful: !!hurt, side: hurt?.f?.p ? clamp(-(hurt.f.p[2] - st[2]) * (this.sideSign || 1) / 0.2, -1, 1) : 0 });
-    const faceAll = [Math.min(1, faceW[0] + ba.face[0]), Math.min(1, faceW[1] + ba.face[1]), Math.min(1, faceW[2] + ba.face[2]), faceW[3]];
+    // pupil check: the eyelids are held open and a penlight swept onto the eyes (checkPupils)
+    const pc = this.pupilCheck, pu = pc ? clamp((this.t - pc.t0) / pc.dur, 0, 1) : 0; if (pc && pu >= 1) this.pupilCheck = null;
+    const lidUp = pc ? clamp(pu / 0.15, 0, 1) * clamp((1 - pu) / 0.12, 0, 1) : 0, lightOn = !!pc && pu > 0.35 && pu < 0.78;
+    const pupilMm = this.pupilAnim.update(realDt, p, this._pupT == null ? 0 : p.t - this._pupT, lightOn); this._pupT = p.t;
+    const faceAll = [Math.min(1, faceW[0] + ba.face[0]) * (1 - 0.92 * lidUp), Math.min(1, faceW[1] + ba.face[1]), Math.min(1, faceW[2] + ba.face[2]), faceW[3]];
     const o = { breath, bFrame: B.bFrame, compress: this.compAmt, face: faceAll, cpr: [cpr.head + ba.head, cpr.sink - ba.lift, cpr.arms + ba.arms, cpr.belly + ba.belly], tremor: ba.tremor, time: this.t % 600, skinA: [sk.sweat, sk.mottle, sk.cyanC, sk.cyanP], skinB: [sk.hives, sk.jvd, 0, 0] };
     const sheetCol = p.therm.cover < 1 ? [0.74, 0.58, 0.40] : [0.72, 0.79, 0.84];
     if (B.b.glb) {
@@ -524,7 +535,7 @@ export class Scene {
       const exposed = p.flags.padsOn || p.flags.ecgLeads || arrested || !!this.echoProbe || !!(p.chest && (p.chest.needle || p.chest.tube)) || this.gest.list.some(g => ['needle', 'tube', 'steth', 'probe', 'step_pads', 'pericard'].includes(g.k) || (g.k === 'cvc' && g.site === 'scv'));
       const fem = (B.b.weights.female ?? 0) > 0.5, sx = (k) => (fem && B.g[k + '_f'] ? k + '_f' : k), skinT = fem && T.patient_body_female ? T.patient_body_female : A('body');
       r.draw(B.g.body, M, { color: tint, spec: 0.3, pattern: 7, albedo: skinT.albedo, normalMap: skinT.normal, ...o });
-      r.draw(B.g.eyes, M, { color: [1, 1, 1], spec: 0.9, pattern: 6, albedo: A('eyes').albedo, ...o });
+      r.draw(B.g.eyes, M, { color: [1, 1, 1], spec: 0.9, pattern: 6, albedo: A('eyes').albedo, pupil: pupilMm, ...o });
       r.draw(B.g[sx('eyebrows')], M, { color: [1, 1, 1], spec: 0.05, albedo: A(sx('eyebrows')).albedo, alphaCut: -1, cull: false, depthWrite: false, noShadow: true, ...o });
       if (B.g.eyelashes) r.draw(B.g.eyelashes, M, { color: [1, 1, 1], spec: 0.05, albedo: A('eyelashes').albedo, alphaCut: -1, cull: false, depthWrite: false, noShadow: true, ...o });
       const grey = Math.min(1, Math.max(0, (B.spec.age - 45) / 35));
@@ -701,6 +712,13 @@ export class Scene {
       } else if (nk.fona?.kind === 'cannula') { inst('needle14G', vec3.add(f.p, vec3.scale(f.n, -0.03)), f.n, 0, { skip: ['steel', 'flash_orange'], noHand: true }); }
     }
     this.gest.draw({ r, fr, seg, blob, scene: this, inst, disc }, this.t);
+    if (pc && this.eyeC) {                                          // penlight in a pen grip, swept in from the side onto the eyes and away again
+      const sw = clamp((pu - 0.2) / 0.2, 0, 1) * clamp((0.92 - pu) / 0.14, 0, 1), side = this.sideSign || 1;
+      const from = vec3.norm([-0.08, 0.6, side * (1.0 - 0.7 * sw)]), tip = vec3.add(this.eyeC, vec3.scale(from, 0.07 + 0.2 * (1 - Math.min(1, pu / 0.2)) + 0.2 * (1 - clamp((1 - pu) / 0.1, 0, 1))));
+      inst('needle14G', tip, from, 0, { only: [], toward: vec3.norm([0.6, 0.6, side]) });
+      seg(tip, vec3.add(tip, vec3.scale(from, 0.13)), 0.0045, [0.75, 0.77, 0.8], { spec: 0.95 });
+      blob(tip, 0.0042, 0.0042, 0.0042, lightOn ? [1, 0.97, 0.85] : [0.6, 0.6, 0.55], lightOn ? { emissive: [1, 0.95, 0.8], noShadow: true } : { noShadow: true });
+    }
     // focused echo: the phased-array probe held on the skin (axis tilted by the operator), gel, orientation marker, cable
     if (this.echoProbe) {
       const e = this.echoProbe, a = e.axis, at = (k, v = a) => vec3.add(e.p, vec3.scale(v, k));

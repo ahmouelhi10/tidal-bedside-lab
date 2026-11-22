@@ -28,6 +28,7 @@ import { procExtra, pacingExtra, ordersExtra, scoresTick, fluidsExtra, showEcg12
 import { TEAM_ACTS } from '/engine/team.js';
 import { SBAR } from '/engine/debrief.js';
 import { AREAS, loadProgress, recordProgress, clearProgress, levelOf, profileOf, achievementsOf } from './progress.js';
+import { pupilFinding, pupilTargets } from './pupils.js';
 
 /** Skills training: the case each procedure is practised on (the condition that makes the procedure meaningful). */
 /** Instruments on the table besides the ones the procedure needs: choosing the right one is part of the skill. */
@@ -181,7 +182,7 @@ const BODY_ACTIONS = {
     ['sg_pocus', () => u._exam({ type: 'exam.pocus' })], ['od_ecg', () => u.act({ type: 'monitor.attach', items: { ecgLeads: true } }, t('od_ecg'))],
     ['od_ecg12', () => u.act({ type: 'exam.ecg12' }, t('od_ecg12'))], ['cp_pads', () => u.act({ type: 'defib.pads' }, t('cp_pads'))],
     ['tab_circ', () => u.openTab('tab_circ'), 'ghost'], ['tab_proc', () => u.openTab('tab_proc'), 'ghost']],
-  head: (u) => [['aw_nrb', () => u.act({ type: 'o2.mask', fio2: O2.nrb.fio2, seal: O2.nrb.seal }, t('aw_nrb'))], ['tab_airway', () => u.openTab('tab_airway'), 'ghost']],
+  head: (u) => [['ex_pupils', () => u.checkPupils()], ['aw_nrb', () => u.act({ type: 'o2.mask', fio2: O2.nrb.fio2, seal: O2.nrb.seal }, t('aw_nrb'))], ['tab_airway', () => u.openTab('tab_airway'), 'ghost']],
   neck: (u) => [['sg_neck_palp', () => u._exam({ type: 'exam.neck', method: 'palpation' })], ['tab_proc', () => u.openTab('tab_proc'), 'ghost']],
   groin: (u) => [['hs_press', () => u.act({ type: 'bleed.control' }, t('hs_press')), 'danger'], ['hs_cvc_fem', () => u.act({ type: 'procedure.central_line', site: 'fem', us: true }, t('hs_cvc_fem'))],
     ['tab_fluids', () => u.openTab('tab_fluids'), 'ghost']],
@@ -1374,6 +1375,15 @@ export class UI {
       case 'meds': this.openTab('tab_drugs'); break;
       default: this.openTab('tab_orders');
     }
+  }
+  /** Pupil examination: penlight on the eyes, then the finding (size, light reaction). Logged as a note for the timeline and
+   *  debrief; it does not change the patient. */
+  checkPupils() {
+    if (!this.sim.patient || this.sim.finished) return;
+    this.sim.act({ type: 'note', text: 'exam: pupils' });
+    this.scene.checkPupils?.(); const f = pupilTargets(this.sim.patient);              // the finding is the patient's state, not the animation
+    const size = 'pupils_' + pupilFinding(f.mm, f.react).size;
+    setTimeout(() => this.toast(`${t(size)} (${f.mm.toFixed(1)} mm), ${t(f.react ? 'pupils_react' : 'pupils_fixed')}`), 1800);
   }
   /** Small menu at the click point listing what can be done on that part of the body. */
   bodyMenu(h, e) {
