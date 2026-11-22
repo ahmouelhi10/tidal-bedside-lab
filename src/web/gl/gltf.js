@@ -1,6 +1,6 @@
 // Minimal glTF 2.0 binary (.glb) reader for the patient and instrument assets. No dependencies.
 // Supports what the asset pipeline exports (assets-src/README.md): triangle meshes with POSITION / NORMAL / TEXCOORD_0 /
-// COLOR_0, morph targets (POSITION + NORMAL deltas), materials with base colour, normal map and alpha mode, embedded
+// COLOR_0, morph targets (POSITION + NORMAL deltas, dense or sparse), materials with base colour, normal map and alpha mode, embedded
 // images, and named nodes with translation and extras. Image decoding is optional (createImageBitmap in the browser).
 
 const COMP = { 5120: Int8Array, 5121: Uint8Array, 5122: Int16Array, 5123: Uint16Array, 5125: Uint32Array, 5126: Float32Array };
@@ -26,13 +26,26 @@ export function splitGlb(buf) {
 /** Read an accessor as a flat Float32Array (normalised integers become 0..1), or as integers for indices. */
 export function readAccessor(json, bin, index, { asFloat = true } = {}) {
   const a = json.accessors[index], bv = json.bufferViews[a.bufferView ?? -1], n = NCOMP[a.type], T = COMP[a.componentType];
-  if (!bv) return new Float32Array(a.count * n);                                    // sparse-only / empty accessors are not used by our assets
-  const elem = T.BYTES_PER_ELEMENT, stride = bv.byteStride || n * elem, base = (bv.byteOffset || 0) + (a.byteOffset || 0);
   const out = asFloat ? new Float32Array(a.count * n) : new Uint32Array(a.count * n), dv = new DataView(bin);
-  const get = { 5120: 'getInt8', 5121: 'getUint8', 5122: 'getInt16', 5123: 'getUint16', 5125: 'getUint32', 5126: 'getFloat32' }[a.componentType];
+  const GET = { 5120: 'getInt8', 5121: 'getUint8', 5122: 'getInt16', 5123: 'getUint16', 5125: 'getUint32', 5126: 'getFloat32' };
+  const get = GET[a.componentType], elem = T.BYTES_PER_ELEMENT;
   const div = asFloat && a.normalized ? NORM_DIV[a.componentType] : 1;
-  for (let i = 0; i < a.count; i++) for (let c = 0; c < n; c++) {
-    const v = dv[get](base + i * stride + c * elem, true); out[i * n + c] = div === 1 ? v : v / div;
+  if (bv) {
+    const stride = bv.byteStride || n * elem, base = (bv.byteOffset || 0) + (a.byteOffset || 0);
+    for (let i = 0; i < a.count; i++) for (let c = 0; c < n; c++) {
+      const v = dv[get](base + i * stride + c * elem, true); out[i * n + c] = div === 1 ? v : v / div;
+    }
+  }
+  // sparse accessor (the exporter stores morph targets that move few vertices, like the face expressions, this way)
+  const sp = a.sparse;
+  if (sp) {
+    const ib = json.bufferViews[sp.indices.bufferView], vb = json.bufferViews[sp.values.bufferView];
+    const ig = GET[sp.indices.componentType], ie = COMP[sp.indices.componentType].BYTES_PER_ELEMENT;
+    const i0 = (ib.byteOffset || 0) + (sp.indices.byteOffset || 0), v0 = (vb.byteOffset || 0) + (sp.values.byteOffset || 0);
+    for (let k = 0; k < sp.count; k++) {
+      const i = dv[ig](i0 + k * ie, true);
+      for (let c = 0; c < n; c++) { const v = dv[get](v0 + (k * n + c) * elem, true); out[i * n + c] = div === 1 ? v : v / div; }
+    }
   }
   return out;
 }

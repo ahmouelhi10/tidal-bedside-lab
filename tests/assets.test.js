@@ -51,7 +51,7 @@ test('ray picking hits the triangle and reports a normal facing the ray', () => 
 const glbPath = path.join(ASSETS, 'patient.glb'), have = fs.existsSync(glbPath);
 
 test('patient asset: size budget and expected content', { skip: !have && 'patient.glb not built' }, () => {
-  assert.ok(fs.statSync(glbPath).size < 6.5e6, 'patient.glb under 6.5 MB');
+  assert.ok(fs.statSync(glbPath).size < 6.7e6, 'patient.glb under 6.7 MB');   // was 6.5 MB; the four face expressions add about 0.1 MB
   assert.ok(fs.statSync(path.join(ASSETS, 'instruments.glb')).size < 1e6, 'instruments.glb under 1 MB');
   const g = parseGlb(ab(fs.readFileSync(glbPath)));
   for (const k of ['patient_body', 'patient_gown', 'patient_sheet', 'patient_hair', 'patient_eyes', 'patient_hair_f', 'patient_eyebrows_f', 'patient_eyelashes']) assert.ok(g.meshes[k], k);   // male and female head sets
@@ -61,7 +61,11 @@ test('patient asset: size budget and expected content', { skip: !have && 'patien
   const hands = parseGlb(ab(fs.readFileSync(path.join(ASSETS, 'hands.glb'))));
   for (const k of ['hand_stethoscope', 'hand_usProbe']) assert.ok(hands.meshes[k], k);
   assert.ok(fs.statSync(path.join(ASSETS, 'hands.glb')).size < 1.5e6, 'hands.glb under 1.5 MB');
-  assert.deepEqual(g.meshes.patient_body.targetNames, ['female', 'heavy', 'thin', 'old', 'female_heavy', 'female_thin', 'female_old']);
+  assert.deepEqual(g.meshes.patient_body.targetNames, ['female', 'heavy', 'thin', 'old', 'female_heavy', 'female_thin', 'female_old', 'face_blink', 'face_jaw', 'face_pain', 'face_gaze']);
+  // face expressions are stored sparse: they must decode to real movement on the face and none elsewhere
+  const b = g.meshes.patient_body, blink = b.targets[7].pos, jaw = b.targets[8].pos; let moved = 0, far = 0;
+  for (let i = 0; i < blink.length; i += 3) { const d = Math.hypot(blink[i], blink[i + 1], blink[i + 2]) + Math.hypot(jaw[i], jaw[i + 1], jaw[i + 2]); if (d > 1e-3) { moved++; if (b.pos[i] < -0.35) far++; } }
+  assert.ok(moved > 100 && far === 0, `face keys move ${moved} vertices, ${far} below the neck`);
   for (const k of ['face', 'airway', 'sternum', 'neck', 'rightArmIV', 'leftArm', 'abdomen', 'femoral', 'padRight', 'padLeft', 'R_mcl2', 'L_mal5']) assert.ok(g.nodes[k], 'landmark ' + k);
 });
 

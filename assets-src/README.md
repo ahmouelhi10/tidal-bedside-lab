@@ -49,7 +49,7 @@ the mattress (z ≈ -0.3 to -0.67). Hips and shoulders are extended per body var
 forearms and hands touch the bed plane. Legs are adducted 4° and externally rotated 8°, and the feet are
 plantar-flexed 22°.
 
-### Meshes (6, each with the same 7 morph targets)
+### Meshes (each with the same 7 body morph targets; body and head assets also have 4 face targets)
 
 | Node | Triangles | Material | Notes |
 |---|---|---|---|
@@ -89,6 +89,15 @@ NORMAL deltas.
 | `female_old` | `female * old` (corrective) |
 
 Use either `heavy` or `thin`, never both. The basis is a 25-year-old male, BMI_ref 21.2.
+
+**Face keys.** After those 7, the body and the head assets (eyes, eyebrows, hair, eyelashes) carry four face keys:
+`face_blink`, `face_jaw`, `face_pain`, `face_gaze`. They are posed with the face bones of the MPFB default rig on the
+basis variant (`face_pose()` in `build_patient.py`: eyelids `orbicularis03/04`, `jaw`, brows `oculi01/02`, lip
+`levator05`, mouth corners `risorius03`, eyes `eye.L/R`), so they are male-basis deltas applied to every body.
+They have POSITION deltas only: the build strips their NORMAL deltas and repacks the GLB (`strip_face_normals()`),
+and the exporter stores them as **sparse** accessors. The app does not bake them: the renderer blends them on the GPU
+every frame (`uFace`, attributes `aF0..aF3`), driven by `src/web/face.js`. Blink 1 = eyes shut, jaw 1 = slack open
+mouth, pain 1 = full grimace, gaze is signed (+1 = both eyes 20° toward the patient's left).
 
 **How the keys were made:** each key is the difference between MPFB bodies built with different macro values, posed
 the same way and normalised to the same height. The male-to-female difference is the gender macro going 1 → 0. Old is

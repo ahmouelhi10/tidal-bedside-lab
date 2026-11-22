@@ -9,6 +9,7 @@ float vnoise(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * 
              mix(mix(hash13(i + vec3(0,0,1)), hash13(i + vec3(1,0,1)), f.x), mix(hash13(i + vec3(0,1,1)), hash13(i + vec3(1,1,1)), f.x), f.y), f.z); }`;
 
 const GLSL_BREATH = `
+uniform vec4 uFace;   // face expression weights (blink, jaw, pain, gaze), deltas in aF0..aF3
 uniform vec4 uBreath; uniform mat3 uBAxes; uniform vec3 uBRef; uniform float uCloth;
 // breathing wall: left / right chest (pump handle: anterior and a little cranial, most at the lower sternum) and abdomen
 vec3 breathDisp(vec3 p, vec3 n, float w){
@@ -21,15 +22,16 @@ vec3 breathDisp(vec3 p, vec3 n, float w){
   return w * (tc * mix(uBreath.y, uBreath.x, side) * g * dC + (1.0 - tc) * uBreath.z * dA);
 }`;
 
+const FACE0 = [0, 0, 0, 0];
 const BFRAME0 = { axes: [0, 1, 0, 0, 0, 1, 1, 0, 0], ref: [-9, 99, 0] };   // default: everything counts as chest
 
 const VS = `#version 300 es
-in vec3 aPos; in vec3 aNorm; in vec2 aW; in vec3 aTint; in vec2 aUV;
+in vec3 aPos; in vec3 aNorm; in vec2 aW; in vec3 aTint; in vec2 aUV; in vec3 aF0; in vec3 aF1; in vec3 aF2; in vec3 aF3;
 uniform mat4 uModel; uniform mat4 uVP; uniform float uCompress; uniform float uInflate; uniform vec3 uCompDir;
 ${GLSL_BREATH}
 out vec3 vN; out vec3 vWP; out vec3 vTint; out vec2 vUV;
 void main(){
-  vec3 p = aPos + aNorm * uInflate + breathDisp(aPos, aNorm, aW.x);
+  vec3 f = aPos + uFace.x * aF0 + uFace.y * aF1 + uFace.z * aF2 + uFace.w * aF3; vec3 p = f + aNorm * uInflate + breathDisp(aPos, aNorm, aW.x);
   p -= uCompDir * (uCompress * aW.y);
   vec4 wp = uModel * vec4(p, 1.0);
   vWP = wp.xyz; vTint = aTint; vUV = aUV;
@@ -38,10 +40,10 @@ void main(){
 }`;
 
 const VS_SHADOW = `#version 300 es
-in vec3 aPos; in vec3 aNorm; in vec2 aW;
+in vec3 aPos; in vec3 aNorm; in vec2 aW; in vec3 aF0; in vec3 aF1; in vec3 aF2; in vec3 aF3;
 uniform mat4 uModel; uniform mat4 uVP; uniform float uCompress; uniform float uInflate; uniform vec3 uCompDir;
 ${GLSL_BREATH}
-void main(){ vec3 p = aPos + aNorm * uInflate + breathDisp(aPos, aNorm, aW.x); p -= uCompDir * (uCompress * aW.y); gl_Position = uVP * uModel * vec4(p, 1.0); }`;
+void main(){ vec3 f = aPos + uFace.x * aF0 + uFace.y * aF1 + uFace.z * aF2 + uFace.w * aF3; vec3 p = f + aNorm * uInflate + breathDisp(aPos, aNorm, aW.x); p -= uCompDir * (uCompress * aW.y); gl_Position = uVP * uModel * vec4(p, 1.0); }`;
 const FS_SHADOW = `#version 300 es
 precision mediump float; out vec4 o; void main(){ o = vec4(1.0); }`;
 
@@ -219,7 +221,7 @@ function compile(gl, type, src) {
 function program(gl, vs, fs) {
   const p = gl.createProgram();
   gl.attachShader(p, compile(gl, gl.VERTEX_SHADER, vs)); gl.attachShader(p, compile(gl, gl.FRAGMENT_SHADER, fs));
-  gl.bindAttribLocation(p, 0, 'aPos'); gl.bindAttribLocation(p, 1, 'aNorm'); gl.bindAttribLocation(p, 2, 'aW'); gl.bindAttribLocation(p, 3, 'aTint'); gl.bindAttribLocation(p, 4, 'aUV');
+  gl.bindAttribLocation(p, 0, 'aPos'); gl.bindAttribLocation(p, 1, 'aNorm'); gl.bindAttribLocation(p, 2, 'aW'); gl.bindAttribLocation(p, 3, 'aTint'); gl.bindAttribLocation(p, 4, 'aUV'); for (let i = 0; i < 4; i++) gl.bindAttribLocation(p, 5 + i, 'aF' + i);
   gl.linkProgram(p);
   if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error('link: ' + gl.getProgramInfoLog(p));
   return p;
@@ -232,8 +234,8 @@ export class Renderer {
     if (!gl) throw new Error('WebGL2 is not available in this browser.');
     this.gl = gl; this.canvas = canvas;
     this.prog = program(gl, VS, FS); this.progShadow = program(gl, VS_SHADOW, FS_SHADOW); this.progTex = program(gl, VS_TEX, FS_TEX);
-    this.u = uniforms(gl, this.prog, ['uModel', 'uVP', 'uBreath', 'uCompress', 'uColor', 'uEmissive', 'uSpec', 'uAlpha', 'uPattern', 'uEye', 'uLightPos', 'uLightDir', 'uLightK', 'uLightVP', 'uShadow', 'uDirect', 'uAlbedo', 'uNormalMap', 'uTexMode', 'uAlphaCut', 'uInflate', 'uCompDir', 'uBAxes', 'uBRef', 'uCloth']);
-    this.us = uniforms(gl, this.progShadow, ['uModel', 'uVP', 'uBreath', 'uBAxes', 'uBRef', 'uCloth', 'uCompress', 'uInflate', 'uCompDir']);
+    this.u = uniforms(gl, this.prog, ['uModel', 'uVP', 'uBreath', 'uCompress', 'uColor', 'uEmissive', 'uSpec', 'uAlpha', 'uPattern', 'uEye', 'uLightPos', 'uLightDir', 'uLightK', 'uLightVP', 'uShadow', 'uDirect', 'uAlbedo', 'uNormalMap', 'uTexMode', 'uAlphaCut', 'uInflate', 'uCompDir', 'uBAxes', 'uBRef', 'uCloth', 'uFace']);
+    this.us = uniforms(gl, this.progShadow, ['uModel', 'uVP', 'uBreath', 'uBAxes', 'uBRef', 'uCloth', 'uFace', 'uCompress', 'uInflate', 'uCompDir']);
     this.ut = uniforms(gl, this.progTex, ['uModel', 'uVP', 'uTex', 'uGlow', 'uDirect']);
     gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -306,6 +308,7 @@ export class Renderer {
     mk(mesh.pos, 0, 3); mk(mesh.nrm, 1, 3); mk(mesh.w, 2, 2);
     if (mesh.tint) mk(mesh.tint, 3, 3); else gl.disableVertexAttribArray(3);
     if (mesh.uv) mk(mesh.uv, 4, 2); else gl.disableVertexAttribArray(4);
+    for (let i = 0; i < 4; i++) { const d = mesh.face?.[i]; if (d) mk(d, 5 + i, 3); else { gl.disableVertexAttribArray(5 + i); gl.vertexAttrib3f(5 + i, 0, 0, 0); } }   // face expression deltas (patient)
     const ib = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.idx, gl.STATIC_DRAW);
     gl.bindVertexArray(null);
     return { vao, count: mesh.idx.length, ref: mesh, hasTint: !!mesh.tint, hasUV: !!mesh.uv };
@@ -408,7 +411,7 @@ export class Renderer {
   _breath(u, o) {
     const gl = this.gl, b = o.breath || 0, f = o.bFrame || BFRAME0;
     gl.uniform4f(u.uBreath, Array.isArray(b) ? b[0] : b, Array.isArray(b) ? b[1] : b, Array.isArray(b) ? b[2] : b, 0);
-    gl.uniformMatrix3fv(u.uBAxes, false, f.axes); gl.uniform3fv(u.uBRef, f.ref); gl.uniform1f(u.uCloth, o.cloth ? 1 : 0);
+    gl.uniformMatrix3fv(u.uBAxes, false, f.axes); gl.uniform3fv(u.uBRef, f.ref); gl.uniform1f(u.uCloth, o.cloth ? 1 : 0); const fw = o.face || FACE0; gl.uniform4f(u.uFace, fw[0], fw[1], fw[2], fw[3]);
   }
 
   /** opts: color, emissive, spec, alpha, pattern, breath, bFrame, compress, noShadow */

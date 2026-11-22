@@ -2,6 +2,7 @@
 // world-to-screen projection for the floating markers. Read-only view of engine state.
 import { Gestures } from './gestures.js';
 import { breathPose, breathFrame, drapeWeights } from './breathing.js';
+import { FaceAnim } from './face.js';
 import { Renderer, mat4, vec3 } from './gl/renderer.js';
 import { box, sphere, cylinder } from './gl/geometry.js';
 import { morphology, buildBody, supineMatrix, SKIN_TONES, skinColor, localToWorld } from './gl/body.js';
@@ -72,6 +73,7 @@ export class Scene {
     this.goal = null; this.off = { yaw: 0, pitch: 0 }; this.hover = null; this.t = 0; this.breathPh = 0; this.compAmt = 0; this.shockT = 0; this.tone = 2; this.body = null;
     this.auto = false;            // slow cinematic orbit (case menu)
     this.inset = { l: 0, r: 0, t: 0, b: 0 }; this.shift = 0; this.shiftY = 0;   // screen px covered by panels on each side (ui.updateInsets)
+    this.faceAnim = new FaceAnim();
     this.gest = new Gestures(); this.rescuerHands = true; this.pins = []; this._bindInput(canvas);
   }
 
@@ -460,7 +462,11 @@ export class Scene {
 
     // ---------------- patient
     const M = mat4.multiply(mat4.translation(0, jerk, 0), B.M);
-    const o = { breath, bFrame: B.bFrame, compress: this.compAmt };
+    // face: blink, jaw, grimace and gaze (face.js); painful procedures under way on screen, and the side they are on
+    const PAINFUL = ['needle', 'cannula', 'drain', 'fona', 'laryn', 'step_scalpel'], st = this.world.sternum;
+    const hurt = this.gest.list.find(g => PAINFUL.includes(g.k) && this.t >= g.t0 && this.t <= g.t0 + g.dur);
+    const faceW = this.faceAnim.update(realDt, p, { painful: !!hurt, side: hurt?.f?.p ? clamp(-(hurt.f.p[2] - st[2]) * (this.sideSign || 1) / 0.2, -1, 1) : 0 });
+    const o = { breath, bFrame: B.bFrame, compress: this.compAmt, face: faceW };
     const sheetCol = p.therm.cover < 1 ? [0.74, 0.58, 0.40] : [0.72, 0.79, 0.84];
     if (B.b.glb) {
       const T = this.asset.tex, tint = skin.map((v, i) => v / TONE_REF[i]), A = (k) => T['patient_' + k] || {};

@@ -72,6 +72,9 @@ VARIANTS = {
     'FO': {'gender': 0.0, 'age': 1.0},
 }
 SHAPE_KEYS = ['female', 'heavy', 'thin', 'old', 'female_heavy', 'female_thin', 'female_old']
+# Face shape keys, posed with the MakeHuman default rig's face bones on the basis variant and stored as deltas on the body and the
+# head assets. The app blends them every frame (blink, slack jaw, pain grimace, horizontal gaze; gaze is signed: +1 = to the patient's left).
+FACE_KEYS = ['face_blink', 'face_jaw', 'face_pain', 'face_gaze']
 DENSITY = 1.01            # kg/L whole-body density used to turn mesh volume into mass (design value)
 BMI_HEAVY = 50.0          # heavy = 1 on the male basis reaches this BMI (at reference height)
 BMI_THIN = 16.0           # thin = 1 on the male basis reaches this BMI (at reference height)
@@ -161,6 +164,32 @@ def align(rig, bone, cur, tgt):
     if ax.length < 1e-8:
         return
     rot_world(rig, bone, ax, cur.angle(tgt))
+
+
+def move_world(rig, bone, d):
+    pb = rig.pose.bones[bone]
+    pb.matrix = Matrix.Translation(Vector(d)) @ pb.matrix
+    _upd()
+
+
+def face_pose(rig, key):
+    """Standing frame: +X patient's left, -Y forward, +Z up. Angles in degrees, moves in metres (design values, judged on renders)."""
+    r = lambda b, ax, deg: rot_world(rig, b, ax, math.radians(deg))
+    for s, sx in (('L', 1.0), ('R', -1.0)):
+        if key == 'face_blink':                       # upper lid down over the eye, lower lid up a little
+            r('orbicularis03.' + s, (1, 0, 0), 30); r('orbicularis04.' + s, (1, 0, 0), -6)
+        elif key == 'face_pain':                      # brows down and knitted, eyes squeezed, upper lip raised, mouth corners drawn back
+            r('orbicularis03.' + s, (1, 0, 0), 14); r('orbicularis04.' + s, (1, 0, 0), -14)
+            move_world(rig, 'oculi01.' + s, (-sx * 0.003, 0, -0.005)); move_world(rig, 'oculi02.' + s, (0, 0, -0.003))
+            move_world(rig, 'levator05.' + s, (0, 0, 0.003)); move_world(rig, 'risorius03.' + s, (sx * 0.004, 0, 0.002))
+        elif key == 'face_gaze':                      # both eyes turned 20 degrees toward the patient's left
+            r('eye.' + s, (0, 0, 1), 20)
+    if key == 'face_jaw':                             # slack jaw, mouth falls open
+        r('jaw', (1, 0, 0), 7)
+
+
+FACE_BONES = ('jaw', 'eye.L', 'eye.R', 'orbicularis03.L', 'orbicularis03.R', 'orbicularis04.L', 'orbicularis04.R', 'oculi01.L', 'oculi01.R',
+              'oculi02.L', 'oculi02.R', 'levator05.L', 'levator05.R', 'risorius03.L', 'risorius03.R')
 
 
 def H(rig, b):
@@ -271,6 +300,15 @@ def build_variant(key, keep=False):
         out[k] = evaluated_world(objs[k])
     bones = {b: [list(rig.pose.bones[b].head), list(rig.pose.bones[b].tail)] for b in BONES_FOR_LANDMARKS}
     info = dict(stature=stature, sole=float(rest[idx, 2].min()), palms=palms, bones=bones, contact=contact)
+    if keep:                                          # face expressions, captured before the pose is frozen
+        saved = {b: rig.pose.bones[b].matrix_basis.copy() for b in FACE_BONES}
+        info['face'] = {}
+        for fk in FACE_KEYS:
+            face_pose(rig, fk)
+            info['face'][fk] = {'body': evaluated_world(human)[idx], **{k: evaluated_world(objs[k]) for k in objs}}
+            for b, m in saved.items():
+                rig.pose.bones[b].matrix_basis = m
+            _upd()
     finals = None
     if keep:
         finals = make_final_objects(human, objs, idx)
@@ -373,6 +411,7 @@ def main():
     T = tri_indices(body.data)
     H0 = infos['B']['stature']
 
+    raw0 = {k: v.copy() for k, v in raw['B'].items()}
     # height-normalise every variant about the soles (app scales uniformly to the patient's height)
     for key in VARIANTS:
         s = H0 / infos[key]['stature']
@@ -467,6 +506,11 @@ def main():
             kb = ob.shape_key_add(name=key, from_mix=False)
             kb.data.foreach_set('co', keys[key].astype(np.float32).ravel())
             kb.slider_min, kb.slider_max = 0.0, 1.0
+        if obj == 'body' or obj in HEAD_ASSETS:       # face expression deltas (rotation only: the basis variant is already height H0)
+            for fk in FACE_KEYS:
+                kb = ob.shape_key_add(name=fk, from_mix=False)
+                kb.data.foreach_set('co', (keys['Basis'] + _rot(infos['B']['face'][fk][obj] - raw0[obj])).astype(np.float32).ravel())
+                kb.slider_min, kb.slider_max = -1.0, 1.0
     bpy.context.view_layer.update()
     # the braid's tail lies under the head and back on the mattress (x < -0.20 m, the nape down): never visible, so it is dropped
     # (shape keys follow, bmesh keeps them); this keeps patient.glb within its download budget
@@ -533,6 +577,7 @@ def main():
         'heightRule': 'scale the whole patient uniformly by height/referenceHeight about the crown (origin); '
                       'BMI scales with that factor too: BMI(h) = BMI_ref * h / referenceHeight',
         'shapeKeys': SHAPE_KEYS,
+        'faceKeys': FACE_KEYS,
         'shapeKeyRules': {
             'female': '0 = male, 1 = female', 'old': 'clamp((age - 25) / 65, 0, 1)',
             'heavy': 'BMI above the basis; pick from calibration (1 = BMI %.0f male)' % BMI_HEAVY,
@@ -1160,10 +1205,82 @@ def export_glb(meta):
         kw['export_colors'] = True
     kw = {k: v for k, v in kw.items() if k in props or k == 'filepath'}
     bpy.ops.export_scene.gltf(**kw)
+    strip_face_normals()
     patch_glb_anchors(meta)
     with open(OUT_JSON, 'w', encoding='utf-8') as f:
         json.dump(meta, f, indent=1)
     log('exported', OUT_GLB, '%.2f MB' % (os.path.getsize(OUT_GLB) / 1e6), 'triangles', meta['triangles'])
+
+
+def strip_face_normals():
+    """The exporter writes dense NORMAL deltas for every morph target. The app moves the face on the GPU from position deltas only,
+    so the face keys' normal deltas are dropped and the BIN chunk is compacted (keeps patient.glb within its download budget)."""
+    import struct
+    with open(OUT_GLB, 'rb') as f:
+        data = f.read()
+    jl = struct.unpack('<I', data[12:16])[0]
+    J = json.loads(data[20:20 + jl])
+    BIN = data[20 + jl + 8:]
+    for m in J['meshes']:
+        names = m.get('extras', {}).get('targetNames', [])
+        for p in m['primitives']:
+            for n, t in zip(names, p.get('targets', [])):
+                if n in FACE_KEYS:
+                    t.pop('NORMAL', None)
+    used = set()
+    def acc_views(a):
+        if 'bufferView' in a:
+            used.add(a['bufferView'])
+        if 'sparse' in a:
+            used.add(a['sparse']['indices']['bufferView']); used.add(a['sparse']['values']['bufferView'])
+    live = set()
+    for m in J['meshes']:
+        for p in m['primitives']:
+            live.update(p['attributes'].values())
+            if 'indices' in p:
+                live.add(p['indices'])
+            for t in p.get('targets', []):
+                live.update(t.values())
+    for i in live:
+        acc_views(J['accessors'][i])
+    for im in J.get('images', []):
+        used.add(im['bufferView'])
+    # drop dead accessors, then dead buffer views, and repack the BIN chunk
+    amap = {o: k for k, o in enumerate(sorted(live))}
+    J['accessors'] = [J['accessors'][o] for o in sorted(live)]
+    for m in J['meshes']:
+        for p in m['primitives']:
+            p['attributes'] = {k: amap[v] for k, v in p['attributes'].items()}
+            if 'indices' in p:
+                p['indices'] = amap[p['indices']]
+            p['targets'] = [{k: amap[v] for k, v in t.items()} for t in p.get('targets', [])]
+    vmap, out = {}, bytearray()
+    for o in sorted(used):
+        v = J['bufferViews'][o]
+        while len(out) % 4:
+            out.append(0)
+        start = v.get('byteOffset', 0)
+        vmap[o] = len(vmap)
+        nv = dict(v); nv['byteOffset'] = len(out)
+        out += BIN[start:start + v['byteLength']]
+        J['bufferViews'][o] = nv
+    J['bufferViews'] = [J['bufferViews'][o] for o in sorted(used)]
+    for a in J['accessors']:
+        if 'bufferView' in a:
+            a['bufferView'] = vmap[a['bufferView']]
+        if 'sparse' in a:
+            a['sparse']['indices']['bufferView'] = vmap[a['sparse']['indices']['bufferView']]
+            a['sparse']['values']['bufferView'] = vmap[a['sparse']['values']['bufferView']]
+    for im in J.get('images', []):
+        im['bufferView'] = vmap[im['bufferView']]
+    while len(out) % 4:
+        out.append(0)
+    J['buffers'][0]['byteLength'] = len(out)
+    js = json.dumps(J, separators=(',', ':')).encode('utf-8')
+    js += b' ' * ((4 - len(js) % 4) % 4)
+    binchunk = struct.pack('<I4s', len(out), b'BIN\x00') + bytes(out)
+    with open(OUT_GLB, 'wb') as f:
+        f.write(struct.pack('<4sII', b'glTF', 2, 12 + 8 + len(js) + len(binchunk)) + struct.pack('<I4s', len(js), b'JSON') + js + binchunk)
 
 
 def patch_glb_anchors(meta):
