@@ -9,13 +9,14 @@ float vnoise(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * 
              mix(mix(hash13(i + vec3(0,0,1)), hash13(i + vec3(1,0,1)), f.x), mix(hash13(i + vec3(0,1,1)), hash13(i + vec3(1,1,1)), f.x), f.y), f.z); }`;
 
 const GLSL_BREATH = `
-uniform vec4 uBreath; uniform mat3 uBAxes; uniform vec3 uBRef;
+uniform vec4 uBreath; uniform mat3 uBAxes; uniform vec3 uBRef; uniform float uCloth;
 // breathing wall: left / right chest (pump handle: anterior and a little cranial, most at the lower sternum) and abdomen
 vec3 breathDisp(vec3 p, vec3 n, float w){
   if (w <= 0.0) return vec3(0.0);
   float c = dot(p, uBAxes[0]), lat = dot(p, uBAxes[2]) - uBRef.z;
   float tc = smoothstep(uBRef.x - 0.035, uBRef.x + 0.045, c), side = smoothstep(-0.04, 0.04, lat);
   float g = mix(1.0, 0.45, smoothstep(uBRef.x, uBRef.y, c));
+  if (uCloth > 0.5) return w * (tc * mix(uBreath.y, uBreath.x, side) + (1.0 - tc) * uBreath.z) * uBAxes[1];   // draped cloth: lifted straight up by the body under it
   vec3 dC = normalize(n + 0.3 * uBAxes[0]), dA = normalize(uBAxes[1] + 0.35 * n);   // mostly anterior: the draped sheet's normals are not consistently outward
   return w * (tc * mix(uBreath.y, uBreath.x, side) * g * dC + (1.0 - tc) * uBreath.z * dA);
 }`;
@@ -231,8 +232,8 @@ export class Renderer {
     if (!gl) throw new Error('WebGL2 is not available in this browser.');
     this.gl = gl; this.canvas = canvas;
     this.prog = program(gl, VS, FS); this.progShadow = program(gl, VS_SHADOW, FS_SHADOW); this.progTex = program(gl, VS_TEX, FS_TEX);
-    this.u = uniforms(gl, this.prog, ['uModel', 'uVP', 'uBreath', 'uCompress', 'uColor', 'uEmissive', 'uSpec', 'uAlpha', 'uPattern', 'uEye', 'uLightPos', 'uLightDir', 'uLightK', 'uLightVP', 'uShadow', 'uDirect', 'uAlbedo', 'uNormalMap', 'uTexMode', 'uAlphaCut', 'uInflate', 'uCompDir', 'uBAxes', 'uBRef']);
-    this.us = uniforms(gl, this.progShadow, ['uModel', 'uVP', 'uBreath', 'uBAxes', 'uBRef', 'uCompress', 'uInflate', 'uCompDir']);
+    this.u = uniforms(gl, this.prog, ['uModel', 'uVP', 'uBreath', 'uCompress', 'uColor', 'uEmissive', 'uSpec', 'uAlpha', 'uPattern', 'uEye', 'uLightPos', 'uLightDir', 'uLightK', 'uLightVP', 'uShadow', 'uDirect', 'uAlbedo', 'uNormalMap', 'uTexMode', 'uAlphaCut', 'uInflate', 'uCompDir', 'uBAxes', 'uBRef', 'uCloth']);
+    this.us = uniforms(gl, this.progShadow, ['uModel', 'uVP', 'uBreath', 'uBAxes', 'uBRef', 'uCloth', 'uCompress', 'uInflate', 'uCompDir']);
     this.ut = uniforms(gl, this.progTex, ['uModel', 'uVP', 'uTex', 'uGlow', 'uDirect']);
     gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -407,7 +408,7 @@ export class Renderer {
   _breath(u, o) {
     const gl = this.gl, b = o.breath || 0, f = o.bFrame || BFRAME0;
     gl.uniform4f(u.uBreath, Array.isArray(b) ? b[0] : b, Array.isArray(b) ? b[1] : b, Array.isArray(b) ? b[2] : b, 0);
-    gl.uniformMatrix3fv(u.uBAxes, false, f.axes); gl.uniform3fv(u.uBRef, f.ref);
+    gl.uniformMatrix3fv(u.uBAxes, false, f.axes); gl.uniform3fv(u.uBRef, f.ref); gl.uniform1f(u.uCloth, o.cloth ? 1 : 0);
   }
 
   /** opts: color, emissive, spec, alpha, pattern, breath, bFrame, compress, noShadow */

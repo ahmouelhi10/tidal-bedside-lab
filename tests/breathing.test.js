@@ -1,7 +1,7 @@
 // Visible breathing pattern (src/web/breathing.js): the shape and the clinical signs the 3D chest must show.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { breathPose, breathWave } from '../src/web/breathing.js';
+import { breathPose, breathWave, drapeWeights } from '../src/web/breathing.js';
 
 const base = (o = {}) => ({ resp: { rr: 14, vt: 500 }, airway: { device: 'none', patency: 1 }, vent: { mode: 'spont' }, chest: {}, tube: {}, crises: { br: 0 }, neuraxial: { active: false, seg: 31 }, o2: null, ...o });
 const peak = (p, n = 2) => { let L = 0, R = 0, A = 0, Lmin = 0; for (let i = 0; i < 200; i++) { const s = breathPose(p, n + i / 200); L = Math.max(L, s.L); R = Math.max(R, s.R); A = Math.max(A, s.A); Lmin = Math.min(Lmin, s.L); } return { L, R, A, Lmin }; };
@@ -53,4 +53,12 @@ test('bronchospasm: slow, incomplete expiration', () => {
 
 test('apnoea: no movement', () => {
   assert.deepEqual(breathPose(base({ resp: { rr: 0, vt: 0 } }), 1.3), { L: 0, R: 0, A: 0 });
+});
+
+test('drape: the sheet takes the breathing weight of the belly under it', () => {
+  const body = { pos: new Float32Array([0, 0, 0, 0.5, 0, 0]), w: new Float32Array([1, 0, 0, 0]) };
+  const cloth = { pos: new Float32Array([0.01, 0.03, 0, 0.5, 0.03, 0]), w: new Float32Array([0, 0, 0.7, 0]) };
+  const d = drapeWeights(cloth, body);
+  assert.ok(d.w[0] > 0.85, 'over the belly');
+  assert.equal(d.w[2], 0, 'nothing moving under it');
 });

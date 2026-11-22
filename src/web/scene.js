@@ -1,7 +1,7 @@
 // 3D clinical scene: an emergency bay (room, bed, equipment, staff), the procedural patient, camera orbit, hotspot picking and
 // world-to-screen projection for the floating markers. Read-only view of engine state.
 import { Gestures } from './gestures.js';
-import { breathPose, breathFrame } from './breathing.js';
+import { breathPose, breathFrame, drapeWeights } from './breathing.js';
 import { Renderer, mat4, vec3 } from './gl/renderer.js';
 import { box, sphere, cylinder } from './gl/geometry.js';
 import { morphology, buildBody, supineMatrix, SKIN_TONES, skinColor, localToWorld } from './gl/body.js';
@@ -251,6 +251,7 @@ export class Scene {
     let b, g, M;
     if (this.asset) {
       b = buildGlbBody(this.asset.glb, this.asset.meta, spec, morph);
+      if (b.meshes.sheet) b.meshes.sheet = drapeWeights(b.meshes.sheet, b.meshes.body);   // the sheet rises with the belly under it
       g = Object.fromEntries(Object.entries(b.meshes).map(([k, m]) => [k, r.upload(m)]));
       M = mat4.multiply(mat4.translation(CROWN_X, BED_TOP, 0), mat4.scaling(b.scale, b.scale, b.scale));
     } else {
@@ -429,6 +430,9 @@ export class Scene {
     const rrNow = p.resp.rr;
     this.breathPh += realDt * (rrNow / 60) * Math.PI * 2;
     const bp = breathPose(p, this.breathPh / (Math.PI * 2)), breath = [bp.L, bp.R, bp.A];   // left chest, right chest, abdomen (breathing.js)
+    // the sheet: rises with the belly at once (never lets the skin through), settles back a little behind it like real cloth, 3 mm clear
+    { const k = 1 - Math.exp(-realDt / 0.22); this.sheetB = (this.sheetB || [0, 0, 0]).map((v, i) => Math.max(breath[i], v + (breath[i] - v) * k)); }
+    const sheetBreath = this.sheetB.map(v => v * 1.08 + 0.003);
     // compressions: animate each engine compression event
     let comp = 0; const ev = p.cpr.events;
     if (arrested && ev.length) { const age = p.t - ev[ev.length - 1].t, d = ev[ev.length - 1].depth / 100; if (age >= 0 && age < 0.28) comp = d * Math.sin(Math.PI * age / 0.28); }
@@ -472,7 +476,7 @@ export class Scene {
       r.draw(B.g[sx('hair')], M, { color: [1 + grey * 1.6, 1 + grey * 1.55, 1 + grey * 1.5], spec: 0.2, pattern: 4, albedo: A(sx('hair')).albedo, alphaCut: 0.5, cull: false, noShadow: true, ...o });
       const infl = 0.004 + 0.016 * Math.min(1, B.b.weights.heavy + 0.5 * B.b.weights.female_heavy);   // heavier morphs need more clearance
       if (!exposed) r.draw(B.g.gown, M, { color: [0.36, 0.55, 0.66], spec: 0.05, pattern: 5, cull: false, inflate: infl, ...o });
-      r.draw(B.g.sheet, M, { color: sheetCol, spec: 0.05, pattern: 5, cull: false, ...o });   // the draped sheet's normals are not consistently outward: no inflate
+      r.draw(B.g.sheet, M, { color: sheetCol, spec: 0.05, pattern: 5, cull: false, ...o, breath: sheetBreath, cloth: true });   // the draped sheet's normals are not consistently outward: no inflate
       // arm board under the abducted right arm
       const ra = this.world.rightArmIV, sh = [this.world.padRight[0] + 0.07, BED_TOP, this.world.padRight[2] - 0.12], d = [ra[0] - sh[0], 0, ra[2] - sh[2]], dl = Math.hypot(d[0], d[2]) || 1, ex = [d[0] / dl, 0, d[2] / dl], ez = [-ex[2], 0, ex[0]];
       const c = [ra[0] + ex[0] * 0.08, BED_TOP - 0.025, ra[2] + ex[2] * 0.08];

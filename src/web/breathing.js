@@ -75,3 +75,21 @@ export function breathFrame(ls, anterior) {
   const xiph = dot(lerp(ls.sternum, ls.abdomen, 0.28), cran), clav = dot(lerp(ls.sternum, ls.airway, 0.3), cran);
   return { axes: [...cran, ...anterior, ...left], ref: [xiph, clav, dot(ls.sternum, left)] };
 }
+
+/** Drape: give each vertex of a cloth lying on the body (the sheet) the strongest breathing weight of the skin within
+ * `rad` metres of it, measured along the body surface (cranial and lateral axes, mesh space: x cranial, z lateral).
+ * The cloth then rises at least as much as the belly under it and never lets the skin poke through. */
+export function drapeWeights(cloth, body, rad = 0.035) {
+  const cell = rad, key = (x, z) => Math.floor(x / cell) + ',' + Math.floor(z / cell), grid = new Map();
+  const nb = body.pos.length / 3, sb = body.w.length / nb, nc = cloth.pos.length / 3, sc = cloth.w.length / nc;
+  for (let i = 0; i < nb; i++) { const w = body.w[i * sb]; if (w <= 0.01) continue; const k = key(body.pos[i * 3], body.pos[i * 3 + 2]); (grid.get(k) || grid.set(k, []).get(k)).push(i); }
+  const w = Float32Array.from(cloth.w);
+  for (let j = 0; j < nc; j++) {
+    const x = cloth.pos[j * 3], z = cloth.pos[j * 3 + 2], gx = Math.floor(x / cell), gz = Math.floor(z / cell); let best = 0;
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (const i of grid.get((gx + a) + ',' + (gz + b)) || []) {
+      const d = Math.hypot(body.pos[i * 3] - x, body.pos[i * 3 + 2] - z); if (d < rad) best = Math.max(best, body.w[i * sb] * (1 - 0.3 * d / rad));
+    }
+    w[j * sc] = best;
+  }
+  return { ...cloth, w };
+}
