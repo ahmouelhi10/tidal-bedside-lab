@@ -8,12 +8,27 @@ float vnoise(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * 
   return mix(mix(mix(hash13(i), hash13(i + vec3(1,0,0)), f.x), mix(hash13(i + vec3(0,1,0)), hash13(i + vec3(1,1,0)), f.x), f.y),
              mix(mix(hash13(i + vec3(0,0,1)), hash13(i + vec3(1,0,1)), f.x), mix(hash13(i + vec3(0,1,1)), hash13(i + vec3(1,1,1)), f.x), f.y), f.z); }`;
 
+const GLSL_BREATH = `
+uniform vec4 uBreath; uniform mat3 uBAxes; uniform vec3 uBRef;
+// breathing wall: left / right chest (pump handle: anterior and a little cranial, most at the lower sternum) and abdomen
+vec3 breathDisp(vec3 p, vec3 n, float w){
+  if (w <= 0.0) return vec3(0.0);
+  float c = dot(p, uBAxes[0]), lat = dot(p, uBAxes[2]) - uBRef.z;
+  float tc = smoothstep(uBRef.x - 0.035, uBRef.x + 0.045, c), side = smoothstep(-0.04, 0.04, lat);
+  float g = mix(1.0, 0.45, smoothstep(uBRef.x, uBRef.y, c));
+  vec3 dC = normalize(n + 0.3 * uBAxes[0]), dA = normalize(uBAxes[1] + 0.35 * n);   // mostly anterior: the draped sheet's normals are not consistently outward
+  return w * (tc * mix(uBreath.y, uBreath.x, side) * g * dC + (1.0 - tc) * uBreath.z * dA);
+}`;
+
+const BFRAME0 = { axes: [0, 1, 0, 0, 0, 1, 1, 0, 0], ref: [-9, 99, 0] };   // default: everything counts as chest
+
 const VS = `#version 300 es
 in vec3 aPos; in vec3 aNorm; in vec2 aW; in vec3 aTint; in vec2 aUV;
-uniform mat4 uModel; uniform mat4 uVP; uniform float uBreath; uniform float uCompress; uniform float uInflate; uniform vec3 uCompDir;
+uniform mat4 uModel; uniform mat4 uVP; uniform float uCompress; uniform float uInflate; uniform vec3 uCompDir;
+${GLSL_BREATH}
 out vec3 vN; out vec3 vWP; out vec3 vTint; out vec2 vUV;
 void main(){
-  vec3 p = aPos + aNorm * (uBreath * aW.x + uInflate);
+  vec3 p = aPos + aNorm * uInflate + breathDisp(aPos, aNorm, aW.x);
   p -= uCompDir * (uCompress * aW.y);
   vec4 wp = uModel * vec4(p, 1.0);
   vWP = wp.xyz; vTint = aTint; vUV = aUV;
@@ -23,8 +38,9 @@ void main(){
 
 const VS_SHADOW = `#version 300 es
 in vec3 aPos; in vec3 aNorm; in vec2 aW;
-uniform mat4 uModel; uniform mat4 uVP; uniform float uBreath; uniform float uCompress; uniform float uInflate; uniform vec3 uCompDir;
-void main(){ vec3 p = aPos + aNorm * (uBreath * aW.x + uInflate); p -= uCompDir * (uCompress * aW.y); gl_Position = uVP * uModel * vec4(p, 1.0); }`;
+uniform mat4 uModel; uniform mat4 uVP; uniform float uCompress; uniform float uInflate; uniform vec3 uCompDir;
+${GLSL_BREATH}
+void main(){ vec3 p = aPos + aNorm * uInflate + breathDisp(aPos, aNorm, aW.x); p -= uCompDir * (uCompress * aW.y); gl_Position = uVP * uModel * vec4(p, 1.0); }`;
 const FS_SHADOW = `#version 300 es
 precision mediump float; out vec4 o; void main(){ o = vec4(1.0); }`;
 
@@ -215,8 +231,8 @@ export class Renderer {
     if (!gl) throw new Error('WebGL2 is not available in this browser.');
     this.gl = gl; this.canvas = canvas;
     this.prog = program(gl, VS, FS); this.progShadow = program(gl, VS_SHADOW, FS_SHADOW); this.progTex = program(gl, VS_TEX, FS_TEX);
-    this.u = uniforms(gl, this.prog, ['uModel', 'uVP', 'uBreath', 'uCompress', 'uColor', 'uEmissive', 'uSpec', 'uAlpha', 'uPattern', 'uEye', 'uLightPos', 'uLightDir', 'uLightK', 'uLightVP', 'uShadow', 'uDirect', 'uAlbedo', 'uNormalMap', 'uTexMode', 'uAlphaCut', 'uInflate', 'uCompDir']);
-    this.us = uniforms(gl, this.progShadow, ['uModel', 'uVP', 'uBreath', 'uCompress', 'uInflate', 'uCompDir']);
+    this.u = uniforms(gl, this.prog, ['uModel', 'uVP', 'uBreath', 'uCompress', 'uColor', 'uEmissive', 'uSpec', 'uAlpha', 'uPattern', 'uEye', 'uLightPos', 'uLightDir', 'uLightK', 'uLightVP', 'uShadow', 'uDirect', 'uAlbedo', 'uNormalMap', 'uTexMode', 'uAlphaCut', 'uInflate', 'uCompDir', 'uBAxes', 'uBRef']);
+    this.us = uniforms(gl, this.progShadow, ['uModel', 'uVP', 'uBreath', 'uBAxes', 'uBRef', 'uCompress', 'uInflate', 'uCompDir']);
     this.ut = uniforms(gl, this.progTex, ['uModel', 'uVP', 'uTex', 'uGlow', 'uDirect']);
     gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -387,13 +403,20 @@ export class Renderer {
     gl.enable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.enable(gl.CULL_FACE);
   }
 
-  /** opts: color, emissive, spec, alpha, pattern, breath, compress, noShadow */
+  /** breathing uniforms: o.breath = [left chest, right chest, abdomen] in metres (or one number for all), o.bFrame = breathFrame() */
+  _breath(u, o) {
+    const gl = this.gl, b = o.breath || 0, f = o.bFrame || BFRAME0;
+    gl.uniform4f(u.uBreath, Array.isArray(b) ? b[0] : b, Array.isArray(b) ? b[1] : b, Array.isArray(b) ? b[2] : b, 0);
+    gl.uniformMatrix3fv(u.uBAxes, false, f.axes); gl.uniform3fv(u.uBRef, f.ref);
+  }
+
+  /** opts: color, emissive, spec, alpha, pattern, breath, bFrame, compress, noShadow */
   draw(gm, model, o = {}) {
     const gl = this.gl;
     if (this.mode === 'skip') return;
     if (this.mode === 'shadow') {
       if ((o.alpha ?? 1) < 0.9 || o.noShadow || (o.pattern || 0) === 1 || (o.pattern || 0) === 2) return;
-      gl.uniformMatrix4fv(this.us.uModel, false, model); gl.uniform1f(this.us.uBreath, o.breath || 0); gl.uniform1f(this.us.uCompress, o.compress || 0); gl.uniform1f(this.us.uInflate, o.inflate || 0); gl.uniform3fv(this.us.uCompDir, o.compDir || [0, 0, 1]);
+      gl.uniformMatrix4fv(this.us.uModel, false, model); this._breath(this.us, o); gl.uniform1f(this.us.uCompress, o.compress || 0); gl.uniform1f(this.us.uInflate, o.inflate || 0); gl.uniform3fv(this.us.uCompDir, o.compDir || [0, 0, 1]);
       gl.bindVertexArray(gm.vao); gl.drawElements(gl.TRIANGLES, gm.count, gl.UNSIGNED_INT, 0); return;
     }
     gl.useProgram(this.prog);
@@ -403,7 +426,7 @@ export class Renderer {
     gl.uniform1f(this.u.uSpec, o.spec ?? 0.15);
     gl.uniform1f(this.u.uAlpha, o.alpha ?? 1);
     gl.uniform1i(this.u.uPattern, o.pattern || 0);
-    gl.uniform1f(this.u.uBreath, o.breath || 0);
+    this._breath(this.u, o);
     gl.uniform1f(this.u.uCompress, o.compress || 0);
     gl.uniform1f(this.u.uInflate, o.inflate || 0); gl.uniform3fv(this.u.uCompDir, o.compDir || [0, 0, 1]);
     const tm = o.albedo ? (o.normalMap ? 2 : 1) : 0;

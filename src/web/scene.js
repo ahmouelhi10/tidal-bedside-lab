@@ -1,6 +1,7 @@
 // 3D clinical scene: an emergency bay (room, bed, equipment, staff), the procedural patient, camera orbit, hotspot picking and
 // world-to-screen projection for the floating markers. Read-only view of engine state.
 import { Gestures } from './gestures.js';
+import { breathPose, breathFrame } from './breathing.js';
 import { Renderer, mat4, vec3 } from './gl/renderer.js';
 import { box, sphere, cylinder } from './gl/geometry.js';
 import { morphology, buildBody, supineMatrix, SKIN_TONES, skinColor, localToWorld } from './gl/body.js';
@@ -257,7 +258,7 @@ export class Scene {
       g = { skin: r.upload(b.skin), hair: r.upload(b.hair), eyes: r.upload(b.eyes), pupils: r.upload(b.pupils), lips: r.upload(b.lips), sheet: r.upload(b.sheet) };
       M = supineMatrix(b);
     }
-    this.body = { b, g, M, spec }; this.cut = null;
+    this.body = { b, g, M, spec, bFrame: breathFrame(b.landmarks, b.glb ? [0, 1, 0] : [0, 0, 1]) }; this.cut = null;
     this.tone = tone; this.gest.clear();
     const ls = b.landmarks;
     this.hot = HOTSPOTS.map(([id, lm, rad, label]) => ({ id, label, c: localToWorld(this.body.M, ls[lm]), rad: rad * (0.8 + 0.5 * Math.min(1, morph.bmi / 40)) }));
@@ -425,10 +426,9 @@ export class Scene {
     const cyan = clamp((0.93 - sao2) / 0.35, 0, 1), pallor = clamp((p.vol.fractionLost - 0.1) / 0.3, 0, 1) * 0.9 + (perf < 55 ? 0.3 : 0) + (arrested ? 0.4 : 0);
     const skin = skinColor(SKIN_TONES[this.tone] || SKIN_TONES[2], { cyanosis: cyan, pallor: clamp(pallor, 0, 1), flush: clamp((p.therm.tc - 37.8) / 2, 0, 1) });
     // breathing: from the engine respiratory rate and tidal volume; ventilated chest rise during BVM / vent
-    const rrNow = p.resp.rr, vt = p.resp.vt || 0;
+    const rrNow = p.resp.rr;
     this.breathPh += realDt * (rrNow / 60) * Math.PI * 2;
-    const sign = Math.sin(this.breathPh) * 0.5 + 0.5;
-    const breath = rrNow > 0.5 ? clamp(vt / 600, 0.1, 1.4) * 0.022 * sign : 0;
+    const bp = breathPose(p, this.breathPh / (Math.PI * 2)), breath = [bp.L, bp.R, bp.A];   // left chest, right chest, abdomen (breathing.js)
     // compressions: animate each engine compression event
     let comp = 0; const ev = p.cpr.events;
     if (arrested && ev.length) { const age = p.t - ev[ev.length - 1].t, d = ev[ev.length - 1].depth / 100; if (age >= 0 && age < 0.28) comp = d * Math.sin(Math.PI * age / 0.28); }
@@ -456,7 +456,7 @@ export class Scene {
 
     // ---------------- patient
     const M = mat4.multiply(mat4.translation(0, jerk, 0), B.M);
-    const o = { breath, compress: this.compAmt };
+    const o = { breath, bFrame: B.bFrame, compress: this.compAmt };
     const sheetCol = p.therm.cover < 1 ? [0.74, 0.58, 0.40] : [0.72, 0.79, 0.84];
     if (B.b.glb) {
       const T = this.asset.tex, tint = skin.map((v, i) => v / TONE_REF[i]), A = (k) => T['patient_' + k] || {};
@@ -484,7 +484,7 @@ export class Scene {
       r.draw(B.g.eyes, M, { color: [0.93, 0.93, 0.93], spec: 0.9, pattern: 6 });
       r.draw(B.g.pupils, M, { color: arrested ? [0.02, 0.02, 0.02] : [0.05, 0.05, 0.05] });
       r.draw(B.g.lips, M, { color: [0.62 - cyan * 0.25, 0.28, 0.28 + cyan * 0.2] });
-      r.draw(B.g.sheet, M, { color: sheetCol, spec: 0.05, pattern: 5, ...{ breath: breath * 0.2 } });
+      r.draw(B.g.sheet, M, { color: sheetCol, spec: 0.05, pattern: 5, ...{ breath: breath.map(v => v * 0.2), bFrame: B.bFrame } });
     }
     // bleeding
     const bleeding = p.vol.rates.bleed > 0, lost = p.vol.fractionLost;
@@ -508,14 +508,15 @@ export class Scene {
     const hose = (a, ctrl, b, rad, col, extra = {}) => { let prev = a; for (let i = 1; i <= 12; i++) { const k = i / 12, q = [0, 1, 2].map(j => (1 - k) * (1 - k) * a[j] + 2 * (1 - k) * k * ctrl[j] + k * k * b[j]); seg(prev, q, rad, col, extra); prev = q; } };
     const SF = (k) => this.siteFrame?.(k);
     const onSkin = (f, h = 0.002) => [f.p[0] + f.n[0] * h, f.p[1] + f.n[1] * h, f.p[2] + f.n[2] * h];
+    const ride = (q) => { const left = (q[2] - W.sternum[2]) * (this.sideSign || 1) < 0; return [q[0], q[1] + 0.85 * (left ? breath[0] : breath[1]), q[2]]; };   // things stuck on the chest rise with it
     if (fl.padsOn) {                                            // multifunction pads stuck on the skin, red leads to the defibrillator
-      for (const [k, nm] of [['padRight', 'defibPadRight'], ['padLeft', 'defibPadLeft']]) { const f = SF(k) || { p: W[k], n: [0, 1, 0] }; inst(nm, onSkin(f, 0.003), f.n, 0, { noHand: true }); }
+      for (const [k, nm] of [['padRight', 'defibPadRight'], ['padLeft', 'defibPadLeft']]) { const f = SF(k) || { p: W[k], n: [0, 1, 0] }; inst(nm, ride(onSkin(f, 0.003)), f.n, 0, { noHand: true }); }
       const pr = W.padRight; hose(up(pr, 0.02), [pr[0] + 0.3, 1.05, pr[2] - 0.35], [CART[0] + 0.19, 1.0, CART[2] + 0.17], 0.004, [0.72, 0.07, 0.06], { spec: 0.5 });
     }
     if (fl.ecgLeads) {                                          // three foam electrodes with snaps, leads gathered toward the monitor
       const st = SF('sternum') || { p: W.sternum, n: [0, 1, 0] }, lead = [[0.12, -0.09, [0.95, 0.95, 0.95]], [0.12, 0.09, [0.9, 0.2, 0.2]], [-0.1, 0.1, [0.2, 0.8, 0.3]]];
       for (const [dx, dz, col] of lead) {
-        const q = [st.p[0] + dx, st.p[1], st.p[2] + dz], n = this.normalAt(q), base = [q[0] + n[0] * 0.012, q[1] + n[1] * 0.012 - 0.008, q[2] + n[2] * 0.012];
+        const q = [st.p[0] + dx, st.p[1], st.p[2] + dz], n = this.normalAt(q), base = ride([q[0] + n[0] * 0.012, q[1] + n[1] * 0.012 - 0.008, q[2] + n[2] * 0.012]);
         disc(base, n, [1, 0, 0], 0.02, 0.02, [0.96, 0.96, 0.94], { spec: 0.2 }); blob([base[0] + n[0] * 0.004, base[1] + n[1] * 0.004, base[2] + n[2] * 0.004], 0.005, 0.004, 0.005, [0.75, 0.77, 0.8], { spec: 0.9 });
         hose([base[0] + n[0] * 0.006, base[1] + n[1] * 0.006, base[2] + n[2] * 0.006], [base[0] + 0.12, base[1] + 0.02, -0.45], [STAND[0] - 0.25, 0.95, STAND[1] + 0.35], 0.0018, col, { spec: 0.4 });
       }
