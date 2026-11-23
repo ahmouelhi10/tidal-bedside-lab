@@ -12,7 +12,8 @@ import { WakeAnim, movePoint } from './wake-anim.js';
 import { BedAnim, bendPoint, bendWeight, turnDir } from './bed.js';
 import { RescuerAnim } from './rescuer-anim.js';
 import { DripAnim, dropAt } from './drip.js';
-import { syringePumps, SYRINGE_ML } from './syringe.js';
+import { syringePumps, pumpScreen, SYRINGE_ML } from './syringe.js';
+import { t as tr, drugName } from './i18n.js';
 import { CamMove, moveDuration, handheld, handheldAmp } from './camera-rig.js';
 import { Renderer, mat4, vec3 } from './gl/renderer.js';
 import { box, sphere, cylinder } from './gl/geometry.js';
@@ -348,6 +349,24 @@ export class Scene {
     const q = [0, 1, 2].map(j => bu * P[ix[0] + j] + bv * P[ix[1] + j] + bw * P[ix[2] + j]), p = [T[0] + q[0] * s, T[1] + q[1] * s, T[2] + q[2] * s];
     return { p, n: turnDir(h.n, -U[2] * bendWeight(p, U)), region: m.region[h.vert] };
   }
+  /** Pump screen i as a texture (a small canvas redrawn only when what it shows changes): drug, rate in mL/h, volume left;
+   *  green on black while running, flashing amber near the end of the syringe, grey when stopped. */
+  _pumpScreen(i, s, T) {
+    if (typeof document === 'undefined') return null;
+    const slot = (this._pumpScr ||= [])[i] || (this._pumpScr[i] = (() => { const c = document.createElement('canvas'); c.width = 256; c.height = 128; return { c, tex: null, key: '' }; })());
+    const flash = s.tone === 'end' && (T % 1) < 0.5, key = s.lines.join('|') + s.tone + flash;
+    if (key !== slot.key) {
+      const g = slot.c.getContext('2d'); slot.key = key;
+      g.fillStyle = flash ? '#5a3400' : '#030806'; g.fillRect(0, 0, 256, 128);
+      const fg = s.tone === 'stop' ? '#7d8a86' : s.tone === 'end' ? '#ffb020' : '#36e08a';
+      g.fillStyle = fg; g.textBaseline = 'middle'; g.textAlign = 'left';
+      g.font = 'bold 24px system-ui, sans-serif'; g.fillText(s.lines[0], 12, 22);
+      g.font = 'bold 46px system-ui, sans-serif'; g.fillText(s.lines[1], 12, 68);
+      g.font = '22px system-ui, sans-serif'; g.fillText(s.lines[2], 12, 109);
+      if (!slot.tex) slot.tex = this.r.createTexture(slot.c); else this.r.updateTexture(slot.tex, slot.c);
+    }
+    return slot.tex;
+  }
   /** The CPR rescuers (rescuer-anim.js): the compressor on a step stool with straight arms down to the gloved hands on the chest,
    *  the next one ready beside the bed, and the walk when they switch. R: { ra, cp, eB, eT, rB, rT, sleeve, glove } from draw(). */
   _drawRescuers(R) {
@@ -577,8 +596,9 @@ export class Scene {
       const cx = px + 0.15, y = 1.06 - i * 0.14, zf = pz + 0.035, ys = y + 0.04 + 0.017, L = 0.11, x0 = cx - 0.1, lf = L * q.ml / SYRINGE_ML, seal = x0 + lf;
       P.b(cx, y, pz, 0.26, 0.08, 0.12, { color: [0.88, 0.89, 0.9], spec: 0.3 });                                                                          // pump body
       P.b(cx - 0.02, ys - 0.006, zf, 0.2, 0.01, 0.04, { color: [0.7, 0.72, 0.75], spec: 0.3 });                                                            // syringe cradle
-      const scr = q.nearEnd ? ((T % 1) < 0.5 ? [0.8, 0.48, 0.04] : [0.16, 0.1, 0.02]) : q.running ? [0.06, 0.5, 0.28] : [0.03, 0.06, 0.06];
-      P.b(cx + 0.08, y - 0.01, pz + 0.061, 0.06, 0.026, 0.004, { color: [0.05, 0.08, 0.08], emissive: scr });                                           // display: green running, amber flashing near the end
+      P.b(cx + 0.065, y - 0.004, pz + 0.0605, 0.106, 0.056, 0.003, { color: [0.05, 0.06, 0.07], spec: 0.5 });                                         // screen bezel
+      const sc = this._pumpScreen(i, pumpScreen(q, drugName(q.drug, q.drug[0].toUpperCase() + q.drug.slice(1)), { left: tr('pump_left'), end: tr('pump_end'), stop: tr('pump_stop') }), T);
+      if (sc) r.drawQuad(sc, mat4.multiply(mat4.translation(cx + 0.065, y - 0.004, pz + 0.0625), mat4.scaling(0.096, 0.048, 1)), 1);                      // the rate, as the pump shows it
       if (lf > 0.0005) hc(x0, seal, ys, zf, 0.0135, { color: q.milky ? [0.95, 0.95, 0.92] : [0.84, 0.91, 0.95], alpha: q.milky ? 0.95 : 0.4, spec: 0.8, noShadow: !q.milky });   // the drug
       hc(seal, seal + 0.006, ys, zf, 0.0138, { color: [0.12, 0.12, 0.13], spec: 0.4 });                                                                   // rubber seal
       hc(seal + 0.006, seal + 0.12, ys, zf, 0.004, { color: [0.93, 0.94, 0.95], spec: 0.4 });                                                             // plunger rod

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mk } from './helpers/bots.js';
-import { syringePumps, CONC, SYRINGE_ML, NEAR_END_ML, PUMPS, LABEL_RGB } from '../src/web/syringe.js';
+import { syringePumps, pumpScreen, CONC, SYRINGE_ML, NEAR_END_ML, PUMPS, LABEL_RGB } from '../src/web/syringe.js';
 
 test('no drug infusion: no pump', () => { assert.deepEqual(syringePumps(mk().run(5)), []); });
 
@@ -42,4 +42,14 @@ test('at most four pumps, running ones first; label colours follow the ISO 26825
   const lab = Object.fromEntries(qs.map(q => [q.drug, q.label]));
   assert.deepEqual(lab, { norepinephrine: 'violet', remifentanil: 'blue', rocuronium: 'red', midazolam: 'orange' });
   for (const q of qs) assert.deepEqual(q.rgb, LABEL_RGB[q.label]);
+});
+
+test('the pump screen: drug, rate in mL/h to 0.1, volume left; a warning near the end; stopped', () => {
+  const p = mk(); p.dispatch({ type: 'drug.infusion', drug: 'norepinephrine', rate: 8 }); p.run(600);
+  let [q] = syringePumps(p), s = pumpScreen(q, 'Noradrénaline');
+  assert.equal(s.tone, 'run'); assert.deepEqual(s.lines, ['NORADRÉNALINE', '6.0 mL/h', `${(SYRINGE_ML - 80 / CONC.norepinephrine).toFixed(1)} mL left`]);
+  assert.equal(pumpScreen({ ...q, rateMlH: 150 }, 'x').lines[1], '150 mL/h', 'whole mL/h from 100 up');
+  assert.deepEqual(pumpScreen({ ...q, nearEnd: true }, 'x', { left: 'mL restants', end: 'FIN PROCHE', stop: 'ARRÊT' }), { tone: 'end', lines: ['X', '6.0 mL/h', 'FIN PROCHE'] });
+  p.dispatch({ type: 'drug.stop', drug: 'norepinephrine' }); p.run(1); [q] = syringePumps(p); s = pumpScreen(q, 'Norepinephrine');
+  assert.equal(s.tone, 'stop'); assert.equal(s.lines[2], 'STOPPED');
 });

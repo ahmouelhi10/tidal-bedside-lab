@@ -49,3 +49,11 @@ export function syringePumps(p) {
   out.sort((a, b) => (b.running - a.running) || (b.t0 - a.t0));
   return out.slice(0, PUMPS).map(({ t0, ...q }) => q);
 }
+
+/** What the pump's screen says (pure): the drug, the rate in mL/h, then the volume left or a warning.
+ *  name: the drug's display name; w: words for { left, end, stop } in the interface language. tone: 'run' | 'end' | 'stop'. */
+export function pumpScreen(q, name, w = { left: 'mL left', end: 'NEAR END', stop: 'STOPPED' }) {
+  const tone = q.nearEnd ? 'end' : q.running ? 'run' : 'stop';
+  const rate = q.rateMlH >= 100 ? q.rateMlH.toFixed(0) : q.rateMlH.toFixed(1);          // pumps show 0.1 mL/h up to 99.9
+  return { tone, lines: [String(name).toUpperCase().slice(0, 14), `${rate} mL/h`, tone === 'end' ? w.end : tone === 'stop' ? w.stop : `${q.ml.toFixed(1)} ${w.left}`] };
+}
