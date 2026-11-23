@@ -10,6 +10,7 @@ import { PupilAnim } from './pupils.js';
 import { bloodState } from './blood.js';
 import { WakeAnim, movePoint } from './wake-anim.js';
 import { BedAnim, bendPoint, bendWeight, turnDir } from './bed.js';
+import { RescuerAnim } from './rescuer-anim.js';
 import { CamMove, moveDuration, handheld, handheldAmp } from './camera-rig.js';
 import { Renderer, mat4, vec3 } from './gl/renderer.js';
 import { box, sphere, cylinder } from './gl/geometry.js';
@@ -20,6 +21,15 @@ import { buildGlbBody } from './gl/patient-glb.js';
 import { prepare as preparePick, rayMesh } from './gl/pick.js';
 
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+/** End of a gown sleeve up the forearm (hands.glb, in the hand's frame): centre of the ring of vertices farthest from the hand, and its radius. */
+function sleeveEnd(arrs) {
+  let n = 0, c = [0, 0, 0]; for (const P of arrs) for (let i = 0; i < P.length; i += 3) { c[0] += P[i]; c[1] += P[i + 1]; c[2] += P[i + 2]; n++; }
+  if (!n) return null; c = c.map(v => v / n); const d = vec3.norm(c);                       // from the hand toward the elbow
+  let hi = -Infinity; for (const P of arrs) for (let i = 0; i < P.length; i += 3) hi = Math.max(hi, P[i] * d[0] + P[i + 1] * d[1] + P[i + 2] * d[2]);
+  const ring = []; for (const P of arrs) for (let i = 0; i < P.length; i += 3) if (P[i] * d[0] + P[i + 1] * d[1] + P[i + 2] * d[2] > hi - 0.012) ring.push([P[i], P[i + 1], P[i + 2]]);
+  const e = [0, 1, 2].map(j => ring.reduce((a, q) => a + q[j], 0) / ring.length), r = ring.reduce((a, q) => a + Math.hypot(q[0] - e[0], q[1] - e[1], q[2] - e[2]), 0) / ring.length;
+  return { c: e, r, d };
+}
 const smooth01 = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
 const HAND_KEYS = ['act', 'relax'];
 /** Joint weights for the waking movements (wake-anim.js, shader moveP): per vertex [left arm, left leg, right leg] from the body
@@ -89,7 +99,7 @@ export class Scene {
     this.g = {
       ub: r.upload(box(1, 1, 1)), cyl: r.upload(cylinder(1, 1, 18)), sph: r.upload(sphere(1, 1, 1, 16, 10)),
       bedFrame: r.upload(box(2.25, 0.08, 0.86)), mattress: r.upload(box(2.1 / MAT_N, 0.12, 0.8)), rail: r.upload(box(2.0, 0.05, 0.04)),
-      leg: r.upload(cylinder(0.04, 0.8, 12)), monitorBody: r.upload(box(1.0, 0.56, 0.08)),
+      leg: r.upload(cylinder(0.04, 0.8, 12)), armF: r.upload(cylinder(1, 1, 16, 0.85)), monitorBody: r.upload(box(1.0, 0.56, 0.08)),
       pad: r.upload(cylinder(1, 0.02, 20)), bag: r.upload(sphere(1, 1.25, 0.5, 14, 10)),
       wallW: r.upload(plane(ROOM.x1 - ROOM.x0, ROOM.h)), wallD: r.upload(plane(ROOM.z1 - ROOM.z0, ROOM.h)), floor: r.upload(plane(ROOM.x1 - ROOM.x0, ROOM.z1 - ROOM.z0)),
     };
@@ -101,7 +111,7 @@ export class Scene {
     this.faceAnim = new FaceAnim(); this.wakeAnim = new WakeAnim(); this.bedAnim = new BedAnim(); this._bedT = null; this.pupilAnim = new PupilAnim(); this.cprAnim = new CprAnim(); this.bodyAnim = new BodyAnim(); this.skinAnim = new SkinAnim();
     this.camVel = { yaw: 0, pitch: 0, dist: 0, target: [0, 0, 0] }; this.hh = 0;   // camera velocity (per s) and hand-held strength (camera-rig.js)
     this.reduceMotion = typeof matchMedia === 'function' && !!matchMedia('(prefers-reduced-motion: reduce)')?.matches;
-    this.gest = new Gestures(); this.rescuerHands = true; this.pins = []; this._bindInput(canvas);
+    this.gest = new Gestures(); this.rescuerHands = true; this.rescuerAnim = new RescuerAnim(); this.pins = []; this._bindInput(canvas);
   }
 
   /** Frame a named view. Close-ups follow the real landmarks of this patient (head, sternum, neck, IV arm, groin) so they stay centred for any body. */
@@ -300,9 +310,16 @@ export class Scene {
           return { g: this.r.upload({ pos: pr.pos, nrm: pr.nrm, w: new Float32Array(pr.pos.length / 3 * 2), idx: pr.idx, face: face.some(Boolean) ? [...face, null, null] : null }), color: f.slice(0, 3), sleeve, pos: sleeve ? pr.pos : null }; });
         for (const h of Object.values(hands)) {                                   // which way the forearm leaves the hand, across the instrument axis (+Y): lets a gesture bring the arm from the operator
           let x = 0, z = 0; for (const pt of h) if (pt.pos) for (let i = 0; i < pt.pos.length; i += 3) { x += pt.pos[i]; z += pt.pos[i + 2]; }
-          const l = Math.hypot(x, z); h.fa = l > 1e-6 ? Math.atan2(z / l, x / l) : null; for (const pt of h) delete pt.pos;
+          const l = Math.hypot(x, z); h.fa = l > 1e-6 ? Math.atan2(z / l, x / l) : null;
+          h.cuff = sleeveEnd(h.filter(pt => pt.pos).map(pt => pt.pos)); for (const pt of h) delete pt.pos;   // where the sleeve ends up the forearm (a CPR rescuer's arm carries on from there)
         }
         this.hands = hands; }
+      // the two CPR rescuers (assets/rescuer.glb, optional): body parts per person, shoulders and sole level (rescuer.json)
+      const [rb, rj] = await Promise.all([fetch(base + 'rescuer.glb').then(r => (r.ok ? r.arrayBuffer() : null)).catch(() => null), fetch(base + 'rescuer.json').then(r => (r.ok ? r.json() : null)).catch(() => null)]);
+      if (rb && rj?.people) { const rg = parseGlb(rb), people = {};
+        for (const [name, m] of Object.entries(rg.meshes)) { const [, who, part] = name.split('_'); if (!rj.people[who]) continue;
+          (people[who] ||= { meta: rj.people[who], parts: [] }).parts.push({ part, g: this.r.upload({ pos: m.pos, nrm: m.nrm, w: new Float32Array(m.pos.length / 3 * 2), idx: m.idx }), color: (m.material?.pbrMetallicRoughness?.baseColorFactor || [0.5, 0.5, 0.5]).slice(0, 3) }); }
+        this.rescuers = ['m', 'f'].map(k => people[k]).filter(Boolean); }
     } catch (e) { console.warn('instruments unavailable:', e && e.message); }
   }
   /** Ray-pick the realistic body's skin: { p, n, region } in world space, or null (also null with the procedural body). */
@@ -329,6 +346,43 @@ export class Scene {
     const q = [0, 1, 2].map(j => bu * P[ix[0] + j] + bv * P[ix[1] + j] + bw * P[ix[2] + j]), p = [T[0] + q[0] * s, T[1] + q[1] * s, T[2] + q[2] * s];
     return { p, n: turnDir(h.n, -U[2] * bendWeight(p, U)), region: m.region[h.vert] };
   }
+  /** The CPR rescuers (rescuer-anim.js): the compressor on a step stool with straight arms down to the gloved hands on the chest,
+   *  the next one ready beside the bed, and the walk when they switch. R: { ra, cp, eB, eT, rB, rT, sleeve, glove } from draw(). */
+  _drawRescuers(R) {
+    const r = this.r, fr = this.g, people = this.rescuers, { ra, cp } = R;
+    const seg = (A, Bp, r0, col, o = {}) => { const d = vec3.sub(Bp, A), L = Math.hypot(...d) || 1e-6, ey = d.map(x => x / L), up = Math.abs(ey[1]) > 0.95 ? [1, 0, 0] : [0, 1, 0], ex = vec3.norm(vec3.cross(up, ey)), ez = vec3.cross(ey, ex);
+      r.draw(fr.armF, mat4.multiply(mat4.fromBasis(ex, ey, ez, A.map((v, i) => (v + Bp[i]) / 2)), mat4.scaling(r0, L, r0)), { color: col, spec: 0.05, pattern: 5, ...o }); };
+    const ball = (c, rad, col, o = {}) => r.draw(fr.sph, mat4.multiply(mat4.translation(c[0], c[1], c[2]), mat4.scaling(rad, rad, rad)), { color: col, spec: 0.05, pattern: 5, ...o });
+    const tf = (M, v) => mat4.transformPoint(M, v);
+    // where the compressor stands: shoulders a little beyond the elbows (the sleeve ends), along the forearms; feet on a step stool
+    const P0 = people[0].meta, mid = (a, b) => a.map((v, i) => (v + b[i]) / 2), sh0 = mid(P0.shoulderL, P0.shoulderR);
+    const em = R.eB && R.eT ? mid(R.eB, R.eT) : [cp[0], cp[1] + 0.35, cp[2] - 0.3], fd = vec3.norm(vec3.sub(em, cp)), sT = vec3.add(em, vec3.scale(fd, 0.24));
+    const stool = clamp(sT[1] - sh0[1], 0, 0.5), C = [sT[0] - sh0[0], stool, sT[2] - sh0[2]];
+    const spot = { C, R0: [cp[0] - 0.8, 0, Math.min(C[2], -0.55) - 0.35], R1: [Math.min(cp[0] + 0.8, 1.2), 0, Math.min(C[2], -0.55) - 0.35] };
+    const face = (q) => (q === 'C' ? 0 : Math.atan2(cp[0] - spot[q][0], cp[2] - spot[q][2]) * 0.8);
+    if (stool > 0.04) {                                                           // step stool: grey top, dark feet
+      r.draw(fr.ub, mat4.multiply(mat4.translation(C[0], stool - 0.015, C[2] + 0.02), mat4.scaling(0.5, 0.03, 0.36)), { color: [0.55, 0.58, 0.62], spec: 0.3 });
+      r.draw(fr.ub, mat4.multiply(mat4.translation(C[0], (stool - 0.03) / 2, C[2] + 0.02), mat4.scaling(0.46, stool - 0.03, 0.32)), { color: [0.3, 0.32, 0.35], spec: 0.2 });
+    }
+    ra.people.forEach((q, i) => {
+      const who = people[i % people.length], A = spot[q.from], Bq = spot[q.to], u = q.u;
+      const pos = [A[0] + (Bq[0] - A[0]) * u, 0, A[2] + (Bq[2] - A[2]) * u];
+      pos[1] = q.from === 'C' && q.to !== 'C' ? stool * (1 - smooth01(0, 0.35, u)) : q.to === 'C' && q.from !== 'C' ? stool * smooth01(0.65, 1, u) : A[1];
+      pos[1] += 0.025 * Math.abs(Math.sin(u * Math.PI * 3)) * (q.from !== q.to ? 1 : 0);     // steps
+      const yaw = face(q.from) + (face(q.to) - face(q.from)) * u, M = mat4.multiply(mat4.translation(...pos), mat4.rotationY(yaw));
+      for (const pt of who.parts) r.draw(pt.g, M, { color: pt.part === 'cap' && i === 1 ? [0.22, 0.5, 0.36] : pt.color, spec: pt.part === 'skin' ? 0.3 : 0.06, pattern: pt.part === 'gown' ? 5 : 0 });
+      const SL = tf(M, who.meta.shoulderL), SR = tf(M, who.meta.shoulderR), fwd = [Math.sin(yaw), 0, Math.cos(yaw)], side = vec3.norm(vec3.sub(SL, SR));
+      const onChest = i === ra.who && q.hands > 0 && R.eB && R.eT;
+      if (onChest) {                                                              // straight arms: upper arm from the shoulder to the sleeve end at the elbow
+        const [eR, eL] = vec3.dot(vec3.sub(R.eB, R.eT), side) < 0 ? [R.eB, R.eT] : [R.eT, R.eB], rr = [R.rB, R.rT];
+        for (const [S, E, re] of [[SR, eR, rr[0]], [SL, eL, rr[1]]]) { const Si = vec3.add(S, vec3.scale(vec3.norm(vec3.sub(E, S)), 0.03)); ball(Si, 0.044, R.sleeve); seg(Si, E, Math.max(0.042, re / 0.85), R.sleeve); }
+      } else for (const [S, sx] of [[SR, -1], [SL, 1]]) {                       // arms hanging at the sides, gloved hands
+        const El = vec3.add(S, [fwd[0] * 0.05 + side[0] * sx * 0.03, -0.29, fwd[2] * 0.05 + side[2] * sx * 0.03]), W = vec3.add(El, [fwd[0] * 0.07, -0.25, fwd[2] * 0.07]);
+        const Si = vec3.add(S, [0, -0.03, 0]); ball(Si, 0.044, R.sleeve); seg(Si, El, 0.045, R.sleeve); ball(El, 0.038, R.sleeve); seg(El, W, 0.038, R.sleeve);
+        r.draw(fr.sph, mat4.multiply(mat4.fromBasis(side, [0, 1, 0], fwd, vec3.add(W, [0, -0.06, 0])), mat4.scaling(0.028, 0.075, 0.045)), { color: R.glove, spec: 0.32 });
+      }
+    });
+  }
   /** Draw one instrument with its working point at p, long axis along n, turned by angle about n. */
   _instrument(name, p, n, angle = 0, opts = {}) {
     const parts = this.instruments?.[name] || []; if (!parts.length && !this.hands?.['hand_' + name]) return;   // a hand alone ('press') is fine
@@ -346,6 +400,7 @@ export class Scene {
     const fw = opts.act || opts.relax ? [opts.act || 0, opts.relax || 0, 0, 0] : undefined;   // finger movements (hands.glb morph targets)
     if (hand) for (const pt of hand) this.r.draw(pt.g, M, pt.sleeve ? { color: pt.color, spec: 0.05, pattern: 5, face: fw } : { color: pt.color, spec: 0.32, pattern: 8, face: fw });
     for (const pt of parts) { if (opts.only && !opts.only.includes(pt.mat)) continue; if (opts.skip && opts.skip.includes(pt.mat)) continue; this.r.draw(pt.g, M, { color: pt.color, alpha: pt.alpha, spec: pt.metal > 0.5 ? 0.95 : 0.4, noShadow: pt.alpha < 0.9 }); }
+    return M;
   }
 
   setPatient(spec, tone = this.tone) {
@@ -566,6 +621,7 @@ export class Scene {
     if (p.shockLog.length && p.shockLog[p.shockLog.length - 1].t !== this._shockSeen) { this._shockSeen = p.shockLog[p.shockLog.length - 1].t; this.shockT = 0.35; }
     this.shockT = Math.max(0, this.shockT - realDt);
 
+    const once = {}, first = (k, fn) => (k in once ? once[k] : (once[k] = fn()));   // frame() runs twice (shadows, then the picture): animations advance once per frame
     const frame = () => {
     // ---------------- room and equipment
     const fr = this.g;
@@ -598,15 +654,15 @@ export class Scene {
         if (q[0] > W0.neck[0] - 0.06) busy.add('head'); else if (q[0] < W0.femoral[0] - 0.04) busy.add(q[2] * R0 > 0 ? 'legR' : 'legL'); else if (q[2] * R0 < -0.18) busy.add('armL');
       }
       if (this.pupilCheck || this.ghost) busy.add('head');
-      const F = B.bFrame, mv = this.wakeAnim.update(realDt, p, { painful: !!hurt, busy });
+      const F = B.bFrame, mv = first('wake', () => this.wakeAnim.update(realDt, p, { painful: !!hurt, busy }));
       this._moveU = F.arm ? { axes: [F.axes.slice(0, 3), F.axes.slice(3, 6), F.axes.slice(6, 9)], ref: F.ref, cprRef: F.cprRef, arm: F.arm, armD: F.armD, leg: F.leg, move: mv.move, move2: mv.move2 } : null;
       this._moveO = this._moveU ? mv : null;
     }
-    const faceW = this.faceAnim.update(realDt, p, { painful: !!hurt, side: hurt?.f?.p ? clamp(-(hurt.f.p[2] - st[2]) * (this.sideSign || 1) / 0.2, -1, 1) : 0 });
+    const faceW = first('face', () => this.faceAnim.update(realDt, p, { painful: !!hurt, side: hurt?.f?.p ? clamp(-(hurt.f.p[2] - st[2]) * (this.sideSign || 1) / 0.2, -1, 1) : 0 }));
     // pupil check: the eyelids are held open and a penlight swept onto the eyes (checkPupils)
     const pc = this.pupilCheck, pu = pc ? clamp((this.t - pc.t0) / pc.dur, 0, 1) : 0; if (pc && pu >= 1) this.pupilCheck = null;
     const lidUp = pc ? clamp(pu / 0.15, 0, 1) * clamp((1 - pu) / 0.12, 0, 1) : 0, lightOn = !!pc && pu > 0.35 && pu < 0.78;
-    const pupilMm = this.pupilAnim.update(realDt, p, this._pupT == null ? 0 : p.t - this._pupT, lightOn); this._pupT = p.t;
+    const pupilMm = first('pupil', () => { const v = this.pupilAnim.update(realDt, p, this._pupT == null ? 0 : p.t - this._pupT, lightOn); this._pupT = p.t; return v; });
     const faceAll = [Math.min(1, faceW[0] + ba.face[0]) * (1 - 0.92 * lidUp), Math.min(1, faceW[1] + ba.face[1]), Math.min(1, faceW[2] + ba.face[2]), faceW[3]];
     if (this._bloodFor !== p) { this._bloodFor = p; this._lost0 = p.vol?.totalLost ?? 0; }   // blood lost before the case was opened is not shown here
     const bl = bloodState(p, this._lost0), BS = this.bloodSites;
@@ -775,12 +831,24 @@ export class Scene {
     }
     // chest compressions: the chest itself (compression weights), the monitor's CPR artefact, and the rescuer's two hands, heel of the
     // lower hand on the lower half of the sternum, fingers interlaced, arms coming straight down from the rescuer at the patient's side
-    if (cpr.active && this.hands?.hand_cprBottom && B.bFrame.compPt) {
+    this._resc = null;
+    const ra = first('resc', () => this.rescuerAnim.update(realDt, p));
+    if (this.hands?.hand_cprBottom && B.bFrame.compPt && (ra || cpr.active)) {
       const k = B.b.scale, cp = localToWorld(B.M, B.bFrame.compPt), n = this.normalAt?.(cp) || [0, 1, 0];
-      const skin = [cp[0] + n[0] * 0.004, cp[1] + n[1] * 0.004 - (cpr.sternum + cpr.sink) * k, cp[2] + n[2] * 0.004];
       const ax = vec3.norm([n[0] * 0.3, 1, n[2] * 0.3]), op = vec3.norm([0, 0.8, -1]);
-      inst('cprBottom', skin, ax, -0.18, { toward: op });                   // the two forearms meet at a slight angle, as from two shoulders
-      inst('cprTop', vec3.add(skin, vec3.scale(ax, 0.026)), ax, 0.18, { toward: op });
+      const q = ra?.people[ra.who], on = ra ? q.hands : 1, off = ra ? 0.15 * (1 - q.hands) + 0.1 * q.lift : 0;   // hands lifted off the chest: switching, "all clear", a rhythm check
+      const press = ra ? q.hands * (1 - q.lift) : 1;
+      const skin = [cp[0] + n[0] * 0.004 + ax[0] * off, cp[1] + n[1] * 0.004 - (cpr.sternum + cpr.sink) * k * press + ax[1] * off, cp[2] + n[2] * 0.004 + ax[2] * off];
+      let MB = null, MT = null;
+      if (on > 0) {
+        MB = inst('cprBottom', skin, ax, -0.18, { toward: op });                // the two forearms meet at a slight angle, as from two shoulders
+        MT = inst('cprTop', vec3.add(skin, vec3.scale(ax, 0.026)), ax, 0.18, { toward: op });
+      }
+      if (ra && this.rescuers?.length) {                                        // the whole rescuers are drawn after the bed turn (they stand on the floor)
+        const end = (M, cf) => (M && cf ? this.bent(mat4.transformPoint(M, cf.c)) : null);
+        const eB = end(MB, this.hands.hand_cprBottom.cuff), eT = end(MT, this.hands.hand_cprTop?.cuff), cpB = this.bent(cp);
+        this._resc = { ra, cp: cpB, eB, eT, rB: this.hands.hand_cprBottom.cuff?.r || 0.04, rT: this.hands.hand_cprTop?.cuff?.r || 0.04, sleeve: this.hands.hand_cprBottom.find(pt => pt.sleeve)?.color || [0.36, 0.55, 0.68], glove: this.hands.hand_cprBottom.find(pt => !pt.sleeve)?.color || [0.23, 0.44, 0.85] };
+      }
     }
     // surgical gestures: catheter, chest drain, surgical airway, ultrasound mark
     const ch = p.chest, nk = p.neck;
@@ -834,6 +902,7 @@ export class Scene {
     if (gh) { const n = gh.n, q = [gh.p[0] + n[0] * ((gh.lift || 0) - (gh.depth || 0)), gh.p[1] + n[1] * ((gh.lift || 0) - (gh.depth || 0)), gh.p[2] + n[2] * ((gh.lift || 0) - (gh.depth || 0))]; this._instrument(gh.tool, q, n, gh.angle || 0); }
     if (this.cut) { const c = this.cut, mid = c.a.map((v, i) => (v + c.b[i]) / 2), d = vec3.sub(c.b, c.a), L = Math.hypot(...d); if (L > 0.002) { const n = this.normalAt(mid); disc(vec3.add(mid, vec3.scale(n, 0.0014)), n, vec3.scale(d, 1 / L), L / 2, 0.0012, [0.32, 0.02, 0.03], { spec: 0.9 }); } }   // the incision opening as it is drawn
     r.bend = null;
+    if (this._resc) this._drawRescuers(this._resc);
     // hotspot highlight
     if (this.hover && this.hover.equip) { const h = this.hover; r.draw(fr.sph, mat4.multiply(mat4.translation(h.c[0], h.c[1], h.c[2]), mat4.scaling(h.rad, h.rad, h.rad)), { color: [0.2, 0.8, 1.0], alpha: 0.1, emissive: [0.0, 0.12, 0.16], noShadow: true }); }
     // defibrillation flash

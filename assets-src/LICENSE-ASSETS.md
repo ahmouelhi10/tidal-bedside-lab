@@ -29,6 +29,12 @@ The hand geometry is the MakeHuman base-mesh right hand and default rig, shipped
 assets are **CC0 1.0**, see above). The pose, glove, cuff and sleeve are made by `assets-src/build_hands.py`.
 The exported hands are dedicated to the public domain under **CC0 1.0**.
 
+## CPR rescuers (`src/web/assets/rescuer.glb`)
+
+Two MakeHuman humans with the MakeHuman `male_worksuit01` and `shoes02` clothes and low-poly eyes, all shipped with MPFB 2.0.18
+and the MakeHuman system assets (**CC0 1.0**). The pose, cap, mask and colours are made by `assets-src/build_rescuer.py`.
+The exported rescuers are dedicated to the public domain under **CC0 1.0**.
+
 ## Build scripts
 
 `assets-src/build_patient.py`, `assets-src/build_instruments.py` and `assets-src/build_hands.py` are part of this repository and fall under the

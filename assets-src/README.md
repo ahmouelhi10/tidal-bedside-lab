@@ -22,6 +22,7 @@ assets pack (`makehuman_system_assets_cc0.zip`) extracted into MPFB's user data 
 blender -b --python assets-src/build_patient.py
 blender -b --python assets-src/build_instruments.py
 blender -b --python assets-src/build_hands.py        # after build_instruments.py (renders read instruments.glb)
+blender -b --python assets-src/build_rescuer.py      # the two CPR rescuers (a few seconds)
 ```
 
 Add `-- --no-renders --no-blend` to skip the renders and the `.blend` files. The patient build takes about 1.5 min on
@@ -242,3 +243,16 @@ left pad's matrix. Each node has `extras`:
 `instrument`, `grip`, `frame`. Fingers touch the instrument within a few millimetres. The IK residuals printed by
 the build are 0 to 26 mm; the larger ones are fingers that only rest near the shaft (middle finger in the pencil grip,
 index on the forceps shank, flat thumbs).
+
+## rescuer.glb
+
+The two CPR rescuers, built by `assets-src/build_rescuer.py`: a man (`rescuer_m_*`) and a woman (`rescuer_f_*`) from MakeHuman
+macros, each in six meshes (`skin`, `gown`, `shoes`, `eyes`, `cap`, `mask`), plain material colours and no textures (0.7 MB).
+- **Clothing.** The coverall is MakeHuman's `male_worksuit01`, coloured the pale blue of the gown sleeves in `hands.glb`.
+  The shoes are `shoes02`. The cap and mask are thin layers taken from the head's own surface.
+- **Pose.** Leaning over a patient as for chest compressions: the spine flexed 48° in total, the head down. The arms are cut
+  off at the shoulder and the openings closed. The app draws each upper arm from the shoulder to where the gown sleeve of the
+  gloved CPR hand ends, so the arms always reach the hands.
+- **Frame.** glTF +Y up, facing +Z, origin between the soles on the floor.
+- **`rescuer.json`.** Per person: `shoulderL`/`shoulderR` (the shoulder joints), `headTop`, `shoulderWidth`, and the triangle counts.
+- **Heights.** The two have nearly the same shoulder height (1.27 and 1.24 m leaning), so one step stool fits both.

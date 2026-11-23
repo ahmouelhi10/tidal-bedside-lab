@@ -100,3 +100,17 @@ test('landmarks follow the morph: an obese chest is higher above the bed than a 
   assert.equal(body.w.length, (body.pos.length / 3) * 2);
   assert.ok(body.region.some(r => r === 3) && body.region.some(r => r === 1), 'region ids decoded from COLOR_0');
 });
+
+test('CPR rescuers asset: two people with every part, shoulders where a leaning adult has them, small enough', { skip: !fs.existsSync(path.join(ASSETS, 'rescuer.glb')) && 'rescuer.glb not built' }, () => {
+  assert.ok(fs.statSync(path.join(ASSETS, 'rescuer.glb')).size < 1.0e6, 'rescuer.glb under 1 MB');
+  const g = parseGlb(ab(fs.readFileSync(path.join(ASSETS, 'rescuer.glb')))), meta = JSON.parse(fs.readFileSync(path.join(ASSETS, 'rescuer.json'), 'utf8')).people;
+  for (const who of ['m', 'f']) {
+    for (const part of ['skin', 'gown', 'shoes', 'eyes', 'cap', 'mask']) assert.ok(g.meshes[`rescuer_${who}_${part}`], `${who} ${part}`);
+    const m = meta[who], sole = Math.min(...Array.from({ length: g.meshes[`rescuer_${who}_shoes`].pos.length / 3 }, (_, i) => g.meshes[`rescuer_${who}_shoes`].pos[i * 3 + 1]));
+    assert.ok(Math.abs(sole) < 0.01, `${who}: soles on the floor (${sole.toFixed(3)})`);
+    assert.ok(m.shoulderL[1] > 1.05 && m.shoulderL[1] < 1.4 && m.shoulderL[2] > 0.15, `${who}: shoulders up and forward of the feet, as when leaning over (${m.shoulderL})`);
+    assert.ok(m.shoulderL[0] > 0 && m.shoulderR[0] < 0 && m.shoulderWidth > 0.25 && m.shoulderWidth < 0.45, `${who}: left shoulder on +x, width ${m.shoulderWidth}`);
+    let lo = Infinity; const sk = g.meshes[`rescuer_${who}_skin`].pos; for (let i = 0; i < sk.length; i += 3) if (Math.abs(sk[i]) > m.shoulderWidth / 2 + 0.12) lo = Math.min(lo, sk[i + 1]);
+    assert.equal(lo, Infinity, `${who}: no arm left beyond the shoulders (the app draws the arms)`);
+  }
+});

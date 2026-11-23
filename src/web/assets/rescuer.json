@@ -1,0 +1,49 @@
+{
+ "frame": "glTF metres: +Y up, faces +Z, origin between the soles",
+ "people": {
+  "m": {
+   "shoulderL": [
+    0.1842,
+    1.2707,
+    0.2832
+   ],
+   "shoulderR": [
+    -0.1842,
+    1.2707,
+    0.2832
+   ],
+   "headTop": 1.5547,
+   "shoulderWidth": 0.3683,
+   "triangles": {
+    "rescuer_m_skin": 8776,
+    "rescuer_m_gown": 6514,
+    "rescuer_m_shoes": 2500,
+    "rescuer_m_eyes": 172,
+    "rescuer_m_cap": 788,
+    "rescuer_m_mask": 1620
+   }
+  },
+  "f": {
+   "shoulderL": [
+    0.1571,
+    1.244,
+    0.292
+   ],
+   "shoulderR": [
+    -0.1571,
+    1.244,
+    0.292
+   ],
+   "headTop": 1.5236,
+   "shoulderWidth": 0.3142,
+   "triangles": {
+    "rescuer_f_skin": 8776,
+    "rescuer_f_gown": 6524,
+    "rescuer_f_shoes": 2500,
+    "rescuer_f_eyes": 172,
+    "rescuer_f_cap": 652,
+    "rescuer_f_mask": 1676
+   }
+  }
+ }
+}
