@@ -50,6 +50,21 @@ vec3 bendW(vec3 w, inout vec3 n){
   n = vec3(n.x * c - n.y * s, n.x * s + n.y * c, n.z);
   return vec3(uBend.x + d.x * c - d.y * s, uBend.y + d.x * s + d.y * c, w.z);
 }
+// a person bending (the CPR rescuers, rescuer-anim.js flexPoint repeats this maths): in the mesh's own frame (+y up, facing +z),
+// the head nods about the base of the neck, then the trunk bends forward about the base of the spine (positive = further forward)
+uniform vec4 uFlex;    // hip hinge y, z, trunk angle, head angle (rad)
+uniform vec4 uFlex2;   // neck hinge y, z, head direction (y, z): what lies beyond the neck along it is the head
+uniform vec4 uFlex3;   // x = 1: how much each vertex follows the trunk and the head comes from the mesh (aJ.x, aJ.y: its skinning)
+vec3 flexX(vec3 p, inout vec3 n, vec2 c, float a){ float cs = cos(a), sn = sin(a); vec2 d = p.yz - c; p.yz = c + vec2(d.x * cs - d.y * sn, d.x * sn + d.y * cs); n.yz = vec2(n.y * cs - n.z * sn, n.y * sn + n.z * cs); return p; }
+vec3 flexP(vec3 p, inout vec3 n, vec3 j){
+  if (uFlex.z == 0.0 && uFlex.w == 0.0) return p;
+  vec3 p0 = p;
+  float wh = uFlex3.x > 0.5 ? j.y : smoothstep(-0.02, 0.05, dot(p0.yz - uFlex2.xy, uFlex2.zw));
+  float wt = uFlex3.x > 0.5 ? j.x : smoothstep(uFlex.x - 0.05, uFlex.x + 0.12, p0.y);
+  if (uFlex.w != 0.0) p = flexX(p, n, uFlex2.xy, uFlex.w * wh);
+  if (uFlex.z != 0.0) p = flexX(p, n, uFlex.xy, uFlex.z * wt);
+  return p;
+}
 vec3 rotA(vec3 v, vec3 k, float th){ float c = cos(th), s = sin(th); return v * c + cross(k, v) * s + k * dot(k, v) * (1.0 - c); }
 // j: how much the vertex belongs to the left arm, the left leg, the right leg (body regions, smoothed; Scene.jointWeights)
 vec3 moveP(vec3 p, inout vec3 n, vec3 j){
@@ -123,7 +138,7 @@ out vec3 vN; out vec3 vWP; out vec3 vTint; out vec2 vUV; out vec3 vMP;
 void main(){
   vec3 f = aPos + uFace.x * aF0 + uFace.y * aF1 + uFace.z * aF2 + uFace.w * aF3; float wcomp; vec3 cd = cprDisp(aPos, aNorm, aW.x, aW.y, wcomp); vec3 p = f + aNorm * uInflate + breathDisp(aPos, aNorm, aW.x) + cd;
   p -= uCompDir * (uCompress * wcomp);
-  vec3 mn = aNorm; p += moveP(aPos, mn, aJ) - aPos;
+  vec3 mn = aNorm; p += moveP(aPos, mn, aJ) - aPos; p = flexP(p, mn, aJ);
   if (uSkinB.y > 0.0) p += aNorm * (0.0035 * uSkinB.y * jugular(aPos) * step(-0.2, dot(aNorm, uBAxes[1])));   // distended neck veins stand out
   vMP = aPos;
   vec4 wp = uModel * vec4(p, 1.0); vec3 wn = transpose(inverse(mat3(uModel))) * mn; wp.xyz = bendW(wp.xyz, wn);
@@ -136,7 +151,7 @@ const VS_SHADOW = `#version 300 es
 in vec3 aPos; in vec3 aNorm; in vec2 aW; in vec3 aF0; in vec3 aF1; in vec3 aF2; in vec3 aF3; in vec3 aJ;
 uniform mat4 uModel; uniform mat4 uVP; uniform float uCompress; uniform float uInflate; uniform vec3 uCompDir;
 ${GLSL_BREATH}
-void main(){ vec3 f = aPos + uFace.x * aF0 + uFace.y * aF1 + uFace.z * aF2 + uFace.w * aF3; float wcomp; vec3 cd = cprDisp(aPos, aNorm, aW.x, aW.y, wcomp); vec3 p = f + aNorm * uInflate + breathDisp(aPos, aNorm, aW.x) + cd; p -= uCompDir * (uCompress * wcomp); vec3 mn = aNorm; p += moveP(aPos, mn, aJ) - aPos; vec4 wp = uModel * vec4(p, 1.0); wp.xyz = bendW(wp.xyz, mn); gl_Position = uVP * wp; }`;
+void main(){ vec3 f = aPos + uFace.x * aF0 + uFace.y * aF1 + uFace.z * aF2 + uFace.w * aF3; float wcomp; vec3 cd = cprDisp(aPos, aNorm, aW.x, aW.y, wcomp); vec3 p = f + aNorm * uInflate + breathDisp(aPos, aNorm, aW.x) + cd; p -= uCompDir * (uCompress * wcomp); vec3 mn = aNorm; p += moveP(aPos, mn, aJ) - aPos; p = flexP(p, mn, aJ); vec4 wp = uModel * vec4(p, 1.0); wp.xyz = bendW(wp.xyz, mn); gl_Position = uVP * wp; }`;
 const FS_SHADOW = `#version 300 es
 precision mediump float; out vec4 o; void main(){ o = vec4(1.0); }`;
 
@@ -397,8 +412,8 @@ export class Renderer {
     if (!gl) throw new Error('WebGL2 is not available in this browser.');
     this.gl = gl; this.canvas = canvas;
     this.prog = program(gl, VS, FS); this.progShadow = program(gl, VS_SHADOW, FS_SHADOW); this.progTex = program(gl, VS_TEX, FS_TEX);
-    this.u = uniforms(gl, this.prog, ['uModel', 'uVP', 'uBreath', 'uCompress', 'uColor', 'uEmissive', 'uSpec', 'uAlpha', 'uPattern', 'uEye', 'uLightPos', 'uLightDir', 'uLightK', 'uLightVP', 'uShadow', 'uDirect', 'uAlbedo', 'uNormalMap', 'uTexMode', 'uAlphaCut', 'uInflate', 'uCompDir', 'uBAxes', 'uBRef', 'uCloth', 'uFace', 'uCpr', 'uCprRef', 'uCompPt', 'uTremor', 'uTime', 'uSkinA', 'uSkinB', 'uMouth', 'uPupil', 'uBloodA', 'uBloodB', 'uBloodDry', 'uMove', 'uMove2', 'uArm', 'uArmD', 'uLeg', 'uBend']);
-    this.us = uniforms(gl, this.progShadow, ['uModel', 'uVP', 'uBreath', 'uBAxes', 'uBRef', 'uCloth', 'uFace', 'uCpr', 'uCprRef', 'uCompPt', 'uTremor', 'uTime', 'uSkinA', 'uSkinB', 'uMouth', 'uMove', 'uMove2', 'uArm', 'uArmD', 'uLeg', 'uBend', 'uCompress', 'uInflate', 'uCompDir']);
+    this.u = uniforms(gl, this.prog, ['uModel', 'uVP', 'uBreath', 'uCompress', 'uColor', 'uEmissive', 'uSpec', 'uAlpha', 'uPattern', 'uEye', 'uLightPos', 'uLightDir', 'uLightK', 'uLightVP', 'uShadow', 'uDirect', 'uAlbedo', 'uNormalMap', 'uTexMode', 'uAlphaCut', 'uInflate', 'uCompDir', 'uBAxes', 'uBRef', 'uCloth', 'uFace', 'uCpr', 'uCprRef', 'uCompPt', 'uTremor', 'uTime', 'uSkinA', 'uSkinB', 'uMouth', 'uPupil', 'uBloodA', 'uBloodB', 'uBloodDry', 'uMove', 'uMove2', 'uArm', 'uArmD', 'uLeg', 'uBend', 'uFlex', 'uFlex2', 'uFlex3']);
+    this.us = uniforms(gl, this.progShadow, ['uModel', 'uVP', 'uBreath', 'uBAxes', 'uBRef', 'uCloth', 'uFace', 'uCpr', 'uCprRef', 'uCompPt', 'uTremor', 'uTime', 'uSkinA', 'uSkinB', 'uMouth', 'uMove', 'uMove2', 'uArm', 'uArmD', 'uLeg', 'uBend', 'uFlex', 'uFlex2', 'uFlex3', 'uCompress', 'uInflate', 'uCompDir']);
     this.ut = uniforms(gl, this.progTex, ['uModel', 'uVP', 'uTex', 'uGlow', 'uDirect']);
     gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -578,7 +593,8 @@ export class Renderer {
     gl.uniformMatrix3fv(u.uBAxes, false, f.axes); gl.uniform3fv(u.uBRef, f.ref); gl.uniform1f(u.uCloth, o.cloth ? 1 : 0); const fw = o.face || FACE0; gl.uniform4f(u.uFace, fw[0], fw[1], fw[2], fw[3]);
     const cp = o.cpr || CPR0; gl.uniform4f(u.uCpr, cp[0], cp[1], cp[2], cp[3]); gl.uniform4fv(u.uCprRef, f.cprRef || CPRREF0); gl.uniform3fv(u.uCompPt, f.compPt || COMPPT0); const tr = o.tremor || CPR0; gl.uniform4f(u.uTremor, tr[0], tr[1], tr[2], tr[3]); gl.uniform1f(u.uTime, o.time || 0);
     const mv = o.move; gl.uniform4fv(u.uMove, mv?.move || CPR0); gl.uniform4fv(u.uMove2, mv?.move2 || CPR0); gl.uniform4fv(u.uArm, f.arm || CPR0); gl.uniform4fv(u.uArmD, f.armD || CPR0); gl.uniform4fv(u.uLeg, f.leg || CPR0);   // waking movements
-    gl.uniform4fv(u.uBend, (o.bend !== false && this.bend) || CPR0);   // head of the bed raised (the scene sets this.bend around the bed and the patient)
+    gl.uniform4fv(u.uBend, (o.bend !== false && this.bend) || CPR0);
+    gl.uniform4fv(u.uFlex, o.flex?.a || CPR0); gl.uniform4fv(u.uFlex2, o.flex?.b || CPR0); gl.uniform4fv(u.uFlex3, o.flex?.c || CPR0);   // a rescuer bending at the hips and neck   // head of the bed raised (the scene sets this.bend around the bed and the patient)
     const ka = o.skinA || CPR0, kb = o.skinB || CPR0; gl.uniform4f(u.uSkinA, ka[0], ka[1], ka[2], ka[3]); gl.uniform4f(u.uSkinB, kb[0], kb[1], kb[2], kb[3]); gl.uniform3fv(u.uMouth, f.mouth || COMPPT0);
   }
 

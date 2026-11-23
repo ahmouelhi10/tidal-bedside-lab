@@ -3,46 +3,111 @@
  "people": {
   "m": {
    "shoulderL": [
-    0.1842,
-    1.2707,
-    0.2832
+    0.1855,
+    1.2802,
+    0.2852
    ],
    "shoulderR": [
-    -0.1842,
-    1.2707,
-    0.2832
+    -0.1855,
+    1.2802,
+    0.2852
    ],
-   "headTop": 1.5547,
-   "shoulderWidth": 0.3683,
+   "elbowL": [
+    0.1043,
+    1.0736,
+    0.4092
+   ],
+   "elbowR": [
+    -0.1043,
+    1.0736,
+    0.4092
+   ],
+   "hip": [
+    0.0,
+    0.952,
+    0.0052
+   ],
+   "neck": [
+    0.0,
+    1.3546,
+    0.359
+   ],
+   "upperArm": 0.2542,
+   "headTop": 1.5751,
+   "shoulderWidth": 0.371,
    "triangles": {
-    "rescuer_m_skin": 8776,
-    "rescuer_m_gown": 6514,
-    "rescuer_m_shoes": 2500,
-    "rescuer_m_eyes": 172,
-    "rescuer_m_cap": 788,
-    "rescuer_m_mask": 1620
+    "rescuer_m_cpr_skin": 6498,
+    "rescuer_m_cpr_scrubs": 3436,
+    "rescuer_m_cpr_shoes": 1399,
+    "rescuer_m_cpr_eyes": 172,
+    "rescuer_m_cpr_brows": 192,
+    "rescuer_m_cpr_lashes": 368,
+    "rescuer_m_cpr_hair": 2600,
+    "rescuer_m_idle_skin": 6500,
+    "rescuer_m_idle_gloves": 1600,
+    "rescuer_m_idle_scrubs": 4120,
+    "rescuer_m_idle_shoes": 1399,
+    "rescuer_m_idle_eyes": 172,
+    "rescuer_m_idle_brows": 192,
+    "rescuer_m_idle_lashes": 368,
+    "rescuer_m_idle_hair": 2600
    }
   },
   "f": {
    "shoulderL": [
-    0.1571,
-    1.244,
-    0.292
+    0.155,
+    1.2288,
+    0.2884
    ],
    "shoulderR": [
-    -0.1571,
-    1.244,
-    0.292
+    -0.155,
+    1.2288,
+    0.2884
    ],
-   "headTop": 1.5236,
-   "shoulderWidth": 0.3142,
+   "elbowL": [
+    0.0866,
+    1.0206,
+    0.4133
+   ],
+   "elbowR": [
+    -0.0866,
+    1.0206,
+    0.4133
+   ],
+   "hip": [
+    0.0,
+    0.9039,
+    0.0219
+   ],
+   "neck": [
+    -0.0,
+    1.299,
+    0.3381
+   ],
+   "skinTint": [
+    0.93,
+    0.82,
+    0.74
+   ],
+   "upperArm": 0.2522,
+   "headTop": 1.5054,
+   "shoulderWidth": 0.31,
    "triangles": {
-    "rescuer_f_skin": 8776,
-    "rescuer_f_gown": 6524,
-    "rescuer_f_shoes": 2500,
-    "rescuer_f_eyes": 172,
-    "rescuer_f_cap": 652,
-    "rescuer_f_mask": 1676
+    "rescuer_f_cpr_skin": 6498,
+    "rescuer_f_cpr_scrubs": 3436,
+    "rescuer_f_cpr_shoes": 1400,
+    "rescuer_f_cpr_eyes": 172,
+    "rescuer_f_cpr_brows": 192,
+    "rescuer_f_cpr_lashes": 368,
+    "rescuer_f_cpr_hair": 2600,
+    "rescuer_f_idle_skin": 6500,
+    "rescuer_f_idle_gloves": 1600,
+    "rescuer_f_idle_scrubs": 4120,
+    "rescuer_f_idle_shoes": 1400,
+    "rescuer_f_idle_eyes": 172,
+    "rescuer_f_idle_brows": 192,
+    "rescuer_f_idle_lashes": 368,
+    "rescuer_f_idle_hair": 2599
    }
   }
  }

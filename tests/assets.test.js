@@ -101,16 +101,22 @@ test('landmarks follow the morph: an obese chest is higher above the bed than a 
   assert.ok(body.region.some(r => r === 3) && body.region.some(r => r === 1), 'region ids decoded from COLOR_0');
 });
 
-test('CPR rescuers asset: two people with every part, shoulders where a leaning adult has them, small enough', { skip: !fs.existsSync(path.join(ASSETS, 'rescuer.glb')) && 'rescuer.glb not built' }, () => {
-  assert.ok(fs.statSync(path.join(ASSETS, 'rescuer.glb')).size < 1.0e6, 'rescuer.glb under 1 MB');
+test('CPR rescuers asset: two textured doctors, both arm poses, bend weights from the skinning, small enough', { skip: !fs.existsSync(path.join(ASSETS, 'rescuer.glb')) && 'rescuer.glb not built' }, () => {
+  assert.ok(fs.statSync(path.join(ASSETS, 'rescuer.glb')).size < 3.3e6, 'rescuer.glb under 3.3 MB');
   const g = parseGlb(ab(fs.readFileSync(path.join(ASSETS, 'rescuer.glb')))), meta = JSON.parse(fs.readFileSync(path.join(ASSETS, 'rescuer.json'), 'utf8')).people;
   for (const who of ['m', 'f']) {
-    for (const part of ['skin', 'gown', 'shoes', 'eyes', 'cap', 'mask']) assert.ok(g.meshes[`rescuer_${who}_${part}`], `${who} ${part}`);
-    const m = meta[who], sole = Math.min(...Array.from({ length: g.meshes[`rescuer_${who}_shoes`].pos.length / 3 }, (_, i) => g.meshes[`rescuer_${who}_shoes`].pos[i * 3 + 1]));
+    for (const v of ['cpr', 'idle']) for (const part of ['skin', 'scrubs', 'shoes', 'eyes', 'brows', 'lashes', 'hair', ...(v === 'idle' ? ['gloves'] : [])]) {
+      const m = g.meshes[`rescuer_${who}_${v}_${part}`]; assert.ok(m, `${who} ${v} ${part}`);
+      if (part !== 'gloves') assert.ok(m.uv && m.material?.pbrMetallicRoughness?.baseColorTexture, `${who} ${v} ${part}: textured like the patient`);
+      assert.ok(m.color, `${who} ${v} ${part}: bend weights`);
+    }
+    const w = (v, part, k) => { const m = g.meshes[`rescuer_${who}_${v}_${part}`], c = m.color; let s = 0; for (let i = 0; i < m.pos.length / 3; i++) s += c.data[i * c.size + k]; return s / (m.pos.length / 3); };
+    assert.ok(w('cpr', 'hair', 1) > 0.6 && w('cpr', 'shoes', 0) < 0.05 && w('idle', 'gloves', 0) > 0.95, `${who}: hair follows the head, shoes stay, hands follow the trunk`);
+    const m = meta[who], sole = Math.min(...Array.from({ length: g.meshes[`rescuer_${who}_cpr_shoes`].pos.length / 3 }, (_, i) => g.meshes[`rescuer_${who}_cpr_shoes`].pos[i * 3 + 1]));
     assert.ok(Math.abs(sole) < 0.01, `${who}: soles on the floor (${sole.toFixed(3)})`);
     assert.ok(m.shoulderL[1] > 1.05 && m.shoulderL[1] < 1.4 && m.shoulderL[2] > 0.15, `${who}: shoulders up and forward of the feet, as when leaning over (${m.shoulderL})`);
-    assert.ok(m.shoulderL[0] > 0 && m.shoulderR[0] < 0 && m.shoulderWidth > 0.25 && m.shoulderWidth < 0.45, `${who}: left shoulder on +x, width ${m.shoulderWidth}`);
-    let lo = Infinity; const sk = g.meshes[`rescuer_${who}_skin`].pos; for (let i = 0; i < sk.length; i += 3) if (Math.abs(sk[i]) > m.shoulderWidth / 2 + 0.12) lo = Math.min(lo, sk[i + 1]);
-    assert.equal(lo, Infinity, `${who}: no arm left beyond the shoulders (the app draws the arms)`);
+    assert.ok(m.elbowL[1] < m.shoulderL[1] - 0.15 && m.elbowL[2] > m.shoulderL[2] && Math.abs(m.upperArm - 0.255) < 0.04, `${who}: cpr elbows below and in front of the shoulders`);
+    let lo = Infinity; const sk = g.meshes[`rescuer_${who}_cpr_skin`].pos; for (let i = 0; i < sk.length; i += 3) if (sk[i + 2] > m.elbowL[2] + 0.06 && sk[i + 1] < m.elbowL[1] - 0.05) lo = Math.min(lo, sk[i + 1]);   // forward of and below the elbows (not the head, which leans forward too)
+    assert.equal(lo, Infinity, `${who}: the cpr arms stop at the elbow (the gloved hand's sleeve carries on)`);
   }
 });

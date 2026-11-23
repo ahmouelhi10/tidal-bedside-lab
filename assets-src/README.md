@@ -246,13 +246,17 @@ index on the forceps shank, flat thumbs).
 
 ## rescuer.glb
 
-The two CPR rescuers, built by `assets-src/build_rescuer.py`: a man (`rescuer_m_*`) and a woman (`rescuer_f_*`) from MakeHuman
-macros, each in six meshes (`skin`, `gown`, `shoes`, `eyes`, `cap`, `mask`), plain material colours and no textures (0.7 MB).
-- **Clothing.** The coverall is MakeHuman's `male_worksuit01`, coloured the pale blue of the gown sleeves in `hands.glb`.
-  The shoes are `shoes02`. The cap and mask are thin layers taken from the head's own surface.
-- **Pose.** Leaning over a patient as for chest compressions: the spine flexed 48° in total, the head down. The arms are cut
-  off at the shoulder and the openings closed. The app draws each upper arm from the shoulder to where the gown sleeve of the
-  gloved CPR hand ends, so the arms always reach the hands.
+The two CPR rescuers, built by `assets-src/build_rescuer.py`: a man (`rescuer_m_*`) and a woman (`rescuer_f_*`), made like the
+patient from MakeHuman macros (2.9 MB with textures).
+- **Look.** MakeHuman skin textures, brown eyes, eyebrows, eyelashes and hair (the man's short hair dyed black). The scrubs are
+  MakeHuman's `male_casualsuit02` (long-sleeved top and trousers) re-dyed the pale blue of the gown sleeves in `hands.glb`, with
+  the logo, stripes and jeans fading removed. The shoes are `shoes02`. Textures are 256 to 1024 px.
+- **Two arm poses** (`rescuer_<who>_<pose>_<part>`). `cpr`: the arms going down toward the patient's chest, cut at the elbow;
+  the app puts the elbows where the gown sleeves of the gloved CPR hands end. `idle`: the arms relaxed at the sides, hands gloved
+  (`gloves`). The other parts are `skin`, `scrubs`, `shoes`, `eyes`, `brows`, `lashes`, `hair`.
+- **Pose.** Leaning over a patient as for chest compressions: the spine flexed 48° in total, the head down.
+- **COLOR_0 (bend weights).** R is how much a vertex follows the trunk when the app bends it at the base of the spine; G is how
+  much it follows the head at the base of the neck. Both come from the rig's skinning weights.
 - **Frame.** glTF +Y up, facing +Z, origin between the soles on the floor.
-- **`rescuer.json`.** Per person: `shoulderL`/`shoulderR` (the shoulder joints), `headTop`, `shoulderWidth`, and the triangle counts.
-- **Heights.** The two have nearly the same shoulder height (1.27 and 1.24 m leaning), so one step stool fits both.
+- **`rescuer.json`.** Per person: `shoulderL`/`shoulderR`, `elbowL`/`elbowR` (of the `cpr` arms), `hip` and `neck` (the bend hinges),
+  `upperArm`, `headTop`, `shoulderWidth`, `skinTint` (the woman's light texture warmed in the app), and the triangle counts.

@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mk } from './helpers/bots.js';
-import { RescuerAnim, LIFT_S, WALK_S } from '../src/web/rescuer-anim.js';
+import { readFileSync } from 'node:fs';
+import { RescuerAnim, LIFT_S, WALK_S, posture, rescuerFlex, flexPoint } from '../src/web/rescuer-anim.js';
 
 const FPS = 0.1;                                         // the engine steps in 0.1 s
 /** Run engine and animation together for `secs`; returns the last animation state. */
@@ -56,4 +57,49 @@ test('a case opened in the middle of CPR starts with the current number of switc
   const p = arrest(); p.dispatch({ type: 'cpr.start', mode: 'auto' }); p.dispatch({ type: 'cpr.switch' }); p.dispatch({ type: 'cpr.switch' }); p.run(5);
   const a = new RescuerAnim(); const o = run(p, a, 2);
   assert.equal(o.who, 0); assert.equal(o.people[0].to, 'C'); assert.equal(o.people[1].from, o.people[1].to);
+});
+
+const PEOPLE = JSON.parse(readFileSync(new URL('../src/web/assets/rescuer.json', import.meta.url), 'utf8')).people;
+const midS = (m, F) => { const a = flexPoint(m.shoulderL, F), b = flexPoint(m.shoulderR, F); return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]; };
+const Zof = (m) => (m.shoulderL[2] + m.shoulderR[2]) / 2 - m.hip[2];
+const pushQ = { role: 'push', hands: 1, lift: 0, fatigue: 0, effort: 0, base: [0, 0] };
+
+test('pushing from the hips with locked elbows: the elbows go down as far as the hands, the legs do not move', () => {
+  for (const m of Object.values(PEOPLE)) {
+    const el = (F) => { const a = flexPoint(m.elbowL, F, [1, 0]), b = flexPoint(m.elbowR, F, [1, 0]); return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]; };
+    const Z = (m.elbowL[2] + m.elbowR[2]) / 2 - m.hip[2];
+    const e0 = el(rescuerFlex(m, posture(pushQ, 0, Z, 0))), F = rescuerFlex(m, posture(pushQ, 0.055, Z, 0)), e1 = el(F);
+    assert.ok(Math.abs((e0[1] - e1[1]) - 0.055) < 0.006, `elbows down ${((e0[1] - e1[1]) * 100).toFixed(1)} cm for a 5.5 cm push`);
+    const knee = [0.1, 0.5, 0.05], k1 = flexPoint(knee, F, [0, 0]); assert.ok(Math.hypot(k1[0] - knee[0], k1[1] - knee[1], k1[2] - knee[2]) < 1e-9);
+  }
+});
+
+test('the posture: hands lifted, they lean back; through the breaths they ease up and look up; waiting, they stand upright', () => {
+  const m = PEOPLE.m, Z = Zof(m);
+  assert.ok(posture({ ...pushQ, lift: 1, base: [-0.12, -0.1] }, -0.1, Z, 0).trunk < -0.1);
+  const a = new RescuerAnim(), p = mk(); p.arrest.arrested = true; p.dispatch({ type: 'cpr.start', mode: 'auto' });
+  let pauseHead = null, pushHead = null;
+  for (let t = 0; t < 40; t += 0.1) { p.run(0.1); const o = a.update(0.1, p); const q = o.people[o.who]; if (q.role !== 'push') continue;
+    if (o.breaths && t > 18) pauseHead = Math.min(pauseHead ?? 9, q.base[1]); else if (!o.breaths && t > 5) pushHead = Math.max(pushHead ?? -9, q.base[1]); }
+  assert.ok(pauseHead < -0.1 && pushHead > -0.05, `head ${pauseHead?.toFixed(2)} in the breath pause, ${pushHead?.toFixed(2)} while pushing`);
+  const o = a.update(0.1, p), w = o.people[1 - o.who]; assert.equal(w.role, 'wait');
+  const up = midS(m, rescuerFlex(m, posture(w, 0, Z, 3))), lean = midS(m, rescuerFlex(m, posture(pushQ, 0, Z, 3)));
+  assert.ok(up[1] > lean[1] + 0.08 && posture(w, 0, Z, 3).trunk < -0.35, 'the one waiting stands up straighter');
+});
+
+test('effort: builds over the two minutes of pushing (head drops, sways, breathes harder), wears off while waiting', () => {
+  const a = new RescuerAnim(), p = mk(); p.arrest.arrested = true; p.dispatch({ type: 'cpr.start', mode: 'auto' });
+  let o = null; for (let t = 0; t < 30; t += 0.1) { p.run(0.1); o = a.update(0.1, p); }
+  const early = o.people[o.who].fatigue; for (let t = 0; t < 150; t += 0.1) { p.run(0.1); o = a.update(0.1, p); }
+  const q = o.people[o.who]; assert.ok(early === 0 && q.fatigue > 0.6, `fatigue ${early} at 30 s, ${q.fatigue.toFixed(2)} at 3 min`);
+  assert.ok(q.base[1] > 0.06, 'the head drops');
+  const sw = Math.max(...Array.from({ length: 50 }, (_, i) => Math.abs(posture(q, 0.05, 0.28, i * 0.1).sway)));
+  assert.ok(sw > 0.01, `sways ${sw.toFixed(3)} rad`);
+  p.dispatch({ type: 'cpr.switch' }); for (let t = 0; t < 120; t += 0.1) { p.run(0.1); o = a.update(0.1, p); }
+  assert.ok(o.people[1 - o.who].effort < 0.15, `rested after two minutes: ${o.people[1 - o.who].effort.toFixed(2)}`);
+});
+
+test('the shader bends the rescuer the same way (same hinge weights)', () => {
+  const src = readFileSync(new URL('../src/web/gl/renderer.js', import.meta.url), 'utf8');
+  assert.ok(src.includes('smoothstep(-0.02, 0.05, dot(p0.yz - uFlex2.xy, uFlex2.zw))') && src.includes('smoothstep(uFlex.x - 0.05, uFlex.x + 0.12, p0.y)'));
 });

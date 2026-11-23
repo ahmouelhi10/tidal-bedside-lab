@@ -10,7 +10,7 @@ import { PupilAnim } from './pupils.js';
 import { bloodState } from './blood.js';
 import { WakeAnim, movePoint } from './wake-anim.js';
 import { BedAnim, bendPoint, bendWeight, turnDir } from './bed.js';
-import { RescuerAnim } from './rescuer-anim.js';
+import { RescuerAnim, posture, rescuerFlex } from './rescuer-anim.js';
 import { DripAnim, dropAt } from './drip.js';
 import { syringePumps, pumpScreen, SYRINGE_ML } from './syringe.js';
 import { t as tr, drugName } from './i18n.js';
@@ -33,6 +33,14 @@ function sleeveEnd(arrs) {
   const e = [0, 1, 2].map(j => ring.reduce((a, q) => a + q[j], 0) / ring.length), r = ring.reduce((a, q) => a + Math.hypot(q[0] - e[0], q[1] - e[1], q[2] - e[2]), 0) / ring.length;
   return { c: e, r, d };
 }
+/** How each part of a rescuer is shaded (textures come from rescuer.glb). */
+const RESCUER_LOOK = {
+  skin: { color: [1, 1, 1], spec: 0.3, pattern: 7, cull: false }, scrubs: { color: [1, 1, 1], spec: 0.06, cull: false },   // double-sided: the arm cuts are closed with patches shoes: { color: [1, 1, 1], spec: 0.2 },
+  eyes: { color: [1, 1, 1], spec: 0.9 }, gloves: { color: [0.23, 0.44, 0.85], spec: 0.32, pattern: 8 },
+  hair: { color: [1, 1, 1], spec: 0.2, pattern: 4, alphaCut: 0.5, cull: false, noShadow: true },
+  brows: { color: [1, 1, 1], spec: 0.05, alphaCut: -1, cull: false, depthWrite: false, noShadow: true },
+  lashes: { color: [1, 1, 1], spec: 0.05, alphaCut: -1, cull: false, depthWrite: false, noShadow: true },
+};
 const smooth01 = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
 const HAND_KEYS = ['act', 'relax'];
 /** Joint weights for the waking movements (wake-anim.js, shader moveP): per vertex [left arm, left leg, right leg] from the body
@@ -102,7 +110,7 @@ export class Scene {
     this.g = {
       ub: r.upload(box(1, 1, 1)), cyl: r.upload(cylinder(1, 1, 18)), sph: r.upload(sphere(1, 1, 1, 16, 10)),
       bedFrame: r.upload(box(2.25, 0.08, 0.86)), mattress: r.upload(box(2.1 / MAT_N, 0.12, 0.8)), rail: r.upload(box(2.0, 0.05, 0.04)),
-      leg: r.upload(cylinder(0.04, 0.8, 12)), armF: r.upload(cylinder(1, 1, 16, 0.85)), monitorBody: r.upload(box(1.0, 0.56, 0.08)),
+      leg: r.upload(cylinder(0.04, 0.8, 12)), monitorBody: r.upload(box(1.0, 0.56, 0.08)),
       pad: r.upload(cylinder(1, 0.02, 20)), bag: r.upload(sphere(1, 1.25, 0.5, 14, 10)),
       wallW: r.upload(plane(ROOM.x1 - ROOM.x0, ROOM.h)), wallD: r.upload(plane(ROOM.z1 - ROOM.z0, ROOM.h)), floor: r.upload(plane(ROOM.x1 - ROOM.x0, ROOM.z1 - ROOM.z0)),
     };
@@ -317,12 +325,22 @@ export class Scene {
           h.cuff = sleeveEnd(h.filter(pt => pt.pos).map(pt => pt.pos)); for (const pt of h) delete pt.pos;   // where the sleeve ends up the forearm (a CPR rescuer's arm carries on from there)
         }
         this.hands = hands; }
-      // the two CPR rescuers (assets/rescuer.glb, optional): body parts per person, shoulders and sole level (rescuer.json)
+      // the two CPR rescuers (assets/rescuer.glb, optional): textured like the patient, two arm poses each ('cpr': down to the hands,
+      // 'idle': at the sides), COLOR_0 = how much each vertex follows the trunk and the head when they bend (rescuer.json: joints)
       const [rb, rj] = await Promise.all([fetch(base + 'rescuer.glb').then(r => (r.ok ? r.arrayBuffer() : null)).catch(() => null), fetch(base + 'rescuer.json').then(r => (r.ok ? r.json() : null)).catch(() => null)]);
-      if (rb && rj?.people) { const rg = parseGlb(rb), people = {};
-        for (const [name, m] of Object.entries(rg.meshes)) { const [, who, part] = name.split('_'); if (!rj.people[who]) continue;
-          (people[who] ||= { meta: rj.people[who], parts: [] }).parts.push({ part, g: this.r.upload({ pos: m.pos, nrm: m.nrm, w: new Float32Array(m.pos.length / 3 * 2), idx: m.idx }), color: (m.material?.pbrMetallicRoughness?.baseColorFactor || [0.5, 0.5, 0.5]).slice(0, 3) }); }
-        this.rescuers = ['m', 'f'].map(k => people[k]).filter(Boolean); }
+      if (rb && rj?.people) {
+        const rg = parseGlb(rb), rimgs = await decodeImages(rg), cache = new Map(), people = {};
+        const texOf = (info) => { const i = info ? rg.texImage(info.index) : null; if (i == null || !rimgs[i]) return null; if (!cache.has(i)) cache.set(i, this.r.imageTexture(rimgs[i])); return cache.get(i); };
+        for (const [name, m] of Object.entries(rg.meshes)) {
+          const [, who, variant, part] = name.split('_'); if (!rj.people[who] || !m.pos?.length) continue;
+          const n = m.pos.length / 3, jw = new Float32Array(n * 3).fill(1);
+          if (m.color) for (let i = 0; i < n; i++) { jw[i * 3] = m.color.data[i * m.color.size]; jw[i * 3 + 1] = m.color.data[i * m.color.size + 1]; jw[i * 3 + 2] = 0; }
+          const mat = m.material, P = (people[who] ||= { meta: rj.people[who], cpr: [], idle: [] });
+          (P[variant] || (P[variant] = [])).push({ part, g: this.r.upload({ pos: m.pos, nrm: m.nrm, uv: m.uv, w: new Float32Array(n * 2), idx: m.idx, jw }),
+            color: (mat?.pbrMetallicRoughness?.baseColorFactor || [1, 1, 1]).slice(0, 3), albedo: texOf(mat?.pbrMetallicRoughness?.baseColorTexture), normal: texOf(mat?.normalTexture) });
+        }
+        this.rescuers = ['m', 'f'].map(k => people[k]).filter(Boolean);
+      }
     } catch (e) { console.warn('instruments unavailable:', e && e.message); }
   }
   /** Ray-pick the realistic body's skin: { p, n, region } in world space, or null (also null with the procedural body). */
@@ -370,38 +388,29 @@ export class Scene {
   /** The CPR rescuers (rescuer-anim.js): the compressor on a step stool with straight arms down to the gloved hands on the chest,
    *  the next one ready beside the bed, and the walk when they switch. R: { ra, cp, eB, eT, rB, rT, sleeve, glove } from draw(). */
   _drawRescuers(R) {
-    const r = this.r, fr = this.g, people = this.rescuers, { ra, cp } = R;
-    const seg = (A, Bp, r0, col, o = {}) => { const d = vec3.sub(Bp, A), L = Math.hypot(...d) || 1e-6, ey = d.map(x => x / L), up = Math.abs(ey[1]) > 0.95 ? [1, 0, 0] : [0, 1, 0], ex = vec3.norm(vec3.cross(up, ey)), ez = vec3.cross(ey, ex);
-      r.draw(fr.armF, mat4.multiply(mat4.fromBasis(ex, ey, ez, A.map((v, i) => (v + Bp[i]) / 2)), mat4.scaling(r0, L, r0)), { color: col, spec: 0.05, pattern: 5, ...o }); };
-    const ball = (c, rad, col, o = {}) => r.draw(fr.sph, mat4.multiply(mat4.translation(c[0], c[1], c[2]), mat4.scaling(rad, rad, rad)), { color: col, spec: 0.05, pattern: 5, ...o });
-    const tf = (M, v) => mat4.transformPoint(M, v);
-    // where the compressor stands: shoulders a little beyond the elbows (the sleeve ends), along the forearms; feet on a step stool
-    const P0 = people[0].meta, mid = (a, b) => a.map((v, i) => (v + b[i]) / 2), sh0 = mid(P0.shoulderL, P0.shoulderR);
-    const em = R.eB && R.eT ? mid(R.eB, R.eT) : [cp[0], cp[1] + 0.35, cp[2] - 0.3], fd = vec3.norm(vec3.sub(em, cp)), sT = vec3.add(em, vec3.scale(fd, 0.24));
-    const stool = clamp(sT[1] - sh0[1], 0, 0.5), C = [sT[0] - sh0[0], stool, sT[2] - sh0[2]];
-    const spot = { C, R0: [cp[0] - 0.8, 0, Math.min(C[2], -0.55) - 0.35], R1: [Math.min(cp[0] + 0.8, 1.2), 0, Math.min(C[2], -0.55) - 0.35] };
-    const face = (q) => (q === 'C' ? 0 : Math.atan2(cp[0] - spot[q][0], cp[2] - spot[q][2]) * 0.8);
-    if (stool > 0.04) {                                                           // step stool: grey top, dark feet
-      r.draw(fr.ub, mat4.multiply(mat4.translation(C[0], stool - 0.015, C[2] + 0.02), mat4.scaling(0.5, 0.03, 0.36)), { color: [0.55, 0.58, 0.62], spec: 0.3 });
-      r.draw(fr.ub, mat4.multiply(mat4.translation(C[0], (stool - 0.03) / 2, C[2] + 0.02), mat4.scaling(0.46, stool - 0.03, 0.32)), { color: [0.3, 0.32, 0.35], spec: 0.2 });
+    const r = this.r, fr = this.g, people = this.rescuers, { ra, cp } = R, mid = (a, b) => a.map((v, i) => (v + b[i]) / 2);
+    // the compressor's elbows go where the gown sleeves of the gloved hands end (arm and hand join); the feet then stand on a step stool
+    const em = R.eB && R.eT ? mid(R.eB, R.eT) : [cp[0], cp[1] + 0.38, cp[2] - 0.23];
+    const atC = (m) => { const e = mid(m.elbowL, m.elbowR); return [em[0] - e[0], clamp(em[1] - e[1], 0, 0.55), em[2] - e[2]]; };
+    const C0 = atC(people[ra.who % people.length].meta);
+    this._stool = this._stool == null ? C0[1] : this._stool + (C0[1] - this._stool) * 0.08;   // one stool: its height follows whoever is on it
+    const Rz = Math.min(C0[2], -0.55) - 0.35, spot = (k, m) => (k === 'C' ? atC(m) : k === 'R0' ? [cp[0] - 0.8, 0, Rz] : [Math.min(cp[0] + 0.8, 1.2), 0, Rz]);
+    const face = (k, m) => (k === 'C' ? 0 : Math.atan2(cp[0] - spot(k, m)[0], cp[2] - spot(k, m)[2]) * 0.8);
+    const H = this._stool;
+    if (H > 0.04) {                                                               // step stool: grey top, dark feet
+      r.draw(fr.ub, mat4.multiply(mat4.translation(C0[0], H - 0.015, C0[2] + 0.02), mat4.scaling(0.5, 0.03, 0.36)), { color: [0.55, 0.58, 0.62], spec: 0.3 });
+      r.draw(fr.ub, mat4.multiply(mat4.translation(C0[0], (H - 0.03) / 2, C0[2] + 0.02), mat4.scaling(0.46, H - 0.03, 0.32)), { color: [0.3, 0.32, 0.35], spec: 0.2 });
     }
     ra.people.forEach((q, i) => {
-      const who = people[i % people.length], A = spot[q.from], Bq = spot[q.to], u = q.u;
+      const who = people[i % people.length], m = who.meta, A = spot(q.from, m), Bq = spot(q.to, m), u = q.u;
       const pos = [A[0] + (Bq[0] - A[0]) * u, 0, A[2] + (Bq[2] - A[2]) * u];
-      pos[1] = q.from === 'C' && q.to !== 'C' ? stool * (1 - smooth01(0, 0.35, u)) : q.to === 'C' && q.from !== 'C' ? stool * smooth01(0.65, 1, u) : A[1];
+      pos[1] = q.from === 'C' && q.to !== 'C' ? A[1] * (1 - smooth01(0, 0.35, u)) : q.to === 'C' && q.from !== 'C' ? Bq[1] * smooth01(0.65, 1, u) : A[1];
       pos[1] += 0.025 * Math.abs(Math.sin(u * Math.PI * 3)) * (q.from !== q.to ? 1 : 0);     // steps
-      const yaw = face(q.from) + (face(q.to) - face(q.from)) * u, M = mat4.multiply(mat4.translation(...pos), mat4.rotationY(yaw));
-      for (const pt of who.parts) r.draw(pt.g, M, { color: pt.part === 'cap' && i === 1 ? [0.22, 0.5, 0.36] : pt.color, spec: pt.part === 'skin' ? 0.3 : 0.06, pattern: pt.part === 'gown' ? 5 : 0 });
-      const SL = tf(M, who.meta.shoulderL), SR = tf(M, who.meta.shoulderR), fwd = [Math.sin(yaw), 0, Math.cos(yaw)], side = vec3.norm(vec3.sub(SL, SR));
-      const onChest = i === ra.who && q.hands > 0 && R.eB && R.eT;
-      if (onChest) {                                                              // straight arms: upper arm from the shoulder to the sleeve end at the elbow
-        const [eR, eL] = vec3.dot(vec3.sub(R.eB, R.eT), side) < 0 ? [R.eB, R.eT] : [R.eT, R.eB], rr = [R.rB, R.rT];
-        for (const [S, E, re] of [[SR, eR, rr[0]], [SL, eL, rr[1]]]) { const Si = vec3.add(S, vec3.scale(vec3.norm(vec3.sub(E, S)), 0.03)); ball(Si, 0.044, R.sleeve); seg(Si, E, Math.max(0.042, re / 0.85), R.sleeve); }
-      } else for (const [S, sx] of [[SR, -1], [SL, 1]]) {                       // arms hanging at the sides, gloved hands
-        const El = vec3.add(S, [fwd[0] * 0.05 + side[0] * sx * 0.03, -0.29, fwd[2] * 0.05 + side[2] * sx * 0.03]), W = vec3.add(El, [fwd[0] * 0.07, -0.25, fwd[2] * 0.07]);
-        const Si = vec3.add(S, [0, -0.03, 0]); ball(Si, 0.044, R.sleeve); seg(Si, El, 0.045, R.sleeve); ball(El, 0.038, R.sleeve); seg(El, W, 0.038, R.sleeve);
-        r.draw(fr.sph, mat4.multiply(mat4.fromBasis(side, [0, 1, 0], fwd, vec3.add(W, [0, -0.06, 0])), mat4.scaling(0.028, 0.075, 0.045)), { color: R.glove, spec: 0.32 });
-      }
+      // a person, not a statue: the trunk tips with each push (the elbows following the hands), breathing, effort, weight shifts
+      const pushing = i === ra.who && q.role === 'push' && q.hands > 0, el = mid(m.elbowL, m.elbowR);
+      const pose = posture(q, i === ra.who ? R.drop : 0, el[2] - m.hip[2], ra.t, i * 1.7), F = rescuerFlex(m, pose);
+      const yaw = face(q.from, m) + (face(q.to, m) - face(q.from, m)) * u, M = mat4.multiply(mat4.translation(...pos), mat4.multiply(mat4.rotationY(yaw), mat4.rotationZ(pose.sway)));
+      for (const pt of who[pushing ? 'cpr' : 'idle']) r.draw(pt.g, M, { flex: F, ...RESCUER_LOOK[pt.part], ...(pt.part === 'skin' && m.skinTint ? { color: m.skinTint } : {}), ...(pt.albedo ? { albedo: pt.albedo } : {}), ...(pt.normal ? { normalMap: pt.normal } : {}) });
     });
   }
   /** Draw one instrument with its working point at p, long axis along n, turned by angle about n. */
@@ -903,7 +912,8 @@ export class Scene {
       if (ra && this.rescuers?.length) {                                        // the whole rescuers are drawn after the bed turn (they stand on the floor)
         const end = (M, cf) => (M && cf ? this.bent(mat4.transformPoint(M, cf.c)) : null);
         const eB = end(MB, this.hands.hand_cprBottom.cuff), eT = end(MT, this.hands.hand_cprTop?.cuff), cpB = this.bent(cp);
-        this._resc = { ra, cp: cpB, eB, eT, rB: this.hands.hand_cprBottom.cuff?.r || 0.04, rT: this.hands.hand_cprTop?.cuff?.r || 0.04, sleeve: this.hands.hand_cprBottom.find(pt => pt.sleeve)?.color || [0.36, 0.55, 0.68], glove: this.hands.hand_cprBottom.find(pt => !pt.sleeve)?.color || [0.23, 0.44, 0.85] };
+        const drop = (cpr.sternum + cpr.sink) * k * press - off * ax[1];   // how far the hands are pushed down now (negative: lifted)
+        this._resc = { ra, cp: cpB, eB, eT, drop };
       }
     }
     // surgical gestures: catheter, chest drain, surgical airway, ultrasound mark

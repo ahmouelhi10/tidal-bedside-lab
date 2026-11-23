@@ -31,9 +31,9 @@ The exported hands are dedicated to the public domain under **CC0 1.0**.
 
 ## CPR rescuers (`src/web/assets/rescuer.glb`)
 
-Two MakeHuman humans with the MakeHuman `male_worksuit01` and `shoes02` clothes and low-poly eyes, all shipped with MPFB 2.0.18
-and the MakeHuman system assets (**CC0 1.0**). The pose, cap, mask and colours are made by `assets-src/build_rescuer.py`.
-The exported rescuers are dedicated to the public domain under **CC0 1.0**.
+Two MakeHuman humans with MakeHuman skins, eyes, eyebrows, eyelashes and hair, the `male_casualsuit02` and `shoes02` clothes, all
+shipped with MPFB 2.0.18 and the MakeHuman system assets (**CC0 1.0**). The pose, the re-dyed scrubs and the bend weights are made
+by `assets-src/build_rescuer.py`. The exported rescuers are dedicated to the public domain under **CC0 1.0**.
 
 ## Build scripts
 
