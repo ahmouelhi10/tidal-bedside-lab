@@ -9,6 +9,7 @@ import { SkinAnim } from './skin.js';
 import { PupilAnim } from './pupils.js';
 import { bloodState } from './blood.js';
 import { WakeAnim, movePoint } from './wake-anim.js';
+import { BedAnim, bendPoint, bendWeight, turnDir } from './bed.js';
 import { CamMove, moveDuration, handheld, handheldAmp } from './camera-rig.js';
 import { Renderer, mat4, vec3 } from './gl/renderer.js';
 import { box, sphere, cylinder } from './gl/geometry.js';
@@ -19,6 +20,7 @@ import { buildGlbBody } from './gl/patient-glb.js';
 import { prepare as preparePick, rayMesh } from './gl/pick.js';
 
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+const smooth01 = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
 const HAND_KEYS = ['act', 'relax'];
 /** Joint weights for the waking movements (wake-anim.js, shader moveP): per vertex [left arm, left leg, right leg] from the body
  *  regions (5 arms, 8 legs; the patient's left is +z), smoothed four times along the mesh edges so the shoulder and hip bend
@@ -40,6 +42,7 @@ const HOTSPOTS = [
 ];
 const PIN_PATIENT = new Set(['head', 'chest', 'rarm', 'larm', 'groin', 'neck', 'flank']);
 // realistic patient (assets/patient.glb): crown position on the mattress and mattress top; asset axes already match the bay (+x head, +y up, +z patient's left)
+const MAT_N = 28;   // the mattress in slices, so it bends with the back section of the bed
 const CROWN_X = 0.93, BED_TOP = 0.86, TONE_REF = [0.80, 0.60, 0.44];
 
 // Room and equipment layout (metres; the bed is centred on x = -0.1, the patient's head points to +x). The IV pole stands on the far side, by the IV arm, out of the overview's line of sight.
@@ -85,7 +88,7 @@ export class Scene {
     const r = this.r; r.clear = [0.12, 0.13, 0.14]; r.lightPos = [0.1, 2.7, 0.4]; r.lightTarget = [-0.05, 0.85, 0.05]; r.lightK = 1.05;
     this.g = {
       ub: r.upload(box(1, 1, 1)), cyl: r.upload(cylinder(1, 1, 18)), sph: r.upload(sphere(1, 1, 1, 16, 10)),
-      bedFrame: r.upload(box(2.25, 0.08, 0.86)), mattress: r.upload(box(2.1, 0.12, 0.8)), rail: r.upload(box(2.0, 0.05, 0.04)),
+      bedFrame: r.upload(box(2.25, 0.08, 0.86)), mattress: r.upload(box(2.1 / MAT_N, 0.12, 0.8)), rail: r.upload(box(2.0, 0.05, 0.04)),
       leg: r.upload(cylinder(0.04, 0.8, 12)), monitorBody: r.upload(box(1.0, 0.56, 0.08)),
       pad: r.upload(cylinder(1, 0.02, 20)), bag: r.upload(sphere(1, 1.25, 0.5, 14, 10)),
       wallW: r.upload(plane(ROOM.x1 - ROOM.x0, ROOM.h)), wallD: r.upload(plane(ROOM.z1 - ROOM.z0, ROOM.h)), floor: r.upload(plane(ROOM.x1 - ROOM.x0, ROOM.z1 - ROOM.z0)),
@@ -95,7 +98,7 @@ export class Scene {
     this.goal = null; this.off = { yaw: 0, pitch: 0 }; this.hover = null; this.t = 0; this.breathPh = 0; this.compAmt = 0; this.shockT = 0; this.tone = 2; this.body = null;
     this.auto = false;            // slow cinematic orbit (case menu)
     this.inset = { l: 0, r: 0, t: 0, b: 0 }; this.shift = 0; this.shiftY = 0;   // screen px covered by panels on each side (ui.updateInsets)
-    this.faceAnim = new FaceAnim(); this.wakeAnim = new WakeAnim(); this.pupilAnim = new PupilAnim(); this.cprAnim = new CprAnim(); this.bodyAnim = new BodyAnim(); this.skinAnim = new SkinAnim();
+    this.faceAnim = new FaceAnim(); this.wakeAnim = new WakeAnim(); this.bedAnim = new BedAnim(); this._bedT = null; this.pupilAnim = new PupilAnim(); this.cprAnim = new CprAnim(); this.bodyAnim = new BodyAnim(); this.skinAnim = new SkinAnim();
     this.camVel = { yaw: 0, pitch: 0, dist: 0, target: [0, 0, 0] }; this.hh = 0;   // camera velocity (per s) and hand-held strength (camera-rig.js)
     this.reduceMotion = typeof matchMedia === 'function' && !!matchMedia('(prefers-reduced-motion: reduce)')?.matches;
     this.gest = new Gestures(); this.rescuerHands = true; this.pins = []; this._bindInput(canvas);
@@ -306,10 +309,25 @@ export class Scene {
   pickBody(cx, cy) {
     const B = this.body; if (!B?.b?.glb || !this.r.invVP) return null;
     if (!B.pick) B.pick = preparePick(B.b.meshes.body);
-    const ray = this.r.rayFromClient(cx, cy), s = B.b.scale, T = [CROWN_X, BED_TOP, 0];
+    const ray = this.r.rayFromClient(cx, cy), s = B.b.scale, T = [CROWN_X, BED_TOP, 0], U = this.bendU, m = B.b.meshes.body;
     const ro = ray.origin, o = [(ro[0] - T[0]) / s, (ro[1] - T[1]) / s, (ro[2] - T[2]) / s];
-    const h = rayMesh({ o, d: ray.dir }, B.pick); if (!h) return null;
-    return { p: [T[0] + h.p[0] * s, T[1] + h.p[1] * s, T[2] + h.p[2] * s], n: h.n, region: B.b.meshes.body.region[h.vert] };
+    if (!(U && U[2])) {
+      const h = rayMesh({ o, d: ray.dir }, B.pick); if (!h) return null;
+      return { p: [T[0] + h.p[0] * s, T[1] + h.p[1] * s, T[2] + h.p[2] * s], n: h.n, region: m.region[h.vert] };
+    }
+    // head of the bed raised: pick on the body as drawn (bent), then give back the same point of the flat body, like every other site
+    if (B.pickBentKey !== U.join()) {
+      const P = m.pos, Q = new Float32Array(P.length);
+      for (let i = 0; i < P.length; i += 3) { const w = bendPoint([T[0] + P[i] * s, T[1] + P[i + 1] * s, T[2] + P[i + 2] * s], U); Q[i] = (w[0] - T[0]) / s; Q[i + 1] = (w[1] - T[1]) / s; Q[i + 2] = (w[2] - T[2]) / s; }
+      B.pickBent = preparePick({ ...m, pos: Q }); B.pickBentKey = U.join();
+    }
+    const h = rayMesh({ o, d: ray.dir }, B.pickBent); if (!h) return null;
+    const Q = B.pickBent.pos, P = m.pos, ix = [0, 1, 2].map(k => m.idx[h.tri * 3 + k] * 3), V = (A, i) => [A[i], A[i + 1], A[i + 2]];
+    const [a, b, c] = ix.map(i => V(Q, i)), v0 = vec3.sub(b, a), v1 = vec3.sub(c, a), v2 = vec3.sub(h.p, a);   // barycentric coordinates on the bent triangle
+    const d00 = vec3.dot(v0, v0), d01 = vec3.dot(v0, v1), d11 = vec3.dot(v1, v1), d20 = vec3.dot(v2, v0), d21 = vec3.dot(v2, v1), den = d00 * d11 - d01 * d01 || 1;
+    const bv = (d11 * d20 - d01 * d21) / den, bw = (d00 * d21 - d01 * d20) / den, bu = 1 - bv - bw;
+    const q = [0, 1, 2].map(j => bu * P[ix[0] + j] + bv * P[ix[1] + j] + bw * P[ix[2] + j]), p = [T[0] + q[0] * s, T[1] + q[1] * s, T[2] + q[2] * s];
+    return { p, n: turnDir(h.n, -U[2] * bendWeight(p, U)), region: m.region[h.vert] };
   }
   /** Draw one instrument with its working point at p, long axis along n, turned by angle about n. */
   _instrument(name, p, n, angle = 0, opts = {}) {
@@ -346,7 +364,7 @@ export class Scene {
       g = { skin: r.upload(b.skin), hair: r.upload(b.hair), eyes: r.upload(b.eyes), pupils: r.upload(b.pupils), lips: r.upload(b.lips), sheet: r.upload(b.sheet) };
       M = supineMatrix(b);
     }
-    this.body = { b, g, M, spec, bFrame: breathFrame(b.landmarks, b.glb ? [0, 1, 0] : [0, 0, 1]) }; this.cut = null; this.skinAnim = new SkinAnim(); this._skinT = null; this.pupilAnim = new PupilAnim(); this._pupT = null; this.pupilCheck = null; this.wakeAnim = new WakeAnim();
+    this.body = { b, g, M, spec, bFrame: breathFrame(b.landmarks, b.glb ? [0, 1, 0] : [0, 0, 1]) }; this.cut = null; this.skinAnim = new SkinAnim(); this._skinT = null; this.pupilAnim = new PupilAnim(); this._pupT = null; this.pupilCheck = null; this.wakeAnim = new WakeAnim(); this.bedAnim = new BedAnim(); this._bedT = null;
     { const F = this.body.bFrame, P = b.meshes?.body?.pos; if (P) { let lo = Infinity; for (let i = 0; i < P.length; i += 3) lo = Math.min(lo, P[i] * F.axes[0] + P[i + 1] * F.axes[1] + P[i + 2] * F.axes[2]); F.cprRef[3] = lo; } }   // soles level (skin: feet, knees)
     if (b.glb) this._jointFrame(this.body.bFrame, b.meshes.body.pos, b.landmarks);
     this.tone = tone; this.gest.clear();
@@ -384,14 +402,16 @@ export class Scene {
     const ray = this.r.rayFromClient(cx, cy);
     for (const list of [this.hot, this.equip]) {              // the patient wins over equipment standing behind or in front of it
       let best = null, bt = 1e9;
-      for (const h of list) { const t = raySphere(ray, h.c, h.rad); if (t !== null && t < bt) { bt = t; best = h; } }
+      for (const h of list) { const t = raySphere(ray, h.equip ? h.c : this.bent(h.c), h.rad); if (t !== null && t < bt) { bt = t; best = h; } }
       if (best) return best;
     }
     return null;
   }
+  /** Where a point on the bed or the patient is drawn now (head of the bed raised: bed.js); off the bed, unchanged. */
+  bent(p) { const U = this.bendU; return U && p[0] < 1.2 ? bendPoint(p, U) : p; }
   /** World point -> CSS pixels on the canvas (null when behind the camera). */
   project(p) {
-    const m = this.r.vp, x = p[0], y = p[1], z = p[2];
+    const m = this.r.vp, [x, y, z] = this.bent(p);
     const cw = m[3] * x + m[7] * y + m[11] * z + m[15]; if (cw < 0.05) return null;
     const nx = (m[0] * x + m[4] * y + m[8] * z + m[12]) / cw, ny = (m[1] * x + m[5] * y + m[9] * z + m[13]) / cw;
     const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
@@ -493,6 +513,8 @@ export class Scene {
   /** Draw one frame. p: Patient (or the preview patient behind the menu). */
   draw(realDt, p) {
     const r = this.r, B = this.body; if (!B) return; this.t += realDt;
+    { const a = this.bedAnim.update(Math.max(realDt, this._bedT == null ? 0 : p.t - this._bedT), p); this._bedT = p.t;   // head of the bed (bed.js)
+      this.bendU = a && this.world ? [this.world.femoral[0] + 0.04, BED_TOP, a, 0] : null; }
     // camera rig (camera-rig.js): presets are reached by a velocity-matched minimum-jerk move (setCamera), an action frames its site and then glides back to the overview (focus),
     // a drag orbits the view and it drifts back to the framing a few seconds after release
     if (this.returnAt != null && this.t >= this.returnAt && !this.dragging) this.setCamera('default');
@@ -516,6 +538,9 @@ export class Scene {
     const yawV = this.yaw + this.off.yaw + hh.yaw, pitchV = clamp(this.pitch + this.off.pitch + hh.pitch, 0.08, 1.52);
     const asp = this.canvas.clientWidth / Math.max(1, this.canvas.clientHeight), D = (this.dist + lift) * (1 + hh.dist) * (asp < 1.25 ? Math.min(2.1, 1.25 / asp) : 1);   // portrait screens: pull back so the whole bay still fits
     const eye = [tgt[0] + D * Math.cos(pitchV) * Math.sin(yawV), tgt[1] + D * Math.sin(pitchV), tgt[2] + D * Math.cos(pitchV) * Math.cos(yawV)];
+    { const U = this.bendU; if (U && U[2] && tgt[0] < 1.2) {                     // head of the bed raised: what is framed on the patient rises with it, close-ups turn with it
+      const th = U[2] * bendWeight(tgt, U) * (1 - smooth01(0.9, 1.7, D)), tb = bendPoint(tgt, U), off = turnDir([eye[0] - tgt[0], eye[1] - tgt[1], eye[2] - tgt[2]], th);
+      for (let i = 0; i < 3; i++) { eye[i] = tb[i] + off[i]; tgt[i] = tb[i]; } } }
     eye[0] = clamp(eye[0], ROOM.x0 + 0.15, ROOM.x1 - 0.15); eye[2] = clamp(eye[2], ROOM.z0 + 0.15, ROOM.z1 - 0.15); eye[1] = clamp(eye[1], 0.4, ROOM.h - 0.12);   // never leave the bay
     const cam = { eye, target: tgt, fov: 0.85 };
     { const W = Math.max(1, this.canvas.clientWidth), goal = clamp((this.inset.l - this.inset.r) / W, -0.5, 0.5); this.shift += (goal - this.shift) * (1 - Math.exp(-realDt * 5)); r.shiftX = this.shift;
@@ -549,7 +574,9 @@ export class Scene {
     // bed
     r.draw(fr.bedFrame, mat4.translation(-0.1, 0.74, 0), { color: [0.55, 0.58, 0.62], spec: 0.3 });
     for (const [x, z] of [[-1.0, -0.35], [-1.0, 0.35], [0.8, -0.35], [0.8, 0.35]]) r.draw(fr.leg, mat4.translation(x, 0.36, z), { color: [0.4, 0.42, 0.45], spec: 0.3 });
-    r.draw(fr.mattress, mat4.translation(-0.1, 0.80, 0), { color: [0.19, 0.23, 0.28], spec: 0.15 });
+    r.bend = this.bendU;                                     // the back section of the mattress and everything on the patient follow the raised head of the bed
+    for (let i = 0; i < MAT_N; i++) r.draw(fr.mattress, mat4.translation(-1.15 + 2.1 * (i + 0.5) / MAT_N, 0.80, 0), { color: [0.19, 0.23, 0.28], spec: 0.15 });
+    r.bend = null;
     r.draw(fr.rail, mat4.translation(-0.1, 0.98, 0.43), { color: [0.7, 0.72, 0.75], spec: 0.4 });
     // monitor on its stand: the screen shows the very same canvas as the HUD monitor
     const [standX, standZ] = STAND;
@@ -559,6 +586,7 @@ export class Scene {
     r.drawQuad(this.monTex, mat4.multiply(mat4.multiply(mat4.translation(standX, 1.55, standZ), mat4.rotationY(-0.55)), mat4.multiply(mat4.translation(0, 0, 0.05), mat4.scaling(0.94, 0.5, 1))), 1.15);   // screen decal 1 cm in front of the bezel
 
     // ---------------- patient
+    r.bend = this.bendU;
     const M = B.M;                                           // the shock moves the body itself (body-anim.js)
     // face: blink, jaw, grimace and gaze (face.js); painful procedures under way on screen, and the side they are on
     const PAINFUL = ['needle', 'cannula', 'drain', 'fona', 'laryn', 'step_scalpel'], st = this.world.sternum;
@@ -805,6 +833,7 @@ export class Scene {
     const gh = this.ghost || (this.afterGhost && this.t < this.afterGhost.until ? this.afterGhost : null);
     if (gh) { const n = gh.n, q = [gh.p[0] + n[0] * ((gh.lift || 0) - (gh.depth || 0)), gh.p[1] + n[1] * ((gh.lift || 0) - (gh.depth || 0)), gh.p[2] + n[2] * ((gh.lift || 0) - (gh.depth || 0))]; this._instrument(gh.tool, q, n, gh.angle || 0); }
     if (this.cut) { const c = this.cut, mid = c.a.map((v, i) => (v + c.b[i]) / 2), d = vec3.sub(c.b, c.a), L = Math.hypot(...d); if (L > 0.002) { const n = this.normalAt(mid); disc(vec3.add(mid, vec3.scale(n, 0.0014)), n, vec3.scale(d, 1 / L), L / 2, 0.0012, [0.32, 0.02, 0.03], { spec: 0.9 }); } }   // the incision opening as it is drawn
+    r.bend = null;
     // hotspot highlight
     if (this.hover && this.hover.equip) { const h = this.hover; r.draw(fr.sph, mat4.multiply(mat4.translation(h.c[0], h.c[1], h.c[2]), mat4.scaling(h.rad, h.rad, h.rad)), { color: [0.2, 0.8, 1.0], alpha: 0.1, emissive: [0.0, 0.12, 0.16], noShadow: true }); }
     // defibrillation flash
