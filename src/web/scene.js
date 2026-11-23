@@ -11,6 +11,7 @@ import { bloodState } from './blood.js';
 import { WakeAnim, movePoint } from './wake-anim.js';
 import { BedAnim, bendPoint, bendWeight, turnDir } from './bed.js';
 import { RescuerAnim } from './rescuer-anim.js';
+import { DripAnim, dropAt } from './drip.js';
 import { CamMove, moveDuration, handheld, handheldAmp } from './camera-rig.js';
 import { Renderer, mat4, vec3 } from './gl/renderer.js';
 import { box, sphere, cylinder } from './gl/geometry.js';
@@ -111,7 +112,7 @@ export class Scene {
     this.faceAnim = new FaceAnim(); this.wakeAnim = new WakeAnim(); this.bedAnim = new BedAnim(); this._bedT = null; this.pupilAnim = new PupilAnim(); this.cprAnim = new CprAnim(); this.bodyAnim = new BodyAnim(); this.skinAnim = new SkinAnim();
     this.camVel = { yaw: 0, pitch: 0, dist: 0, target: [0, 0, 0] }; this.hh = 0;   // camera velocity (per s) and hand-held strength (camera-rig.js)
     this.reduceMotion = typeof matchMedia === 'function' && !!matchMedia('(prefers-reduced-motion: reduce)')?.matches;
-    this.gest = new Gestures(); this.rescuerHands = true; this.rescuerAnim = new RescuerAnim(); this.pins = []; this._bindInput(canvas);
+    this.gest = new Gestures(); this.rescuerHands = true; this.rescuerAnim = new RescuerAnim(); this.drip = new DripAnim(); this.pins = []; this._bindInput(canvas);
   }
 
   /** Frame a named view. Close-ups follow the real landmarks of this patient (head, sternum, neck, IV arm, groin) so they stay centred for any body. */
@@ -545,14 +546,30 @@ export class Scene {
     P.c(px, 0.02, pz, 0.26, 0.04, { color: [0.6, 0.62, 0.66], spec: 0.3 });
     P.c(px, 1.05, pz, 0.015, 2.1, { color: [0.7, 0.72, 0.75], spec: 0.4 });
     P.b(px + 0.07, 1.25, pz, 0.14, 0.2, 0.1, { color: [0.85, 0.87, 0.9], spec: 0.3 });
-    const running = p.vol.infusions && p.vol.infusions.length > 0;
-    P.b(px + 0.07, 1.3, pz + 0.052, 0.09, 0.05, 0.008, { color: [0.05, 0.08, 0.08], emissive: running ? [0.1, 0.8, 0.4] : [0.05, 0.2, 0.2] });
-    const bagFill = fl.ivAccess ? 1 : 0.6;
-    for (const [dx, col, fill] of [[0, [0.86, 0.94, 0.98], bagFill], [0.15, [0.62, 0.06, 0.1], 0.9]]) {     // crystalloid bag and a unit of blood: flat PVC bags with a port
-      P.b(px + dx, 1.86, pz, 0.11, 0.2, 0.012, { color: [0.92, 0.95, 0.97], alpha: 0.35, spec: 0.9 });
-      P.b(px + dx, 1.86 - 0.1 * (1 - fill), pz, 0.1, 0.19 * fill, 0.016, { color: col, alpha: 0.72, spec: 0.8 });
-      P.c(px + dx, 1.74, pz, 0.006, 0.035, { color: [0.9, 0.9, 0.9], spec: 0.5 }); P.b(px + dx, 1.97, pz, 0.03, 0.01, 0.012, { color: [0.85, 0.85, 0.85] });
-    }
+    // bags on the pole and their drip (drip.js): each bag empties as the engine runs it in, drops fall in the drip chamber
+    const dr = this.drip.update(p); this._dripNow = dr;
+    P.b(px + 0.07, 1.3, pz + 0.052, 0.09, 0.05, 0.008, { color: [0.05, 0.08, 0.08], emissive: dr.fluid || dr.blood ? [0.1, 0.8, 0.4] : [0.05, 0.2, 0.2] });   // pump display
+    const tube = (a, c, b, rad, col, o = {}) => { let prev = a; for (let i = 1; i <= 10; i++) { const k = i / 10, q = [0, 1, 2].map(j => (1 - k) * (1 - k) * a[j] + 2 * (1 - k) * k * c[j] + k * k * b[j]), d = vec3.sub(q, prev), L = Math.hypot(...d) || 1e-6, ey = d.map(x => x / L), up = Math.abs(ey[1]) > 0.95 ? [1, 0, 0] : [0, 1, 0], ex = vec3.norm(vec3.cross(up, ey));
+      r.draw(g.cyl, mat4.multiply(mat4.fromBasis(ex, ey, vec3.cross(ey, ex), prev.map((v, j) => (v + q[j]) / 2)), mat4.scaling(rad, L, rad)), { color: col, ...o }); prev = q; } };
+    const pumpIn = [px + 0.07, 1.35, pz], clear = { alpha: 0.16, spec: 0.9, noShadow: true };
+    P.b(px + 0.07, 1.985, pz, 0.42, 0.012, 0.012, { color: [0.7, 0.72, 0.75], spec: 0.4 });                                // hook bar across the top of the pole
+    dr.bags.forEach((bg, i) => {
+      const x = px + [0.1, -0.1, 0.24][i], k = Math.sqrt(bg.totalMl / 1000), hgt = 0.12 + 0.12 * k, w = 0.075 + 0.045 * k, top = 1.97, bot = top - hgt, fill = clamp(bg.leftMl / bg.totalMl, 0, 1), blood = bg.set === 'blood';
+      if (fill > 0.004) { const lh = (hgt - 0.012) * fill; P.b(x, bot + 0.006 + lh / 2, pz, w - 0.012, lh, 0.006 + 0.012 * fill, { color: bg.color, alpha: blood ? 1 : 0.45, spec: blood ? 0.3 : 0.8, noShadow: !blood }); }
+      P.b(x, top - hgt / 2, pz, w, hgt, 0.01 + 0.008 * fill, { color: [0.85, 0.9, 0.94], ...clear, alpha: 0.1, spec: 0.5 });                        // the PVC bag, flatter as it empties (after its contents: it is see-through)
+      P.b(x, top + 0.004, pz, 0.03, 0.01, 0.012, { color: [0.85, 0.85, 0.85] });                                              // hanger
+      P.c(x, bot - 0.014, pz, 0.006, 0.028, { color: [0.9, 0.9, 0.9], spec: 0.5 });                                           // port
+      if (bg.set === 'spare') return;
+      // drip chamber: a clear cylinder, fluid in its lower part, a drop forming at the nozzle and falling, or a stream
+      const chT = bot - 0.03, chB = chT - 0.07, pool = chB + 0.026, nz = chT - 0.008;
+      P.c(x, (chB + pool) / 2 + 0.001, pz, 0.0098, pool - chB, { color: bg.color, alpha: blood ? 0.9 : 0.5, spec: blood ? 0.3 : 0.8, noShadow: true });
+      const d = bg.running ? dropAt(bg.dropsPerS, p.t) : null, dc = { color: bg.color, alpha: blood ? 0.95 : 0.7, spec: blood ? 0.3 : 1, noShadow: true };
+      if (d?.stream) P.c(x, (nz + pool) / 2, pz, 0.0011, nz - pool, dc);
+      else if (d) { const y = nz - d.y * (nz - pool), rd = 0.0024 * (d.y > 0 ? 1 : 0.4 + 0.6 * d.grow); r.draw(g.sph, mat4.multiply(mat4.translation(x, y - rd * 0.6, pz), mat4.scaling(rd, rd * 1.25, rd)), dc); }
+      P.c(x, (chT + chB) / 2, pz, 0.011, 0.07, { color: [0.93, 0.96, 0.98], ...clear });                                     // the chamber itself, after what is inside
+      // giving set down to the pump (bags beside the first join it through a Y-connector)
+      tube([x, chB, pz], [x, chB - 0.18, pz + 0.04], i === 0 ? pumpIn : [pumpIn[0] + 0.01, pumpIn[1] + 0.08, pumpIn[2] + 0.005], 0.0022, ...(blood && fill > 0 ? [[0.42, 0.0, 0.02], { alpha: 0.95, spec: 0.3, noShadow: true }] : [[0.86, 0.93, 0.97], { alpha: 0.75, spec: 0.9, noShadow: true }]));
+    });
     // patient monitor stand
     P.c(STAND[0], 0.015, STAND[1], 0.27, 0.03, { color: [0.3, 0.3, 0.33], spec: 0.3 });
     // anaesthesia machine / ventilator at the head of the bed
@@ -756,7 +773,7 @@ export class Scene {
       const tip = vec3.add(f.p, vec3.scale(dir, 0.02)); inst('ivCannula', tip, vec3.scale(dir, -1), 0, { skip: ['steel'], noHand: true });
       disc(onSkin(f, 0.003), f.n, ax, 0.022, 0.018, [0.92, 0.96, 1.0], { alpha: 0.18, spec: 1, noShadow: true });
       const hub = vec3.add(f.p, vec3.add(vec3.scale(dir, -0.05), vec3.scale(f.n, 0.012)));
-      hose(hub, [hub[0] + 0.05, hub[1] + 0.25, hub[2] - 0.2], [POLE[0] + 0.07, 1.25, POLE[2]], 0.0025, [0.86, 0.93, 0.97], { alpha: 0.75, spec: 0.9 });
+      hose(hub, [hub[0] + 0.05, hub[1] + 0.25, hub[2] - 0.2], [POLE[0] + 0.07, 1.25, POLE[2]], 0.0025, ...(this._dripNow?.blood ? [[0.42, 0.0, 0.02], { alpha: 0.95, spec: 0.3 }] : [[0.86, 0.93, 0.97], { alpha: 0.75, spec: 0.9 }]));   // red while blood runs in
     }
     // lines, tubes and catheters left in place after their procedure
     const PS = this.procSites || {}, R = this.sideSign || 1, inPlane = (f, d) => vec3.norm(vec3.sub(d, vec3.scale(f.n, vec3.dot(d, f.n))));

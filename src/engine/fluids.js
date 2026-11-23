@@ -28,7 +28,7 @@ export class Volumes {
     const kTot = Math.LN2 / 8;                                    // REF hahn2024: distribution half-life ~8 min => k12 + k21 = ln2/8; plasma keeps ~30% at equilibrium
     this.kd = kTot * 0.7; this.kr = kTot * 0.3; this.kRefill = 0.03; this.k3 = 0.01;
     this.rates = { crystalloid: 0, bleed: 0 };           // L/min
-    this.infusions = [];                                 // {remaining L, rate L/min, kind}
+    this.infusions = [];                                 // {remaining L, rate L/min, kind, total L}
     this.urine = 0; this.urineBasal = 0; this.totalCrystalloid = 0; this.totalBlood = 0; this.totalLost = 0;
     this.salineLoad = 0; this.delivered = [];                                 // 0.9 % saline still acting (mL/kg), cleared by the kidneys over hours
     // clotting factors (activity x plasma L), fibrinogen (g) and platelets (x10^9): carried by the blood, diluted by fluids (coag.js)
@@ -41,7 +41,7 @@ export class Volumes {
   get hct() { return this.rbc / (0.91 * (this.vp + this.rbc)); }       // venous hematocrit
   get hb() { return this.hct * 33; }                                    // g/dL
   get fractionLost() { return 1 - this.bloodVolume / (this.vp0 + this.rbc0); }
-  startInfusion(litres, minutes, kind = 'crystalloid') { this.infusions.push({ remaining: litres, rate: litres / Math.max(minutes, 0.05), kind }); }
+  startInfusion(litres, minutes, kind = 'crystalloid') { this.infusions.push({ remaining: litres, rate: litres / Math.max(minutes, 0.05), kind, total: litres }); }   // total: the bag's volume (display only)
   setBleed(mlPerMin) { this.rates.bleed = Math.max(0, mlPerMin) / 1000; }
   transfuse(kind) { // instantaneous unit for simplicity (pRBC 300 mL Hct 0.60, whole blood 500 mL Hct 0.40, FFP 250 mL plasma)
     if (kind === 'prbc') { this.rbc += 0.3 * 0.60; this.vp += 0.12; }
