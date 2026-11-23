@@ -5,6 +5,7 @@ import { DRUGS, CALCIUM } from '/engine/drugs.js';
 import { FORCED_AIR_W } from '/engine/thermal.js';
 import { fluidVolumeMl } from '/engine/infection.js';
 import { Coach, levelPicker, levelChip, loadLevel, helpUsed } from './coach.js';
+import { dockTarget } from './dock-hint.js';
 import { bmiOf, bmiClass } from '/engine/anthropometrics.js';
 import { SKIN_TONES } from './gl/body.js';
 import { CAMERAS } from './scene.js';
@@ -273,6 +274,33 @@ export class UI {
     const w = el('div', { class: 'seg', role: 'group' });
     for (const [k, key] of [['default', 'cam_reset'], ['head', 'cam_head'], ['chest', 'cam_chest'], ['arm', 'cam_arm'], ['side', 'cam_side'], ['top', 'cam_top'], ['foot', 'cam_foot']]) w.append(el('button', { onclick: () => this.scene.setCamera(k), text: t(key) }));
     return w;
+  }
+  /** Learner-level pointer on the dock (dock-hint.js): the button that holds the next step pulses, with the step above it. */
+  _dockPoint(p) {
+    const btns = this.dom.dockBtns; if (!btns) return;
+    const open = this.panelOpen ? this.tab : null, guiding = !!(this.guide && !this.guide.finished);
+    const key = `${Math.floor(p.t)}|${open}|${guiding}|${this.menuOpen}|${this.sim.finished}|${this.coach?.said?.t ?? ''}|${p.log.length}`;
+    if (key === this._dockKey) return this._dockTipPlace(); this._dockKey = key;
+    const st = this.menuOpen ? null : this.coach?.dockState();
+    const d = st && dockTarget({ ...st, open, guiding, finished: this.sim.finished });
+    for (const b of btns) {
+      const on = !!d && b.dataset.tab === d.tab && !b.hidden;
+      b.classList.toggle('point', on);
+      if (on) { const h = `${t(d.why === 'senior' ? 'dh_senior' : 'dh_next')} ${d.text}`; if (b.dataset.hint !== h) { b.dataset.hint = h; b.setAttribute('aria-description', h); } }
+      else if (b.dataset.hint != null) { delete b.dataset.hint; b.removeAttribute('aria-description'); }
+    }
+    // the step, written above the button (outside the dock, which scrolls sideways on phones)
+    let tip = this.dom.dockTip;
+    if (!tip && this.dom.dock?.parentNode) { tip = this.dom.dockTip = el('div', { class: 'dock-tip', 'aria-hidden': 'true', hidden: true }); this.dom.dock.parentNode.append(tip); }
+    if (tip) { tip.hidden = !d; if (d) tip.textContent = btns.find(b => b.classList.contains('point'))?.dataset.hint || ''; }
+    this._dockTipPlace();
+  }
+  _dockTipPlace() {
+    const tip = this.dom.dockTip, b = this.dom.dockBtns?.find(x => x.classList.contains('point')); if (!tip || tip.hidden) return;
+    if (!b || this.dom.dock.hidden) { tip.hidden = true; return; }
+    const R = tip.parentNode.getBoundingClientRect(), r = b.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
+    const x = Math.max(16, Math.min(r.left + r.width / 2 - R.left - w / 2, R.width - w - 16)), y = r.top - R.top - h - 12;
+    tip.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
   }
   buildDock() {
     const items = [['tab_guide', 'guide'], ['tab_drugs', 'drugs'], ['tab_fluids', 'fluids'], ['tab_airway', 'airway'], ['tab_circ', 'cpr'], ['tab_proc', 'proc'], ['tab_orders', 'orders'], ['tab_ward', 'microbe']];
@@ -1175,6 +1203,7 @@ export class UI {
     this.effects.tick(p);
     signsTick(this);
     this.coach?.tick();
+    this._dockPoint(p);
     if (this.panelOpen && this.tab === 'tab_airway') { this._mechTick(p); volTick(this); }
     if (this.panelOpen && this.tab === 'tab_orders') { this._labsTick(p); scoresTick(this); }
     if (this.panelOpen && this.tab === 'tab_circ') this._paceStatus?.();

@@ -2,6 +2,8 @@
 //   beginner     - a live coach card: what to do next, the full checklist of the case with what is done, the key points;
 //   intermediate - a senior doctor who answers when asked (3 times a case) and speaks up once or twice when nothing happens;
 //   expert       - no help.
+// The dock also points at the button of the next step (dock-hint.js): every step for a beginner, only after a senior hint
+// for an intermediate, never for an expert.
 // The checklist is read live from the case's own scoring criteria, so every case is covered and the advice always matches
 // what is assessed. Help never changes the physiology: it only reads the patient. The level and each senior hint are written
 // to the event log as notes, so the debrief, the replay and the research export show how much help was used.
@@ -49,8 +51,13 @@ export function levelChip(ui, onChange) {
 /** Coach card in the right column; one instance per UI, restarted at each case. */
 export class Coach {
   constructor(ui) { this.ui = ui; this.box = el('section', { class: 'card coach', hidden: true, 'aria-live': 'polite' }); this.reset(); }
-  checklist(p, id) { return checklistOf(p, SCENARIOS[id], this.keep); }
-  reset() { this.keep = null; this.asks = 0; this.autos = 0; this.said = null; this.lastSig = ''; this._t = -1; this._stuckFrom = 0; }
+  checklist(p, id) { if (this._live && this._live.p === p && this._live.t === p.t && this._live.n === p.log.length) return this._live.items; const items = checklistOf(p, SCENARIOS[id], this.keep); this._live = { p, t: p.t, n: p.log.length, items }; return items; }   // memo: the card and the dock pointer read it in the same frame
+  /** What the dock pointer needs (dock-hint.js): null when the coach is off (expert, free play, skills training). */
+  dockState() {
+    const p = this.ui.sim.patient, id = this.ui.sim.scenarioId; if (!p || !id || this.box.hidden || this.level === 'expert') return null;
+    const items = this.checklist(p, id); return { level: this.level, items, next: nextItem(items), said: this.said, t: p.t };
+  }
+  reset() { this._live = null; this.keep = null; this.asks = 0; this.autos = 0; this.said = null; this.lastSig = ''; this._t = -1; this._stuckFrom = 0; }
   get level() { return this.ui.level; }
   /** Called at the start of every session. */
   start() {
