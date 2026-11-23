@@ -3,8 +3,9 @@
 //   intermediate - only when the senior has just given a hint, for that one step and for HINT_S of patient time;
 //   expert       - never.
 // The step comes from the case's own scoring criteria (coach-eval.js), so the pointer always matches what is assessed.
-// It only points: it never presses anything or changes the patient. It hides while that button's panel is already open,
-// and while a guided procedure is running (the guided panel leads then).
+// It only points: it never presses anything or changes the patient. It hides while that button's panel is already open.
+// During a guided procedure (guideTarget) it shows, step by step, the dock button where that action is found in a real case,
+// with the same levels: every step for a beginner, a few for an intermediate, none for an expert.
 
 export const DOCK_TABS = Object.freeze(['tab_guide', 'tab_drugs', 'tab_fluids', 'tab_airway', 'tab_circ', 'tab_proc', 'tab_orders', 'tab_ward']);
 export const HINT_S = 60;              // intermediate: how long (patient seconds) the pointer stays after a senior hint
@@ -48,6 +49,35 @@ export function dockOf(id) {
   if (id.startsWith('inf_')) return 'tab_ward';
   if (id.startsWith('echo_')) return P;
   return Object.prototype.hasOwnProperty.call(DOCK_OF, id) ? DOCK_OF[id] : undefined;
+}
+
+/** Engine event type -> the dock button whose panel offers it in a case (where a guided step is found outside the guide). */
+export const TAB_OF_EVENT = Object.freeze({
+  'drug.bolus': D, 'drug.infusion': D, 'drug.stop': D,
+  'fluid.bolus': F, 'blood.transfuse': F, 'bicarb.bolus': F, 'bleed.control': F,
+  'o2.mask': A, 'apox.set': A, 'vent.set': A, 'airway.set': A, 'airway.intubate': A, 'airway.tube_adjust': A, 'position.set': A, 'niv.set': A,
+  'vaporizer.set': A, 'bronch.insert': A, 'bronch.suction': A, 'bronch.remove': A,
+  'cpr.start': C, 'cpr.stop': C, 'cpr.switch': C, 'cpr.compress': C, 'defib.pads': C, 'defib.charge': C, 'defib.shock': C, 'defib.setEnergy': C, 'pacing.set': C,
+  'exam.chest': P, 'exam.pocus': P, 'exam.neck': P, 'procedure.needle_decompression': P, 'procedure.chest_tube': P, 'procedure.cricothyroidotomy': P,
+  'procedure.arterial_line': P, 'procedure.central_line': P, 'procedure.ng_tube': P, 'procedure.urinary_catheter': P, 'procedure.vagal': P,
+  'neuraxial.spinal': P, 'neuraxial.assess': P, 'io.access': P,
+  'monitor.attach': O, 'nibp.cycle': O, 'iv.access': O, 'order': O, 'lab.order': O, 'exam.ecg12': O, 'thermal.cover': O, 'thermal.device': O, 'thermal.ambient': O,
+});
+/** The dock button of a guided step from the events it dispatches: the first event that has one (null: a check or a
+ *  preparation step with no button of its own, such as the checklist before an intubation). */
+export const tabOfEvents = (evs) => { for (const e of evs || []) { const k = TAB_OF_EVENT[e?.type]; if (k) return k; } return null; };
+
+/** During a guided procedure: the dock button where the current step is found in a real case, so the learner learns
+ *  where each action lives. g: { level, tabs (the dock button of every step, from tabOfEvents), i (current step),
+ *  open (the tab whose panel is open), finished }. Beginner: every step that has a button; intermediate: only the
+ *  first step that uses each button (a few, then it lets go); expert: never. When another panel than the guide is
+ *  open, the guide's button is pointed at instead, to come back to the step. Returns { tab, why: 'where' | 'back' } or null. */
+export function guideTarget(g) {
+  if (!g || g.finished || g.level === 'expert' || !(g.i >= 0 && g.i < (g.tabs?.length ?? 0))) return null;
+  if (g.open && g.open !== G) return { tab: G, why: 'back' };
+  const tab = g.tabs[g.i]; if (!tab) return null;
+  if (g.level === 'intermediate' && g.tabs.indexOf(tab) !== g.i) return null;   // already shown earlier in this procedure
+  return g.level === 'beginner' || g.level === 'intermediate' ? { tab, why: 'where' } : null;
 }
 
 /** What the dock should point at now, or null.

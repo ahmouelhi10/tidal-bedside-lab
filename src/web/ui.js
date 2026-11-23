@@ -5,7 +5,7 @@ import { DRUGS, CALCIUM } from '/engine/drugs.js';
 import { FORCED_AIR_W } from '/engine/thermal.js';
 import { fluidVolumeMl } from '/engine/infection.js';
 import { Coach, levelPicker, levelChip, loadLevel, helpUsed } from './coach.js';
-import { dockTarget } from './dock-hint.js';
+import { dockTarget, guideTarget, tabOfEvents } from './dock-hint.js';
 import { bmiOf, bmiClass } from '/engine/anthropometrics.js';
 import { SKIN_TONES } from './gl/body.js';
 import { CAMERAS } from './scene.js';
@@ -279,14 +279,20 @@ export class UI {
   _dockPoint(p) {
     const btns = this.dom.dockBtns; if (!btns) return;
     const open = this.panelOpen ? this.tab : null, guiding = !!(this.guide && !this.guide.finished);
-    const key = `${Math.floor(p.t)}|${open}|${guiding}|${this.menuOpen}|${this.sim.finished}|${this.coach?.said?.t ?? ''}|${p.log.length}`;
+    const key = `${Math.floor(p.t)}|${open}|${guiding}|${this.guide?.i}|${this.level}|${this.menuOpen}|${this.sim.finished}|${this.coach?.said?.t ?? ''}|${p.log.length}`;
     if (key === this._dockKey) return this._dockTipPlace(); this._dockKey = key;
-    const st = this.menuOpen ? null : this.coach?.dockState();
-    const d = st && dockTarget({ ...st, open, guiding, finished: this.sim.finished });
+    let d = null;
+    if (this.menuOpen) d = null;
+    else if (guiding) {                                          // a guided procedure: where each step is found in a real case
+      const g = this.guide, ctx = { p, b: p.body, prm: g.prm };
+      const tabs = g.proc.steps.map(st => { try { return tabOfEvents(st.run ? st.run(ctx) : []); } catch { return null; } });
+      const r = guideTarget({ level: this.level, tabs, i: g.i, open, finished: this.sim.finished });
+      d = r && { tab: r.tab, why: r.why, text: r.why === 'back' ? L(g.step) : t('dh_where', { tab: t(r.tab) }) };
+    } else { const st = this.coach?.dockState(); d = st && dockTarget({ ...st, open, guiding, finished: this.sim.finished }); }
     for (const b of btns) {
       const on = !!d && b.dataset.tab === d.tab && !b.hidden;
       b.classList.toggle('point', on);
-      if (on) { const h = `${t(d.why === 'senior' ? 'dh_senior' : 'dh_next')} ${d.text}`; if (b.dataset.hint !== h) { b.dataset.hint = h; b.setAttribute('aria-description', h); } }
+      if (on) { const h = d.why === 'where' ? d.text : `${t({ senior: 'dh_senior', back: 'dh_back' }[d.why] || 'dh_next')} ${d.text}`; if (b.dataset.hint !== h) { b.dataset.hint = h; b.setAttribute('aria-description', h); } }
       else if (b.dataset.hint != null) { delete b.dataset.hint; b.removeAttribute('aria-description'); }
     }
     // the step, written above the button (outside the dock, which scrolls sideways on phones)

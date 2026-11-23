@@ -50,3 +50,33 @@ test('intermediate: only after a senior hint, for that step, until it is done or
   assert.equal(dockTarget(state(p, 'hyperkalaemia', { level: 'intermediate', said: { id: 'hk_calcium', t: p.t - 30 } })), null, 'done since the hint');
   assert.equal(dockTarget({ ...state(scen('witnessed_vf', 1).run(40), 'witnessed_vf'), level: 'expert' }), null);
 });
+
+// Guided procedures: every step points at the dock button where that action is found in a real case.
+import { PROCEDURES, Guide } from '../src/web/procedures.js';
+import { mk } from './helpers/bots.js';
+import { guideTarget, tabOfEvents, TAB_OF_EVENT } from '../src/web/dock-hint.js';
+
+const tabsOf = (pr, p) => { const g = new Guide(pr, p), ctx = { p, b: p.body, prm: g.prm }; return pr.steps.map(st => tabOfEvents(st.run ? st.run(ctx) : [])); };
+
+test('every event a guided step dispatches has a dock button, and every procedure points somewhere', () => {
+  const p = mk();
+  for (const pr of PROCEDURES) {
+    const g = new Guide(pr, p), ctx = { p, b: p.body, prm: g.prm };
+    for (const st of pr.steps) for (const e of (st.run ? st.run(ctx) : [])) assert.ok(e.type === 'note' || TAB_OF_EVENT[e.type], `${pr.id}.${st.id}: ${e.type} has no dock button`);
+    const tabs = tabsOf(pr, p); assert.ok(tabs.some(Boolean), `${pr.id}: no step points`);
+    for (const k of tabs) if (k) assert.ok(DOCK_TABS.includes(k));
+  }
+  const rsi = Object.fromEntries(PROCEDURES.find(x => x.id === 'rsi').steps.map((st, i) => [st.id, tabsOf(PROCEDURES.find(x => x.id === 'rsi'), p)[i]]));
+  assert.equal(rsi.monitor, 'tab_orders'); assert.equal(rsi.prep, null, 'the checklist has no button of its own');
+});
+
+test('guided levels: beginner every step, intermediate only the first use of each button, expert none; another panel open points back', () => {
+  const tabs = ['tab_orders', null, 'tab_airway', 'tab_drugs', 'tab_drugs', 'tab_airway'];
+  const at = (level, i, open = 'tab_guide') => guideTarget({ level, tabs, i, open, finished: false });
+  assert.deepEqual(tabs.map((_, i) => at('beginner', i)?.tab ?? null), tabs);
+  assert.deepEqual(tabs.map((_, i) => at('intermediate', i)?.tab ?? null), ['tab_orders', null, 'tab_airway', 'tab_drugs', null, null]);
+  assert.ok(tabs.every((_, i) => at('expert', i) === null));
+  assert.deepEqual(at('beginner', 3, 'tab_drugs'), { tab: 'tab_guide', why: 'back' });
+  assert.equal(at('expert', 3, 'tab_drugs'), null);
+  assert.equal(guideTarget({ level: 'beginner', tabs, i: 6, open: null, finished: false }), null, 'past the last step');
+});
