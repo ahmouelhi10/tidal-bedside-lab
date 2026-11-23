@@ -12,6 +12,7 @@ import { WakeAnim, movePoint } from './wake-anim.js';
 import { BedAnim, bendPoint, bendWeight, turnDir } from './bed.js';
 import { RescuerAnim } from './rescuer-anim.js';
 import { DripAnim, dropAt } from './drip.js';
+import { syringePumps, SYRINGE_ML } from './syringe.js';
 import { CamMove, moveDuration, handheld, handheldAmp } from './camera-rig.js';
 import { Renderer, mat4, vec3 } from './gl/renderer.js';
 import { box, sphere, cylinder } from './gl/geometry.js';
@@ -569,6 +570,24 @@ export class Scene {
       P.c(x, (chT + chB) / 2, pz, 0.011, 0.07, { color: [0.93, 0.96, 0.98], ...clear });                                     // the chamber itself, after what is inside
       // giving set down to the pump (bags beside the first join it through a Y-connector)
       tube([x, chB, pz], [x, chB - 0.18, pz + 0.04], i === 0 ? pumpIn : [pumpIn[0] + 0.01, pumpIn[1] + 0.08, pumpIn[2] + 0.005], 0.0022, ...(blood && fill > 0 ? [[0.42, 0.0, 0.02], { alpha: 0.95, spec: 0.3, noShadow: true }] : [[0.86, 0.93, 0.97], { alpha: 0.75, spec: 0.9, noShadow: true }]));
+    });
+    // syringe pumps clamped to the pole under the fluid pump (syringe.js): a 50 mL syringe each, the plunger pushed as the drug goes in
+    const hc = (x0, x1, y, z, rad, o) => r.draw(g.cyl, mat4.multiply(mat4.translation((x0 + x1) / 2, y, z), mat4.multiply(mat4.rotationZ(Math.PI / 2), mat4.scaling(rad, Math.max(1e-4, x1 - x0), rad))), o);
+    syringePumps(p).forEach((q, i) => {
+      const cx = px + 0.15, y = 1.06 - i * 0.14, zf = pz + 0.035, ys = y + 0.04 + 0.017, L = 0.11, x0 = cx - 0.1, lf = L * q.ml / SYRINGE_ML, seal = x0 + lf;
+      P.b(cx, y, pz, 0.26, 0.08, 0.12, { color: [0.88, 0.89, 0.9], spec: 0.3 });                                                                          // pump body
+      P.b(cx - 0.02, ys - 0.006, zf, 0.2, 0.01, 0.04, { color: [0.7, 0.72, 0.75], spec: 0.3 });                                                            // syringe cradle
+      const scr = q.nearEnd ? ((T % 1) < 0.5 ? [0.8, 0.48, 0.04] : [0.16, 0.1, 0.02]) : q.running ? [0.06, 0.5, 0.28] : [0.03, 0.06, 0.06];
+      P.b(cx + 0.08, y - 0.01, pz + 0.061, 0.06, 0.026, 0.004, { color: [0.05, 0.08, 0.08], emissive: scr });                                           // display: green running, amber flashing near the end
+      if (lf > 0.0005) hc(x0, seal, ys, zf, 0.0135, { color: q.milky ? [0.95, 0.95, 0.92] : [0.84, 0.91, 0.95], alpha: q.milky ? 0.95 : 0.4, spec: 0.8, noShadow: !q.milky });   // the drug
+      hc(seal, seal + 0.006, ys, zf, 0.0138, { color: [0.12, 0.12, 0.13], spec: 0.4 });                                                                   // rubber seal
+      hc(seal + 0.006, seal + 0.12, ys, zf, 0.004, { color: [0.93, 0.94, 0.95], spec: 0.4 });                                                             // plunger rod
+      hc(seal + 0.12, seal + 0.124, ys, zf, 0.017, { color: [0.93, 0.94, 0.95], spec: 0.4 });                                                             // thumb plate
+      P.b(seal + 0.134, ys, zf, 0.018, 0.045, 0.04, { color: [0.55, 0.58, 0.62], spec: 0.3 });                                                            // the pump's driver pushing it
+      hc(x0 + 0.035, x0 + 0.075, ys, zf, 0.0147, { color: q.rgb, spec: 0.2 });                                                                  // drug label (ISO colour)
+      hc(x0, x0 + L, ys, zf, 0.0145, { color: [0.92, 0.95, 0.97], alpha: 0.22, spec: 0.9, noShadow: true });                                             // the barrel, see-through (after its contents)
+      hc(x0 - 0.014, x0, ys, zf, 0.004, { color: [0.92, 0.95, 0.97], alpha: 0.5, spec: 0.9 });                                                            // luer tip
+      tube([x0 - 0.014, ys, zf], [x0 - 0.08, ys - 0.02, zf + 0.04], [px + 0.07, 1.155, pz + 0.03], 0.0017, [0.86, 0.93, 0.97], { alpha: 0.75, spec: 0.9, noShadow: true });   // extension line into the IV line
     });
     // patient monitor stand
     P.c(STAND[0], 0.015, STAND[1], 0.27, 0.03, { color: [0.3, 0.3, 0.33], spec: 0.3 });
