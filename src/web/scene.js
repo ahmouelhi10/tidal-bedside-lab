@@ -391,25 +391,27 @@ export class Scene {
   _drawRescuers(R) {
     const r = this.r, fr = this.g, people = this.rescuers, { ra, cp } = R, mid = (a, b) => a.map((v, i) => (v + b[i]) / 2);
     // the compressor's elbows go where the gown sleeves of the gloved hands end (arm and hand join); the feet then stand on a step stool
-    const em = R.eB && R.eT ? mid(R.eB, R.eT) : [cp[0], cp[1] + 0.38, cp[2] - 0.23];
-    const atC = (m) => { const e = mid(m.elbowL, m.elbowR); return [em[0] - e[0], clamp(em[1] - e[1], 0, 0.55), em[2] - e[2]]; };
+    this._em = this._em || {};                                                    // each one's hands-on elbow point, kept for the frames their hands are off
+    for (const [i, e] of Object.entries(R.em || {})) this._em[i] = e;
+    const emOf = (i) => R.em?.[i] || this._em[i] || this._em[ra.who] || [cp[0], cp[1] + 0.38, cp[2] - 0.23];
+    const atC = (m, i = ra.who) => { const em = emOf(i), e = mid(m.elbowL, m.elbowR); return [em[0] - e[0], clamp(em[1] - e[1], 0, 0.55), em[2] - e[2]]; };
     const C0 = atC(people[ra.who % people.length].meta);
     this._stool = this._stool == null ? C0[1] : this._stool + (C0[1] - this._stool) * 0.08;   // one stool: its height follows whoever is on it
-    const Rz = Math.min(C0[2], -0.55) - 0.35, spot = (k, m) => (k === 'C' ? atC(m) : k === 'R0' ? [cp[0] - 0.8, 0, Rz] : [Math.min(cp[0] + 0.8, 1.2), 0, Rz]);
-    const face = (k, m) => (k === 'C' ? 0 : Math.atan2(cp[0] - spot(k, m)[0], cp[2] - spot(k, m)[2]) * 0.8);
+    const Rz = Math.min(C0[2], -0.55) - 0.35, spot = (k, m, i) => (k === 'C' ? atC(m, i) : k === 'R0' ? [cp[0] - 0.8, 0, Rz] : [Math.min(cp[0] + 0.8, 1.2), 0, Rz]);
+    const face = (k, m) => (k === 'C' ? 0 : Math.atan2(cp[0] - spot(k, m)[0], cp[2] - spot(k, m)[2]) * 0.8);   // (the waiting places do not depend on who)
     const H = this._stool;
     if (H > 0.04) {                                                               // step stool: grey top, dark feet
       r.draw(fr.ub, mat4.multiply(mat4.translation(C0[0], H - 0.015, C0[2] + 0.02), mat4.scaling(0.5, 0.03, 0.36)), { color: [0.55, 0.58, 0.62], spec: 0.3 });
       r.draw(fr.ub, mat4.multiply(mat4.translation(C0[0], (H - 0.03) / 2, C0[2] + 0.02), mat4.scaling(0.46, H - 0.03, 0.32)), { color: [0.3, 0.32, 0.35], spec: 0.2 });
     }
     ra.people.forEach((q, i) => {
-      const who = people[i % people.length], m = who.meta, A = spot(q.from, m), Bq = spot(q.to, m), u = q.u;
+      const who = people[i % people.length], m = who.meta, A = spot(q.from, m, i), Bq = spot(q.to, m, i), u = q.u;
       const pos = [A[0] + (Bq[0] - A[0]) * u, 0, A[2] + (Bq[2] - A[2]) * u];
       pos[1] = q.from === 'C' && q.to !== 'C' ? A[1] * (1 - smooth01(0, 0.35, u)) : q.to === 'C' && q.from !== 'C' ? Bq[1] * smooth01(0.65, 1, u) : A[1];
       pos[1] += 0.025 * Math.abs(Math.sin(u * Math.PI * 3)) * (q.from !== q.to ? 1 : 0);     // steps
       // a person, not a statue: the trunk tips with each push (the elbows following the hands), breathing, effort, weight shifts
-      const pushing = i === ra.who && q.role === 'push' && q.hands > 0, el = mid(m.elbowL, m.elbowR);
-      const pose = posture(q, i === ra.who ? R.drop : 0, el[2] - m.hip[2], ra.t, i * 1.7), F = rescuerFlex(m, pose);
+      const pushing = q.role === 'push' && q.hands > 0, el = mid(m.elbowL, m.elbowR);   // the arms on the chest for as long as the hands are
+      const pose = posture(q, R.drops?.[i] ?? 0, el[2] - m.hip[2], ra.t, i * 1.7), F = rescuerFlex(m, pose);
       const yaw = face(q.from, m) + (face(q.to, m) - face(q.from, m)) * u, M = mat4.multiply(mat4.translation(...pos), mat4.multiply(mat4.rotationY(yaw), mat4.rotationZ(pose.sway)));
       for (const pt of who[pushing ? 'cpr' : 'idle']) r.draw(pt.g, M, { flex: F, ...RESCUER_LOOK[pt.part], ...(pt.part === 'skin' && m.skinTint ? { color: m.skinTint } : {}), ...(pt.albedo ? { albedo: pt.albedo } : {}), ...(pt.normal ? { normalMap: pt.normal } : {}) });
     });
@@ -914,20 +916,24 @@ export class Scene {
     if (this.hands?.hand_cprBottom && B.bFrame.compPt && (ra || cpr.active)) {
       const k = B.b.scale, cp = localToWorld(B.M, B.bFrame.compPt), n = this.normalAt?.(cp) || [0, 1, 0];
       const ax = vec3.norm([n[0] * 0.3, 1, n[2] * 0.3]), op = vec3.norm([0, 0.8, -1]);
-      const q = ra?.people[ra.who], on = ra ? q.hands : 1, off = ra ? 0.15 * (1 - q.hands) + 0.1 * q.lift : 0;   // hands lifted off the chest: switching, "all clear", a rhythm check
-      const press = ra ? q.hands * (1 - q.lift) : 1;
-      const skin = [cp[0] + n[0] * 0.004 + ax[0] * off, cp[1] + n[1] * 0.004 - (cpr.sternum + cpr.sink) * k * press + ax[1] * off, cp[2] + n[2] * 0.004 + ax[2] * off];
-      let MB = null, MT = null;
-      if (on > 0) {
-        MB = inst('cprBottom', skin, ax, -0.18, { toward: op });                // the two forearms meet at a slight angle, as from two shoulders
-        MT = inst('cprTop', vec3.add(skin, vec3.scale(ax, 0.026)), ax, 0.18, { toward: op });
+      // each rescuer at the chest has their own pair of hands: the compressor's push; at a switch the one leaving lifts them off and
+      // back toward the body (the sleeves slide up the arms, as elbows bending) while the one arriving puts theirs on; "all clear"
+      // and rhythm checks lift the compressor's straight up. The body stays where the hands-on position puts it.
+      const back = vec3.norm([ax[0], ax[1], ax[2] - 0.9]), at = ra ? ra.people.map((q, i) => [q, i]).filter(([q]) => q.role === 'push' && q.hands > 0) : [[null, 0]];
+      const em = {}, drops = {};
+      for (const [q, i] of at) {
+        const mine = !ra || i === ra.who, press = !ra ? 1 : mine ? q.hands * (1 - q.lift) : 0;
+        const V = ra ? vec3.add(vec3.scale(ax, 0.1 * q.lift), vec3.scale(back, 0.2 * (1 - q.hands))) : [0, 0, 0];   // hands lifted: "all clear", or coming off / going on
+        const skin = [cp[0] + n[0] * 0.004 + V[0], cp[1] + n[1] * 0.004 - (cpr.sternum + cpr.sink) * k * press + V[1], cp[2] + n[2] * 0.004 + V[2]];
+        const MB = inst('cprBottom', skin, ax, -0.18, { toward: op });                // the two forearms meet at a slight angle, as from two shoulders
+        const MT = inst('cprTop', vec3.add(skin, vec3.scale(ax, 0.026)), ax, 0.18, { toward: op });
+        if (!ra || !this.rescuers?.length) continue;
+        const end = (M, cf) => (M && cf ? this.bent(vec3.sub(mat4.transformPoint(M, cf.c), vec3.scale(V, 1 - 0.5 * (q.lift || 0)))) : null);   // the body where the hands-on position puts it
+        const eB = end(MB, this.hands.hand_cprBottom.cuff), eT = end(MT, this.hands.hand_cprTop?.cuff);
+        if (eB && eT) em[i] = eB.map((v, j) => (v + eT[j]) / 2);
+        drops[i] = (cpr.sternum + cpr.sink) * k * press - V[1];                     // how far the hands are pushed down now (negative: lifted)
       }
-      if (ra && this.rescuers?.length) {                                        // the whole rescuers are drawn after the bed turn (they stand on the floor)
-        const end = (M, cf) => (M && cf ? this.bent(mat4.transformPoint(M, cf.c)) : null);
-        const eB = end(MB, this.hands.hand_cprBottom.cuff), eT = end(MT, this.hands.hand_cprTop?.cuff), cpB = this.bent(cp);
-        const drop = (cpr.sternum + cpr.sink) * k * press - off * ax[1];   // how far the hands are pushed down now (negative: lifted)
-        this._resc = { ra, cp: cpB, eB, eT, drop };
-      }
+      if (ra && this.rescuers?.length) this._resc = { ra, cp: this.bent(cp), em, drops };   // the whole rescuers are drawn after the bed turn (they stand on the floor)
     }
     // the third rescuer's bag-valve-mask: face mask in an E-C grip (on a supraglottic airway, the bag on its connector), the
     // self-inflating bag beside the head squeezed by the other hand, oxygen tubing; the person is drawn with the others below

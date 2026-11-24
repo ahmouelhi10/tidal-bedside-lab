@@ -2,7 +2,7 @@
 //  - while CPR is going on, one rescuer stands on a step stool at the patient's side with straight arms on the chest, and the
 //    next one stands ready beside the bed;
 //  - at each compressor switch (engine `cpr.switch`, the "switch every 2 minutes" of the guidelines) the compressor lifts the
-//    hands and steps down to the free waiting place, and the one who was ready steps up and puts the hands on. The waiting place
+//    hands off the chest and back toward the body (role 'push' until they are off, so the arms stay on), and steps down to the free waiting place, and the one who was ready steps up and puts the hands on. The waiting place
 //    alternates between the foot side and the head side so the two never walk through each other;
 //  - the hands come off the chest when the defibrillator is charged ("all clear") and just after a shock, and when
 //    compressions stop for a while (a rhythm or pulse check); they stay on through the pauses for breaths;
@@ -18,7 +18,7 @@
 
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 const smooth = (x) => { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); };
-export const LIFT_S = 0.3, WALK_S = 1.2, GONE_S = 4;
+export const LIFT_S = 0.45, WALK_S = 1.2, GONE_S = 4;
 
 export class RescuerAnim {
   constructor() { this.t = 0; this.n = null; this.who = 0; this.people = null; this.fat = [0, 0]; this.base = [null, null]; }
@@ -50,7 +50,10 @@ export class RescuerAnim {
       let hands = 0;
       if (leaving) hands = 1 - smooth(e / LIFT_S);
       else if (q.to === 'C') hands = arriving ? smooth((e - WALK_S) / LIFT_S) : 1;
-      const role = q.from !== q.to && u < 1 ? 'walk' : q.to === 'C' && hands > 0 ? 'push' : 'wait';
+      // at the chest while the hands are on it or coming off / going on: the one leaving lifts them before stepping down, the
+      // one arriving puts them on once there, so the arms are never switched while the hands are on the chest
+      const atChest = hands > 0 && (q.to === 'C' ? u >= 1 : leaving && e < LIFT_S);
+      const role = atChest ? 'push' : q.from !== q.to && u < 1 ? 'walk' : 'wait';
       return { from: q.from, to: q.to, u, hands, lift: i === this.who && clear ? 1 : 0, role };
     });
     { const k = 1 - Math.exp(-dt / 0.15), q = out[this.who]; this.liftV = (this.liftV ?? q.lift) + (q.lift - (this.liftV ?? q.lift)) * k; q.lift = this.liftV; }

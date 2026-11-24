@@ -119,3 +119,13 @@ test('the third rescuer bags only while the engine ventilates by bag during CPR,
   const s = []; for (let t = 0; t < 60; t += 0.1) s.push(bagger(P({ t, airway: { device: 'sga' }, cpr: { mode: 'auto', auto: { ratio: 'continuous' } } }), true).squeeze > 0.9 ? 1 : 0);
   assert.equal(s.filter((v, i) => v && !s[i - 1]).length, 10, 'continuous compressions: 10 breaths a minute');
 });
+
+test('at a switch the arms are never swapped with the hands on the chest: the one leaving lifts them off first, the one arriving puts them on', () => {
+  const p = arrest(), a = new RescuerAnim(); p.dispatch({ type: 'cpr.start', mode: 'auto' }); run(p, a, 5);
+  p.dispatch({ type: 'cpr.switch' }); const seen = [];
+  run(p, a, 3, (o) => o.people.forEach((q, i) => { if (q.hands > 0) seen.push([i, q.role, q.hands, q.u]); }));
+  assert.ok(seen.every(([, role]) => role === 'push'), 'hands on or near the chest: always in the arms-on pose');
+  const leaving = seen.filter(([i]) => i === 0); assert.ok(leaving.length >= 3, 'the lift is seen over several frames');
+  assert.ok(leaving.every(([, , , u]) => u === 0), 'still at the chest while lifting');
+  assert.ok(leaving.some(([, , h]) => h > 0.2 && h < 0.8), 'hands part way off');
+});
