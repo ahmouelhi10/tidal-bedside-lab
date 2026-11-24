@@ -100,3 +100,25 @@ export function flexPoint(p, F, w = null) {
   if (ta) rot(hy, hz, ta * (w ? w[0] : smoothE(hy - 0.05, hy + 0.12, y0)));
   return [x, y, z];
 }
+
+/** The third rescuer, at the head with the bag-valve-mask (display only). Present while CPR is going on and the engine ventilates
+ *  by bag: controlled ventilation without a tracheal tube (a tube goes on the ventilator). Nobody bags before the learner starts
+ *  the ventilation, so the scene never shows breaths the patient is not getting. The squeezes follow the engine: two in each
+ *  30:2 pause (one at 0.4 s, one at 2.4 s; about 1 s each), else at the set rate (continuous compressions), the same pauses
+ *  the compressors make. Returns null when nobody bags, else { squeeze (0..1, the bag pressed), cycles (breath phase for breathing.js, so the
+ *  chest rises with each squeeze), mask (false on a supraglottic airway: the bag goes on its connector) }. Timings are design
+ *  values (inspiration about 1 s, as the guidelines ask). */
+export const BAG_BREATH_S = 3;
+export function bagger(p, cprOn) {
+  const aw = p.airway || {};
+  if (!cprOn || p.vent?.mode !== 'ctrl' || aw.intubated || aw.device === 'ett') return null;
+  const c = p.cpr || {}, a = c.auto || {}, sga = aw.device === 'sga';
+  let s, n;
+  if (c.mode === 'auto' && a.ratio === '30:2') {
+    const p0 = (a.pauseUntil ?? 0) - 4.5, x = p.t - p0;
+    if (p0 < 0 || x < 0.4) return { squeeze: 0, cycles: 0.999, mask: !sga };
+    const k = x < 2.4 ? 0 : 1; s = x - (k ? 2.4 : 0.4); n = Math.round(p0) * 2 + k;
+  } else { const T = 60 / Math.max(4, p.vent.rate || 10); n = Math.floor(p.t / T); s = p.t - n * T; }
+  const squeeze = s < 0.8 ? smooth(s / 0.8) : 1 - smooth((s - 0.8) / 0.6);
+  return { squeeze, cycles: n + Math.min(s / BAG_BREATH_S, 0.999), mask: !sga };
+}

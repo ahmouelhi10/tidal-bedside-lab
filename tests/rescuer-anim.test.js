@@ -103,3 +103,19 @@ test('the shader bends the rescuer the same way (same hinge weights)', () => {
   const src = readFileSync(new URL('../src/web/gl/renderer.js', import.meta.url), 'utf8');
   assert.ok(src.includes('smoothstep(-0.02, 0.05, dot(p0.yz - uFlex2.xy, uFlex2.zw))') && src.includes('smoothstep(uFlex.x - 0.05, uFlex.x + 0.12, p0.y)'));
 });
+
+import { bagger } from '../src/web/rescuer-anim.js';
+test('the third rescuer bags only while the engine ventilates by bag during CPR, two squeezes in each 30:2 pause', () => {
+  const P = (o = {}) => ({ t: 100, vent: { mode: 'ctrl', rate: 10 }, airway: { device: 'none' }, cpr: { mode: 'auto', auto: { ratio: '30:2', pauseUntil: 104.5 } }, ...o });
+  assert.equal(bagger(P(), false), null, 'no CPR');
+  assert.equal(bagger(P({ vent: { mode: 'none' } }), true), null, 'ventilation not started: nobody bags');
+  assert.equal(bagger(P({ airway: { device: 'ett', intubated: true } }), true), null, 'a tube goes on the ventilator');
+  const at = (t) => bagger(P({ t }), true);
+  assert.equal(at(100.2).squeeze, 0, 'the pause has just begun');
+  assert.ok(at(101.2).squeeze > 0.95, 'first breath'); assert.ok(at(102.2).squeeze < 0.05, 'released');
+  assert.ok(at(103.2).squeeze > 0.95, 'second breath'); assert.ok(at(106).squeeze < 0.05, 'compressions again');
+  assert.ok((at(101.2).cycles % 1) > 0 && (at(101.2).cycles % 1) < 0.33, 'the chest is rising during the squeeze');
+  const sga = bagger(P({ airway: { device: 'sga' } }), true); assert.equal(sga.mask, false);
+  const s = []; for (let t = 0; t < 60; t += 0.1) s.push(bagger(P({ t, airway: { device: 'sga' }, cpr: { mode: 'auto', auto: { ratio: 'continuous' } } }), true).squeeze > 0.9 ? 1 : 0);
+  assert.equal(s.filter((v, i) => v && !s[i - 1]).length, 10, 'continuous compressions: 10 breaths a minute');
+});
