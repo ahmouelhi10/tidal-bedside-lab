@@ -114,6 +114,23 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; text-ali
 .alarm[data-mode=arrest] { box-shadow: inset 0 0 0 3px rgba(255, 60, 75, .9), inset 0 0 160px 20px rgba(255, 30, 45, .45); }
 .alarm[data-mode=hypox] { box-shadow: inset 0 0 0 3px rgba(255, 194, 61, .85), inset 0 0 120px 12px rgba(255, 180, 0, .3); animation-duration: 1.8s; }
 .alarm span { position: absolute; top: 60px; left: 50%; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 10px; padding: 8px 18px 8px 14px; border-radius: 999px; font-weight: 800; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; background: #d3172b; color: #fff; box-shadow: 0 8px 26px rgba(211, 23, 43, .45); }
+/* CPR quality bar (cpr-bar.js): compact gauges under the arrest banner, target band green, marker for the live value */
+.cprbar { position: absolute; z-index: 3; top: 104px; left: 50%; transform: translateX(-50%); width: min(340px, calc(100vw - 32px)); padding: 8px 12px 9px; border-radius: 12px;
+  background: rgba(8, 11, 15, .78); border: 1px solid rgba(255, 255, 255, .12); color: #e8edf2; font-size: 11.5px; pointer-events: none; backdrop-filter: blur(6px); }
+.cq-h { font-weight: 700; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: #9fb0c0; margin-bottom: 4px; }
+.cq-row { display: grid; grid-template-columns: 74px 1fr 62px; align-items: center; gap: 8px; height: 18px; }
+.cq-k { color: #c5d0da; }
+.cq-v { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
+.cq-track { position: relative; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, .12); }
+.cq-band { position: absolute; top: 0; bottom: 0; border-radius: 3px; background: rgba(46, 204, 113, .45); }
+.cq-mark { position: absolute; top: -4px; width: 4px; height: 14px; margin-left: -2px; border-radius: 2px; background: #fff; transition: left .12s ease-out; }
+.cq-row[data-ok=good] .cq-v { color: #4ade80; } .cq-row[data-ok=fair] .cq-v { color: #ffc23d; }
+.cq-row[data-ok=low] .cq-v, .cq-row[data-ok=high] .cq-v { color: #ff6b6b; } .cq-row[data-ok=low] .cq-mark, .cq-row[data-ok=high] .cq-mark { background: #ff6b6b; }
+.cq-row[data-ok$=off] .cq-v { color: #8a96a3; } .cq-row[data-ok$=off] .cq-mark { opacity: .35; background: #fff; }
+.cq-foot { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; color: #9fb0c0; min-height: 14px; } .cq-foot .bad { color: #ff6b6b; font-weight: 700; }
+.cq-tip { margin-top: 5px; padding: 4px 8px; border-radius: 7px; background: #ffc23d; color: #1b1405; font-weight: 700; }
+@media (prefers-reduced-motion: reduce) { .cq-mark { transition: none; } }
+@media (max-width: 600px) { .cprbar { left: 10px; transform: none; width: calc(50vw - 18px); padding: 6px 7px; font-size: 9.5px; } .cq-row { grid-template-columns: 50px 1fr 38px; gap: 4px; } .cq-h { font-size: 9.5px; } }   /* phones: left of the monitor column */
 .alarm span::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 4px rgba(255, 255, 255, .25); }
 .alarm[data-mode=hypox] span { background: #ffb21f; color: #261700; box-shadow: 0 8px 26px rgba(255, 178, 31, .4); }
 .alarm[data-mode=hypox] span::before { background: #261700; box-shadow: 0 0 0 4px rgba(38, 23, 0, .2); }

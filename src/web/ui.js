@@ -30,6 +30,7 @@ import { TEAM_ACTS } from '/engine/team.js';
 import { SBAR } from '/engine/debrief.js';
 import { AREAS, loadProgress, recordProgress, clearProgress, levelOf, profileOf, achievementsOf } from './progress.js';
 import { pupilFinding, pupilTargets } from './pupils.js';
+import { cprBar, CQ, SCALE } from './cpr-bar.js';
 
 /** Skills training: the case each procedure is practised on (the condition that makes the procedure meaningful). */
 /** Instruments on the table besides the ones the procedure needs: choosing the right one is part of the skill. */
@@ -232,13 +233,14 @@ export class UI {
     this.dom.pins = el('div', { class: 'pins' });
     this.dom.fx = el('div', { class: 'fx-layer', 'aria-live': 'polite' });
     this.dom.alarm = el('div', { class: 'alarm', hidden: true, role: 'alert' }, this.dom.alarmText = el('span'));
+    this.dom.cprBar = this.buildCprBar();
     this.dom.left = el('aside', { class: 'hud-left' });
     this.dom.right = el('aside', { class: 'hud-right' });
     this.dom.tip = el('div', { class: 'tip', hidden: true });
     this.dom.toast = el('div', { class: 'toast', hidden: true, role: 'status' });
     this._alarmMode = null;
     this.buildLeft(); this.buildRight();
-    r.append(el('div', { class: 'stage' }, this.glCanvas, this.dom.pins, this.dom.fx, this.dom.alarm), top, this.dom.left, this.dom.right, this.buildDock(),
+    r.append(el('div', { class: 'stage' }, this.glCanvas, this.dom.pins, this.dom.fx, this.dom.alarm, this.dom.cprBar), top, this.dom.left, this.dom.right, this.buildDock(),
       this.dom.hint = el('div', { class: 'hint', text: t('shortcuts') }), this.dom.logBox, el('footer', { class: 'foot', text: t('disclaimer') }), this.buildMenu(), this.dom.noGl, this.dom.tip, this.dom.toast);
     if (this.sim.patient) { this.refreshCard(); this.buildTabs(); this.syncSetupFromSession(); }
     this.syncPins(); this.syncChrome();
@@ -277,6 +279,35 @@ export class UI {
   }
   /** Learner-level pointer (dock-hint.js): the dock button that holds the next step pulses with the step written above it;
    *  once its section is open, the control to press inside it pulses instead. In a guided procedure that control does the step. */
+  /** CPR quality bar (cpr-bar.js): depth, rate, recoil and compression fraction against their targets, the hands-off time
+   *  and the next compressor switch, like a feedback device; a one-line tip except for experts. Built once, updated in place. */
+  buildCprBar() {
+    const gauge = (k, lo, hi, sc) => { const w = sc[1] - sc[0], g = { k };
+      g.row = el('div', { class: 'cq-row', dataset: { k } }, el('span', { class: 'cq-k', text: t('cq_' + k) }),
+        el('div', { class: 'cq-track' }, el('i', { class: 'cq-band', style: `left:${((lo - sc[0]) / w) * 100}%;width:${((hi - lo) / w) * 100}%` }), g.mark = el('b', { class: 'cq-mark' })),
+        g.val = el('span', { class: 'cq-v' }));
+      return g; };
+    this._cq = { depth: gauge('depth', ...CQ.depth, SCALE.depth), rate: gauge('rate', ...CQ.rate, SCALE.rate), recoil: gauge('recoil', CQ.recoil, 1, [0, 1]), ccf: gauge('ccf', CQ.ccf[0], 1, [0, 1]) };
+    this._cq.foot = el('div', { class: 'cq-foot' }, this._cq.pause = el('span'), this._cq.sw = el('span'));
+    this._cq.tip = el('div', { class: 'cq-tip' });
+    return el('div', { class: 'cprbar', hidden: true, role: 'status', 'aria-label': t('cq_title') },
+      el('div', { class: 'cq-h', text: t('cq_title') }), ...Object.values(this._cq).filter(g => g.row).map(g => g.row), this._cq.foot, this._cq.tip);
+  }
+  _cprBar(p) {
+    const box = this.dom.cprBar; if (!box) return;
+    const q = this.sim.finished || this.menuOpen ? null : cprBar(p); box.hidden = !q; if (!q) return;
+    const set = (g, x, txt, ok) => { g.mark.style.left = `${(x * 100).toFixed(1)}%`; if (g.val.textContent !== txt) g.val.textContent = txt; if (g.row.dataset.ok !== ok) g.row.dataset.ok = ok; };
+    const off = q.going ? '' : ' off';
+    set(this._cq.depth, q.depth.x, q.going ? `${fmt(q.depth.v)} cm` : '-', q.depth.ok + off);
+    set(this._cq.rate, q.rate.x, q.going ? `${Math.round(q.rate.v)}/min` : '-', q.rate.ok + off);
+    set(this._cq.recoil, q.recoil.x, `${Math.round(q.recoil.v * 100)} %`, q.recoil.ok);
+    set(this._cq.ccf, q.ccf.x, `${Math.round(q.ccf.v * 100)} %`, q.ccf.ok);
+    const ps = q.pause == null ? '' : t('cq_pause', { s: Math.floor(q.pause) }); if (this._cq.pause.textContent !== ps) this._cq.pause.textContent = ps;
+    this._cq.pause.className = q.pause != null && q.pause >= CQ.pauseS ? 'bad' : '';
+    const sw = q.switchIn == null ? '' : q.switchIn > 0 ? t('cq_switch', { s: mmss(q.switchIn) }) : t('cq_switch_now'); if (this._cq.sw.textContent !== sw) this._cq.sw.textContent = sw;
+    this._cq.sw.className = q.switchIn != null && q.switchIn <= 0 ? 'bad' : '';
+    const tip = q.tip && this.level !== 'expert' ? t(q.tip) : ''; if (this._cq.tip.textContent !== tip) this._cq.tip.textContent = tip; this._cq.tip.hidden = !tip;
+  }
   _dockPoint(p) {
     const btns = this.dom.dockBtns; if (!btns) return;
     if (!this._ptrHook && this.dom.panel) { this.dom.panel.addEventListener('click', (e) => this._guideClick(e), true); this._ptrHook = true; }
@@ -1293,6 +1324,7 @@ export class UI {
     // alarm state: red pulse on cardiac arrest, amber on low saturation (when the probe is on)
     const mode = p.arrest.arrested ? 'arrest' : (p.flags.spo2Probe && p.monitor.spo2 !== null && p.monitor.spo2 < 88 ? 'hypox' : ''), sig = mode + (mode === 'arrest' ? p.arrest.key : '');
     if (sig !== this._alarmMode) { this._alarmMode = sig; this.dom.alarm.hidden = !mode; this.dom.alarm.dataset.mode = mode; this.dom.alarmText.textContent = mode === 'arrest' ? `${t('alarm_arrest')} · ${p.arrest.key}` : mode === 'hypox' ? t('alarm_hypox') : ''; }
+    this._cprBar(p);
     // CPR + defib feedback
     if (this.dom.cprFb && this.dom.cprFb.isConnected) {
       const s = p.cpr.stats, going = s.lastAge < 1.5 && s.rate > 0, ok = (v, lo, hi) => (v >= lo && v <= hi ? 'good' : 'bad');
