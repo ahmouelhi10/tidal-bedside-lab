@@ -25,7 +25,7 @@ export const DOCK_OF = Object.freeze({
   // fluids and blood
   bleed_control: F, blood_vs_crystalloid: F, resus_target: F, ana_fluids: F, dka_fluid: F, na_hypertonic: F, sp_fluid: F, vb_transfusion: F,
   // airway, oxygen, ventilation, position
-  airway_vent: A, early_vent: A, cause_hypoxia: A, preox: G, intubation: A, fio2_first: A, last_airway: A, mh_trigger_off: A, mh_vent: A,
+  airway_vent: A, early_vent: A, cause_hypoxia: A, preox: A, intubation: A, fio2_first: A, last_airway: A, mh_trigger_off: A, mh_vent: A,
   se_oxygen: A, copd_target: A, copd_niv: A, po_upright: A, po_cpap: A, hs_vent: A, hs_airway: A, pacu_o2: A, post_rosc: A,
   bronch_look: G, tube_reposition: G, tube_depth_final: G, secretions: G,   // done in the scope window: the guided bronchoscopy leads there
   // CPR, defibrillator, pacing
@@ -148,7 +148,8 @@ export function controlOf(ev) {
 const DB = (drug) => ({ type: 'drug.bolus', drug }), DI = (drug) => ({ type: 'drug.infusion', drug });
 /** set: [selector, value, unit?] fields the beginner pointer fills in before pointing at the button (and names in the bubble). */
 const FB = (kind, ml, min) => ({ type: 'fluid.bolus', fluid: kind, set: [['#selFluid', kind], ['#inFluidVol', ml, 'mL'], ['#inFluidMin', min, 'min']] });
-const O2 = (k) => ({ type: 'o2.mask', set: [['#selO2', k]] });
+const O2F = { nc: 0.36, nrb: 0.85, fm100: 1, v28: 0.28 };                 // FiO2 of the airway panel's devices (ui.js O2), so a different device is not taken as done
+const O2 = (k) => ({ type: 'o2.mask', fio2: O2F[k], set: [['#selO2', k]] });
 export const CRITERION_EVENT = Object.freeze({
   monitor_iv: { type: 'monitor.attach', items: { ecgLeads: true } }, iv_access: { type: 'iv.access' },
   ecg_10min: { type: 'order', what: 'ecg12' }, ecg12: { type: 'order', what: 'ecg12' }, aspirin: { type: 'order', what: 'aspirin' }, cath_lab: { type: 'order', what: 'cath_lab' },
@@ -163,7 +164,7 @@ export const CRITERION_EVENT = Object.freeze({
   vb_antibiotic: DB('ceftriaxone'), sp_vaso: DB('phenylephrine'), hs_vaso: DB('phenylephrine'), hs_brady: DB('atropine'), hs_sedation: DB('propofol'), pacu_rescue: DB('ondansetron'),
   bleed_control: { type: 'bleed.control' }, blood_vs_crystalloid: { type: 'blood.transfuse', kind: 'prbc' }, resus_target: { type: 'blood.transfuse', kind: 'prbc' },
   ana_fluids: FB('balanced', 1000, 15), dka_fluid: FB('saline', 1000, 60), na_hypertonic: FB('saline3', 150, 20), sp_fluid: FB('balanced', 500, 15), vb_transfusion: { type: 'blood.transfuse', kind: 'prbc' },
-  airway_vent: { type: 'vent.set' }, early_vent: { type: 'vent.set' }, cause_hypoxia: { type: 'vent.set' }, preox: { type: 'guide', proc: 'rsi' }, intubation: { type: 'airway.intubate' },
+  airway_vent: { type: 'vent.set' }, early_vent: { type: 'vent.set' }, cause_hypoxia: { type: 'vent.set' }, preox: O2('fm100'), intubation: { type: 'airway.intubate' },
   fio2_first: O2('nrb'), last_airway: O2('nrb'), mh_trigger_off: { type: 'vaporizer.set', percent: 0 }, mh_vent: { type: 'vent.set', adjust: true, set: [['#inVr', 20, '/min']] }, se_oxygen: O2('nrb'),
   copd_target: O2('v28'), copd_niv: { type: 'niv.set' }, po_upright: { type: 'position.set', headUp: true }, po_cpap: { type: 'niv.set' }, hs_vent: { type: 'vent.set' },
   hs_airway: { type: 'airway.intubate' }, pacu_o2: O2('nc'), post_rosc: { type: 'vent.set' },
@@ -185,6 +186,13 @@ function resolveAction(id, p) {
   const f = p?.flags || {}, line = f.ivAccess || f.ioAccess;
   if (id === 't_first_shock' || id === 'shock_energy') return !f.padsOn ? { type: 'defib.pads' } : !(p?.defib?.charged || p?.defib?.chargeAt != null) ? { type: 'defib.charge' } : id === 'shock_energy' ? ev : { type: 'defib.shock' };
   if (id === 'hb_capture' && !f.padsOn) return { type: 'defib.pads' };
+  if (id === 'preox') {                                      // head-up, the 100 % mask, then wait for the end-tidal O2 before induction
+    if (p.airway?.intubated || p.airway?.device === 'sga' || p.arrest?.arrested) return { type: 'skip' };
+    if (!p.headUp) return { type: 'position.set', headUp: true };
+    if (!(p.o2?.fio2 >= 0.9)) return { ...ev, again: true };
+    const on = [...(p.log || [])].reverse().find(e => e.type === 'o2.mask' && e.fio2 >= 0.9);
+    return (p.preoxEtO2Max ?? 0) < 0.9 && on && p.t - on.t < 180 ? { type: 'wait' } : ev;   // 3 min at most, then on to the induction
+  }
   if (ev.type === 'o2.mask' && (p?.airway?.intubated || p?.airway?.device === 'sga')) return { type: 'vent.set', adjust: true, set: [['#inVf', 1]] };   // on a ventilator: its FiO2
   if (id === 'hk_insulin') { const ins = (p?.drugs?.log || []).some(d => d.key === 'insulin' && d.amount >= 8);
     if (!ins) return !line ? { type: 'iv.access' } : { ...DB('insulin'), set: [['.drug[data-drug="insulin"] .dline input', 10, 'U']] };
@@ -215,11 +223,11 @@ function resolveAction(id, p) {
 }
 /** Steps whose action is legitimately done again (a repeat dose, a recheck after treatment, another ventilator adjustment). */
 const REPEAT = new Set(['epi_timing', 'hy_recheck', 'na_recheck', 'hk_recheck', 'mh_vent', 'post_rosc']);
-const sameAct = (e, a) => e.type === a.type && ['drug', 'kind', 'what', 'fluid', 'device'].every(k => a[k] == null || e[k] === a[k]);
+const sameAct = (e, a) => e.type === a.type && ['drug', 'kind', 'what', 'fluid', 'device'].every(k => a[k] == null || e[k] === a[k]) && (a.fio2 == null || Math.abs((e.fio2 ?? 0) - a.fio2) < 0.01);
 export function criterionAction(id, p) {
   const ev = CRITERION_EVENT[id], a = resolveAction(id, p); if (!a || !p) return a;
   if (id === 'epi_timing') { const last = [...(p.log || [])].reverse().find(e => e.type === 'drug.bolus' && e.drug === 'epinephrine'); if (last && p.t - last.t < 180) return { type: 'skip' }; }   // every 3-5 min
-  if (a.type === ev.type && !REPEAT.has(id) && (p.log || []).some(e => sameAct(e, a))) return { type: 'skip' };   // already done: the rest is time or outcome
+  if (a.type === ev.type && !REPEAT.has(id) && !a.again && (p.log || []).some(e => sameAct(e, a))) return { type: 'skip' };   // already done: the rest is time or outcome
   return a;
 }
 

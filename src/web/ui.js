@@ -189,7 +189,7 @@ const BODY_ACTIONS = {
     ['tab_fluids', () => u.openTab('tab_fluids'), 'ghost']],
   abdomen: (u) => [['px_uc', () => u.act({ type: 'procedure.urinary_catheter' }, t('px_uc'))], ['px_ng', () => u.act({ type: 'procedure.ng_tube' }, t('px_ng'))], ['tab_orders', () => u.openTab('tab_orders'), 'ghost']],
 };
-const O2 = { room: { fio2: 0.21, seal: 0.5, key: 'aw_room' }, nc: { fio2: 0.36, seal: 0.6, key: 'aw_nc' }, mask: { fio2: 0.55, seal: 0.8, key: 'aw_mask' }, nrb: { fio2: 0.85, seal: 0.9, key: 'aw_nrb' }, v24: { fio2: 0.24, seal: 1, key: 'aw_v24' }, v28: { fio2: 0.28, seal: 1, key: 'aw_v28' } };
+const O2 = { room: { fio2: 0.21, seal: 0.5, key: 'aw_room' }, nc: { fio2: 0.36, seal: 0.6, key: 'aw_nc' }, mask: { fio2: 0.55, seal: 0.8, key: 'aw_mask' }, nrb: { fio2: 0.85, seal: 0.9, key: 'aw_nrb' }, fm100: { fio2: 1, seal: 0.97, key: 'aw_fm100' }, v24: { fio2: 0.24, seal: 1, key: 'aw_v24' }, v28: { fio2: 0.28, seal: 1, key: 'aw_v28' } };
 
 export class UI {
   constructor(root, ctx) {

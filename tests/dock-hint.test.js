@@ -136,3 +136,13 @@ test('a step already done that now only needs time is skipped: the beginner is p
   const e = scen('witnessed_vf', 1); e.run(40); e.dispatch({ type: 'iv.access' }); e.dispatch({ type: 'drug.bolus', drug: 'epinephrine', amount: 1 }); e.run(60);
   assert.equal(criterionAction('epi_timing', e).type, 'skip', 'the next adrenaline is not due yet'); e.run(150); assert.equal(criterionAction('epi_timing', e).type, 'drug.bolus', 'due again after 3 min');
 });
+
+test('pre-oxygenation points at head-up, then the 100 % face mask in the airway section, then waits for the end-tidal O2', () => {
+  assert.equal(DOCK_OF.preox, 'tab_airway');
+  const p = scen('obese_rsi', 1);
+  if (!p.headUp) { assert.deepEqual(criterionAction('preox', p), { type: 'position.set', headUp: true }); p.dispatch({ type: 'position.set', headUp: true }); }
+  const m = criterionAction('preox', p); assert.equal(m.type, 'o2.mask'); assert.deepEqual(m.set, [['#selO2', 'fm100']]);
+  p.dispatch({ type: 'o2.mask', fio2: 0.85, seal: 0.9 }); assert.equal(criterionAction('preox', p).type, 'o2.mask', 'the non-rebreather is not enough');
+  p.dispatch({ type: 'o2.mask', fio2: 1, seal: 0.97 }); assert.equal(criterionAction('preox', p).type, 'wait', 'then the end-tidal O2 has to rise');
+  p.run(300); assert.ok((p.preoxEtO2Max ?? 0) >= 0.9, `ETO2 ${p.preoxEtO2Max}`); assert.equal(criterionAction('preox', p).type, 'skip');
+});
