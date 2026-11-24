@@ -5,7 +5,7 @@
 //    and relief once the vital signs are back to normal. Lines are short, written for this simulator (EN/FR).
 //  - Speaker decides when: on a change of what they would say (at least GAP_S apart), else every REPEAT_S of simulated time.
 //  - auscultation(): each lung's breath sounds from the chest findings (absent / reduced), wheeze from bronchospasm, crackles
-//    from pulmonary oedema, and the heart sounds (none in cardiac arrest, muffled by a pericardial effusion).
+//    from pulmonary oedema (both sides) or over a pneumonia (the side the chest exam finds), and the heart sounds (none in cardiac arrest, muffled by a pericardial effusion).
 // Thresholds are design values judged against the monitor (GCS 9-12 confused, SpO2 < 85 % or RR >= 30 breathless).
 // sc: the engine's clinical scores (engine/clinical.js scores(p)), passed in so this file runs under node without the engine.
 
@@ -96,9 +96,11 @@ export function auscultation(p, findings = []) {
   const moving = rr >= 1 && (vented || !p.arrest?.arrested);
   const T = rr > 0 ? 60 / rr : 0;
   const hr = p.monitor?.hr ?? p.circ?.hr ?? 0, perf = !p.arrest?.arrested && hr > 20;
+  const lobar = { R: f.has('crackles_R') ? 0.6 : 0, L: f.has('crackles_L') ? 0.6 : 0 }, oed = (p.oedema ?? 0) > 0.04 ? 1 : 0;
   return {
     breath: moving ? { R: side('R'), L: side('L') } : { R: 0, L: 0 }, rr: moving ? rr : 0, ti: moving ? clamp(T * 0.38, 0.6, 2.2) : 0,
-    wheeze: moving ? clamp(p.crises?.br ?? 0, 0, 1) : 0, crackles: moving ? clamp((p.oedema ?? 0) * 1.3, 0, 1) : 0,
+    wheeze: moving ? clamp(p.crises?.br ?? 0, 0, 1) : 0, crackles: moving ? clamp(Math.max((p.oedema ?? 0) * 1.3, lobar.R, lobar.L), 0, 1) : 0,
+    crackleSide: { R: Math.max(oed, lobar.R ? 1 : 0), L: Math.max(oed, lobar.L ? 1 : 0) },   // oedema: both lungs; pneumonia: the consolidated side only
     heart: perf ? { hr: clamp(hr, 20, 220), amp: clamp(1 - (p.peri?.volume ?? 0) / 500, 0.2, 1) } : null,
   };
 }

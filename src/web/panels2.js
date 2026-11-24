@@ -148,6 +148,7 @@ export function fluidsExtra(ui, P) {
 
 /** 12-lead ECG sheet (25 mm/s, 10 mm/mV): 3 x 4 layout plus a lead II rhythm strip. */
 export function showEcg12(ui) {
+  document.querySelectorAll('.ecg12-modal').forEach(m => m.remove());   // a new tracing replaces the last one
   const p = ui.sim.patient; if (!p) return;
   const e = ecg12(p), W = 1100, H = 560, cv = el('canvas', { width: W, height: H, class: 'ecg12' }), g = cv.getContext('2d');
   g.fillStyle = '#fff6f6'; g.fillRect(0, 0, W, H);
@@ -199,7 +200,7 @@ export function showEcg12(ui) {
   const order = [['I', 'aVR', 'V1', 'V4'], ['II', 'aVL', 'V2', 'V5'], ['III', 'aVF', 'V3', 'V6']];
   order.forEach((row, r) => row.forEach((lead, c) => trace(lead, 20 + c * 265, 90 + r * 125, 2.5)));
   g.font = '12px system-ui'; g.fillStyle = '#111'; g.fillText('II', 24, 430); trace('II', 20, 480, 10.4);
-  const ov = el('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': t('od_ecg12') });
+  const ov = el('div', { class: 'modal ecg12-modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': t('od_ecg12') });
   const read = el('details', { class: 'small' }, el('summary', { text: t('e12_reading') }), el('p', { text: `${t('e12_rate')} ${e.rate}/min · QRS ${e.qrs} ms · QTc ${e.qtc} ms · ${e.findings.length ? e.findings.map(f => t('e12_' + f) || f).join(', ') : t('e12_normal')}` }));
   ov.append(el('div', { class: 'box ecg12-box' }, el('div', { class: 'phead' }, el('h2', { text: t('od_ecg12') }), el('button', { class: 'x', 'aria-label': t('close'), onclick: () => ov.remove(), text: '×' })),
     el('p', { class: 'muted small', text: t('e12_help') }), el('div', { class: 'ecg12-wrap' }, cv), read));

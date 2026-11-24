@@ -41,7 +41,7 @@ export class BodySound {
           const ti = Math.min(a.ti, T * 0.45), te = Math.min(T - ti, ti * 1.3);
           if (amp > 0) { this._burst(ac, out, tb, ti, { gain: 0.22 * amp, lo: 180, hi: 650 }); this._burst(ac, out, tb + ti, te, { gain: 0.08 * amp, lo: 150, hi: 450, attack: 0.1 }); }
           if (a.wheeze > 0.05 && amp > 0) [430, 610].forEach((f, j) => this._tone(ac, out, tb + ti + 0.05, te * 0.9, f, f * 0.93, 0.03 * a.wheeze * amp / (j + 1), 'triangle'));
-          if (a.crackles > 0.05 && amp > 0) for (let c = 0; c < Math.round(3 + 7 * a.crackles); c++) {
+          if (a.crackles > 0.05 && amp > 0 && (a.crackleSide?.[side] ?? 1) > 0) for (let c = 0; c < Math.round(3 + 7 * a.crackles); c++) {
             const tc = tb + ti * (0.55 + 0.45 * Math.random()); this._burst(ac, out, tc, 0.012, { gain: 0.35 * a.crackles * amp, lo: 500, hi: 1300, attack: 0.1 });
           }
         }

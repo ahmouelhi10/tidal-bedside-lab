@@ -18,6 +18,7 @@ const tipText = (p) => {
   return { en: `Carina ${d} cm below the tip (tube at ${p.tube.depth} cm)${d > 6 ? ': too high' : d < 2 ? ': too close' : ''}`, fr: `Carène ${d} cm sous le bout (sonde à ${p.tube.depth} cm)${d > 6 ? ' : trop haut' : d < 2 ? ' : trop près' : ''}` };
 };
 const NOT_RELAXED =({ p }) => { if (p.arrest.arrested) return null; const n = p.drugs.effects({ inArrest: false }).nmb; return n > 0.9 ? null : { en: `Not fully paralysed yet (block ${Math.round(n * 100)} %)`, fr: `Curarisation incomplète (bloc ${Math.round(n * 100)} %)` }; };
+const TUBE_GOING = ({ p }) => (p.airway.intubating ? { en: 'The tube is still going in: wait for the end of the attempt', fr: 'La sonde est en cours de passage : attendez la fin de la tentative' } : null);   // confirming during the attempt would read as a failed one
 
 export const PROCEDURES = [
   {
@@ -58,7 +59,8 @@ export const PROCEDURES = [
         run: () => [{ type: 'airway.intubate' }] },
       { id: 'confirm', cam: 'chest', en: 'Inflate cuff, confirm with EtCO2 waveform', fr: 'Gonfler le ballonnet, confirmer par la courbe de EtCO2',
         why: { en: 'Sustained capnography waveform on 6 breaths, bilateral chest rise and breath sounds. No trace = wrong place.', fr: "Courbe de capnographie persistante sur 6 cycles, soulèvement et murmure bilatéraux. Pas de trace = sonde mal placée." },
-        check: ({ p }) => (p.airway.intubated ? null : { en: 'The tube is not in the trachea yet', fr: "La sonde n'est pas encore dans la trachée" }),
+        ready: TUBE_GOING,
+        check: ({ p }) => (p.airway.intubated || p.airway.intubating ? null : { en: 'The tube is not in the trachea yet', fr: "La sonde n'est pas encore dans la trachée" }),
         run: () => [{ type: 'monitor.attach', items: { capnography: true } }, { type: 'exam.chest' }] },
       { id: 'vent', cam: 'head', en: 'Ventilate: 6 mL/kg PBW, 14/min, PEEP 5', fr: 'Ventiler : 6 mL/kg poids prédit, 14/min, PEP 5',
         why: { en: 'Protective settings; then titrate FiO2 to SpO2 94-98 %.', fr: 'Réglages protecteurs ; puis adapter la FiO2 pour une SpO2 de 94-98 %.' },
@@ -170,6 +172,7 @@ export const PROCEDURES = [
       { id: 'tube', cam: 'neck', en: 'Bougie along the blade, then a 6.0 cuffed tube', fr: 'Bougie le long de la lame, puis sonde à ballonnet 6,0',
         run: ({ prm }) => [{ type: 'procedure.cricothyroidotomy', technique: prm.technique, approach: prm.approach }] },
       { id: 'confirm', cam: 'head', en: 'Ventilate and confirm with capnography', fr: 'Ventiler et confirmer par capnographie',
+        ready: TUBE_GOING,
         run: ({ b }) => [{ type: 'monitor.attach', items: { capnography: true } }, { type: 'vent.set', settings: { mode: 'ctrl', rate: 12, vt: Math.round(6 * b.pbw), fio2: 1, peep: 5, seal: 0.97 } }] },
     ],
   },

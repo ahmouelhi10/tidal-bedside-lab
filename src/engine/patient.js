@@ -307,6 +307,8 @@ export class Patient {
         let f = this.chest.findings({ ppv: this._ppv(), rap: this.circ.rap });
         const ms = this.tube.mainstem;                                            // endobronchial tube: the other lung is not ventilated (REF design)
         if (ms) { const o = ms === 'R' ? 'L' : 'R'; f = f.filter(c => c !== 'chest_normal'); for (const c of ['chest_rise_reduced_' + o, 'breath_sounds_reduced_' + o]) if (!f.includes(c) && !f.includes('breath_sounds_absent_' + o)) f.unshift(c); }
+        const wd = this.ward?.def;                                                 // pneumonia: crackles over the consolidated lobe while the infection is active (threshold REF design)
+        if (wd?.lung && this.ward.s > 0.25) { f = f.filter(c => c !== 'chest_normal'); f.push('crackles_' + (/^cxr_l/.test(wd.cxr || '') ? 'L' : 'R')); }
         return { ok: true, findings: f };
       }
       case 'exam.pocus': return { ok: true, ...this.chest.pocus() };

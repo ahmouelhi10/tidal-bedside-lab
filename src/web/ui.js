@@ -1,5 +1,5 @@
 // DOM user interface: scenario/patient setup, intervention panels, event log, trends, teaching overlay, debrief. No framework.
-import { t, getLang, setLang, drugName, scenarioText, CRITERION_FR } from './i18n.js';
+import { t, getLang, setLang, drugName, scenarioText, CRITERION_FR, errText } from './i18n.js';
 import { SPEEDS } from './sim.js';
 import { DRUGS, CALCIUM } from '/engine/drugs.js';
 import { FORCED_AIR_W } from '/engine/thermal.js';
@@ -583,7 +583,7 @@ export class UI {
   teamOrder(ev, label) {
     this._teamId = (this._teamId || 0) + 1;
     const id = this._teamId, r = this.sim.act({ type: 'team.order', id, act: ev });
-    if (!r || r.ok === false) { this.toast(r?.error || t('err_generic'), true); return r; }
+    if (!r || r.ok === false) { this.toast(errText(r?.error) || t('err_generic'), true); return r; }
     if (!this.dom.teamBox) { this.dom.teamBox = el('div', { class: 'team-box', 'aria-live': 'polite' }); document.body.append(this.dom.teamBox); }
     const text = el('p', { class: 'tm-rb' }), card = el('div', { class: 'tm-card' });
     const say = (act) => { text.textContent = t('tm_rb_' + r.role, { what: this.describe(act) || act.type }); };
@@ -742,6 +742,7 @@ export class UI {
     this.logLines = []; this.dom.logList.replaceChildren(); this.guide = null; this._unseen = 0; this._logBadge(); this.toggleLog(false);
     this.effects.reset(); this.effLines = []; this.dom.effList.replaceChildren(); this.drugClock = {}; this._labsSeen = 0;
     this.speaker?.reset(); this.bodySound?.stop(); this._talkS = null; this._saidAt = 0; if (this.dom.say) this.dom.say.hidden = true;
+    document.querySelectorAll('.ecg12-modal').forEach(m => m.remove());   // the last patient's 12-lead does not stay open
     // free play (physiology lab, instructor): standard monitoring connected from the start; in scored cases it is the learner's job
     if (!this.sim.scenarioId && ['lab', 'instructor', undefined].includes(this._mode)) { this.sim.act({ type: 'monitor.attach', items: { ecgLeads: true, spo2Probe: true, nibp: true, capnography: true } }); this.sim.act({ type: 'nibp.cycle' }); }
     this.refreshCard(); this.dom.card.hidden = !this.scenarios.find(s => s.id === this.sim.scenarioId);
@@ -795,7 +796,7 @@ export class UI {
       const s = ev.type === 'fluid.bolus' ? (ev.minutes || 0) * 60 : ev.type === 'vent.set' || ev.type === 'o2.mask' ? 45 : /^(procedure|airway)\./.test(ev.type) || ev.type === 'lab.order' ? r.willTakeS || 0 : 0;
       if (s > 0) this._busy = { key: ev.type + (ev.kind || ''), until: this.sim.patient.t + s };
     }
-    if (r && r.ok === false) this.toast(r.error || t('err_generic'), true); else if (label) this.toast(label + (r && r.willTakeS ? ` (${Math.round(r.willTakeS)} s)` : ''));
+    if (r && r.ok === false) this.toast(errText(r.error) || t('err_generic'), true); else if (label) this.toast(label + (r && r.willTakeS ? ` (${Math.round(r.willTakeS)} s)` : ''));
     return r;
   }
   /** Manual compression: ensures the compressor is in manual mode (fatigue applies), then delivers one compression. */
@@ -1138,7 +1139,7 @@ export class UI {
     for (const ev of evs) {
       const r = this.sim.act(ev);
       if (GESTURE_TYPES.has(ev.type)) engineGesture = true;
-      if (r && r.ok === false) { status = 'warn'; lines.push(r.error || t('err_generic')); } else { lines.push(...this.resultLines(ev, r)); if (r && (r.wrongSide || r.reached === false) && status === 'done') status = 'warn'; }   // a needle on the wrong side or too short is a problem, not a success
+      if (r && r.ok === false) { status = 'warn'; lines.push(errText(r.error) || t('err_generic')); } else { lines.push(...this.resultLines(ev, r)); if (r && (r.wrongSide || r.reached === false) && status === 'done') status = 'warn'; }   // a needle on the wrong side or too short is a problem, not a success
     }
     if (s.msg) lines.push(L(s.msg(ctx)));
     if (s.scope === 'open') this.bronch?.start(); else if (s.scope === 'close') this.bronch?.stop();   // the scope window follows the guided steps

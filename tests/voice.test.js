@@ -43,3 +43,11 @@ test('auscultation: a tension pneumothorax silences one side; bronchospasm wheez
   n.crises.br = 0.7; n.oedema = 0.5; const c = auscultation(n, []); assert.ok(c.wheeze > 0.5 && c.crackles > 0.5);
   const v = scen('witnessed_vf', 1); v.run(5); v.arrest.arrested = true; v.resp.rr = 0; const d = auscultation(v, []); assert.equal(d.heart, null); assert.equal(d.rr, 0);
 });
+
+test('pneumonia: the chest exam finds crackles at the right base, and the stethoscope plays them on that side only', () => {
+  const p = scen('inf_cap', 1); p.run(5); const r = p.dispatch({ type: 'exam.chest' });
+  assert.ok(r.findings.includes('crackles_R') && !r.findings.includes('chest_normal'), JSON.stringify(r.findings));
+  const a = auscultation(p, r.findings); assert.ok(a.crackles > 0.3 && a.crackleSide.R === 1 && a.crackleSide.L === 0, JSON.stringify(a));
+  const n = scen('svt', 1); n.run(5); const b = n.dispatch({ type: 'exam.chest' });
+  assert.ok(!b.findings.some(f => f.startsWith('crackles_')) && auscultation(n, b.findings).crackles === 0, 'no crackles without pneumonia');
+});
