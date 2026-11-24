@@ -31,6 +31,9 @@ import { SBAR } from '/engine/debrief.js';
 import { AREAS, loadProgress, recordProgress, clearProgress, levelOf, profileOf, achievementsOf } from './progress.js';
 import { pupilFinding, pupilTargets } from './pupils.js';
 import { cprBar, CQ, SCALE } from './cpr-bar.js';
+import { Speaker, auscultation } from './voice.js';
+import { BodySound } from './body-sound.js';
+import { scores as clinicalScores } from '/engine/clinical.js';
 
 /** Skills training: the case each procedure is practised on (the condition that makes the procedure meaningful). */
 /** Instruments on the table besides the ones the procedure needs: choosing the right one is part of the skill. */
@@ -207,6 +210,28 @@ export class UI {
       let r = null; try { r = monitorOnset(p.spec, ev.drug, ev.amount); } catch { /* timing unavailable */ }
       if (r) this.drugClock[ev.drug] = { t0: p.t, onsetS: r.onsetS, peakS: r.peakS, sign: r.sign };
     });
+    // the patient's voice and the stethoscope (voice.js, body-sound.js): what they say from their state; examining the chest
+    // plays each lung's breath sounds and the heart, from the engine's own findings
+    this.speaker = new Speaker(); this.bodySound = new BodySound(this.sound);
+    this.sim.addEventListener('action', (e) => {
+      const ev = e.detail.event, r = e.detail.result, p = this.sim.patient;
+      if (ev.type === 'exam.chest' && r?.ok && p) { this.bodySound.stop(); this.bodySound.auscultate(auscultation(p, r.findings)); }
+    });
+  }
+  /** The patient speaks (Speaker): a bubble over the scene for a few seconds, and the voice when the sound is on. Checked once
+   *  per simulated second; at least 5 s of real time between lines so fast-forward does not chatter. */
+  _talk(p) {
+    if (!this.dom.say || !this.speaker) return;
+    const s = Math.floor(p.t), now = performance.now();
+    if (this.dom.say.hidden === false && now > this._sayUntil) this.dom.say.hidden = true;
+    if (s === this._talkS || this.sim.finished || this.menuOpen) return; this._talkS = s;
+    if (now - (this._saidAt || 0) < 5000 || now < (this.bodySound?.busyUntil || 0)) return;
+    let sc = null; try { sc = clinicalScores(p); } catch { return; }
+    const l = this.speaker.say(p, this.sim.scenarioId, sc); if (!l) return;
+    const lang = getLang() === 'fr' ? 'fr' : 'en', text = l.text[lang] || l.text.en;
+    this._saidAt = now; this._sayUntil = now + 6500;
+    this.dom.sayText.textContent = text; this.dom.say.hidden = false;
+    this.bodySound?.speak(text, { lang, breathless: l.key === 'breathless', female: p.spec?.sex === 'F' });
   }
 
   // ---------------------------------------------------------------- chrome: full-screen 3D stage with a game-style HUD
@@ -234,13 +259,14 @@ export class UI {
     this.dom.fx = el('div', { class: 'fx-layer', 'aria-live': 'polite' });
     this.dom.alarm = el('div', { class: 'alarm', hidden: true, role: 'alert' }, this.dom.alarmText = el('span'));
     this.dom.cprBar = this.buildCprBar();
+    this.dom.say = el('div', { class: 'say', hidden: true, role: 'status', 'aria-live': 'polite' }, el('b', { text: t('say_patient') }), this.dom.sayText = el('span'));
     this.dom.left = el('aside', { class: 'hud-left' });
     this.dom.right = el('aside', { class: 'hud-right' });
     this.dom.tip = el('div', { class: 'tip', hidden: true });
     this.dom.toast = el('div', { class: 'toast', hidden: true, role: 'status' });
     this._alarmMode = null;
     this.buildLeft(); this.buildRight();
-    r.append(el('div', { class: 'stage' }, this.glCanvas, this.dom.pins, this.dom.fx, this.dom.alarm, this.dom.cprBar), top, this.dom.left, this.dom.right, this.buildDock(),
+    r.append(el('div', { class: 'stage' }, this.glCanvas, this.dom.pins, this.dom.fx, this.dom.alarm, this.dom.cprBar, this.dom.say), top, this.dom.left, this.dom.right, this.buildDock(),
       this.dom.hint = el('div', { class: 'hint', text: t('shortcuts') }), this.dom.logBox, el('footer', { class: 'foot', text: t('disclaimer') }), this.buildMenu(), this.dom.noGl, this.dom.tip, this.dom.toast);
     if (this.sim.patient) { this.refreshCard(); this.buildTabs(); this.syncSetupFromSession(); }
     this.syncPins(); this.syncChrome();
@@ -715,6 +741,7 @@ export class UI {
     this.closeMenu(false); this._speedBefore = 0;
     this.logLines = []; this.dom.logList.replaceChildren(); this.guide = null; this._unseen = 0; this._logBadge(); this.toggleLog(false);
     this.effects.reset(); this.effLines = []; this.dom.effList.replaceChildren(); this.drugClock = {}; this._labsSeen = 0;
+    this.speaker?.reset(); this.bodySound?.stop(); this._talkS = null; this._saidAt = 0; if (this.dom.say) this.dom.say.hidden = true;
     // free play (physiology lab, instructor): standard monitoring connected from the start; in scored cases it is the learner's job
     if (!this.sim.scenarioId && ['lab', 'instructor', undefined].includes(this._mode)) { this.sim.act({ type: 'monitor.attach', items: { ecgLeads: true, spo2Probe: true, nibp: true, capnography: true } }); this.sim.act({ type: 'nibp.cycle' }); }
     this.refreshCard(); this.dom.card.hidden = !this.scenarios.find(s => s.id === this.sim.scenarioId);
@@ -1324,7 +1351,7 @@ export class UI {
     // alarm state: red pulse on cardiac arrest, amber on low saturation (when the probe is on)
     const mode = p.arrest.arrested ? 'arrest' : (p.flags.spo2Probe && p.monitor.spo2 !== null && p.monitor.spo2 < 88 ? 'hypox' : ''), sig = mode + (mode === 'arrest' ? p.arrest.key : '');
     if (sig !== this._alarmMode) { this._alarmMode = sig; this.dom.alarm.hidden = !mode; this.dom.alarm.dataset.mode = mode; this.dom.alarmText.textContent = mode === 'arrest' ? `${t('alarm_arrest')} · ${p.arrest.key}` : mode === 'hypox' ? t('alarm_hypox') : ''; }
-    this._cprBar(p);
+    this._cprBar(p); this._talk(p);
     // CPR + defib feedback
     if (this.dom.cprFb && this.dom.cprFb.isConnected) {
       const s = p.cpr.stats, going = s.lastAge < 1.5 && s.rate > 0, ok = (v, lo, hi) => (v >= lo && v <= hi ? 'good' : 'bad');
