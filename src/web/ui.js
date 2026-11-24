@@ -5,7 +5,7 @@ import { DRUGS, CALCIUM } from '/engine/drugs.js';
 import { FORCED_AIR_W } from '/engine/thermal.js';
 import { fluidVolumeMl } from '/engine/infection.js';
 import { Coach, levelPicker, levelChip, loadLevel, helpUsed } from './coach.js';
-import { dockTarget, guideTarget, tabOfEvents } from './dock-hint.js';
+import { dockTarget, guideTarget, tabOfEvents, controlOf, criterionControl, TAB_OF_EVENT } from './dock-hint.js';
 import { bmiOf, bmiClass } from '/engine/anthropometrics.js';
 import { SKIN_TONES } from './gl/body.js';
 import { CAMERAS } from './scene.js';
@@ -275,37 +275,99 @@ export class UI {
     for (const [k, key] of [['default', 'cam_reset'], ['head', 'cam_head'], ['chest', 'cam_chest'], ['arm', 'cam_arm'], ['side', 'cam_side'], ['top', 'cam_top'], ['foot', 'cam_foot']]) w.append(el('button', { onclick: () => this.scene.setCamera(k), text: t(key) }));
     return w;
   }
-  /** Learner-level pointer on the dock (dock-hint.js): the button that holds the next step pulses, with the step above it. */
+  /** Learner-level pointer (dock-hint.js): the dock button that holds the next step pulses with the step written above it;
+   *  once its section is open, the control to press inside it pulses instead. In a guided procedure that control does the step. */
   _dockPoint(p) {
     const btns = this.dom.dockBtns; if (!btns) return;
-    const open = this.panelOpen ? this.tab : null, guiding = !!(this.guide && !this.guide.finished);
-    const key = `${Math.floor(p.t)}|${open}|${guiding}|${this.guide?.i}|${this.level}|${this.menuOpen}|${this.sim.finished}|${this.coach?.said?.t ?? ''}|${p.log.length}`;
+    if (!this._ptrHook && this.dom.panel) { this.dom.panel.addEventListener('click', (e) => this._guideClick(e), true); this._ptrHook = true; }
+    const open = this.panelOpen ? this.tab : null, g = this.guide, guiding = !!(g && !g.finished);
+    if (this._ptrEl && !this._ptrEl.isConnected) this._dockKey = null;                  // the section was rebuilt: find the control again
+    const key = `${Math.floor(p.t)}|${open}|${guiding}|${g?.i}|${!!g?.hold}|${this.level}|${this.menuOpen}|${this.sim.finished}|${this.coach?.said?.t ?? ''}|${p.log.length}`;
     if (key === this._dockKey) return this._dockTipPlace(); this._dockKey = key;
-    let d = null;
-    if (this.menuOpen) d = null;
-    else if (guiding) {                                          // a guided procedure: where each step is found in a real case
-      const g = this.guide, ctx = { p, b: p.body, prm: g.prm };
-      const tabs = g.proc.steps.map(st => { try { return tabOfEvents(st.run ? st.run(ctx) : []); } catch { return null; } });
-      const r = guideTarget({ level: this.level, tabs, i: g.i, open, finished: this.sim.finished });
-      d = r && { tab: r.tab, why: r.why, text: r.why === 'back' ? L(g.step) : t('dh_where', { tab: t(r.tab) }) };
-    } else { const st = this.coach?.dockState(); d = st && dockTarget({ ...st, open, guiding, finished: this.sim.finished }); }
+    let d = null;                                                                        // { tab (dock button) | inside (element), text }
+    if (!this.menuOpen && !this.sim.finished && this.sim.patient) {
+      if (guiding) {
+        const st = g.step, info = this._guideSteps(p), step = L(st);
+        const r = g.hold ? (this.level === 'expert' ? null : open === 'tab_guide' ? { inside: 'continue' } : { tab: 'tab_guide', why: 'back' })
+          : guideTarget({ level: this.level, tabs: info.tabs, hands: info.hands, i: g.i, open, finished: this.sim.finished });
+        if (r?.tab) d = { tab: r.tab, text: r.why === 'back' ? `${t('dh_back')} ${step}` : `${step} · ${t('dh_where', { tab: t(r.tab) })}` };
+        else if (r?.inside) {
+          const P = this.dom.panel, find = { control: () => this._findControl(controlOf(info.ev[g.i])), tool: () => P.querySelector(`.pw-tool[data-tool="${st.hand?.tool}"]`),
+            do: () => P.querySelector('#btnGuideDo'), continue: () => [...P.querySelectorAll('button')].find(b => b.textContent.includes(t('gd_continue'))) }[r.inside];
+          d = { inside: find?.() || null, text: r.inside === 'tool' ? `${step} · ${t('dh_tool')}` : r.inside === 'do' ? `${step} · ${t('dh_do')}` : r.inside === 'continue' ? t('dh_continue') : `${t('dh_press')} ${step}` };
+        }
+      } else {
+        const st = this.coach?.dockState(); let r = st && dockTarget({ ...st, open, guiding, finished: this.sim.finished });
+        if (r?.act && this._busy && r.act.type + (r.act.kind || '') === this._busy.key && p.t < this._busy.until) r = null;   // under way: wait for it
+        if (r) d = r.inside ? { inside: this._findControl(r.act ? controlOf(r.act) : criterionControl(r.id)), text: `${t('dh_press')} ${r.text}${this._applySet(r.act)}` } : { tab: r.tab, text: `${t(r.why === 'senior' ? 'dh_senior' : 'dh_next')} ${r.text}` };
+      }
+    }
     for (const b of btns) {
-      const on = !!d && b.dataset.tab === d.tab && !b.hidden;
+      const on = !!d?.tab && b.dataset.tab === d.tab && !b.hidden;
       b.classList.toggle('point', on);
-      if (on) { const h = d.why === 'where' ? d.text : `${t({ senior: 'dh_senior', back: 'dh_back' }[d.why] || 'dh_next')} ${d.text}`; if (b.dataset.hint !== h) { b.dataset.hint = h; b.setAttribute('aria-description', h); } }
+      if (on) { if (b.dataset.hint !== d.text) { b.dataset.hint = d.text; b.setAttribute('aria-description', d.text); } }
       else if (b.dataset.hint != null) { delete b.dataset.hint; b.removeAttribute('aria-description'); }
     }
-    // the step, written above the button (outside the dock, which scrolls sideways on phones)
+    const inEl = d?.inside || null;                                                      // the control inside the open section
+    if (this._ptrEl !== inEl) {
+      this._ptrEl?.classList.remove('ptr-pulse'); this._ptrEl?.removeAttribute('aria-description');
+      this._ptrEl = inEl;
+      if (inEl) { inEl.classList.add('ptr-pulse'); inEl.setAttribute('aria-description', d.text); try { inEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch { /* old browsers */ } }
+    }
+    // the step, written above what to press (outside the dock, which scrolls sideways on phones)
     let tip = this.dom.dockTip;
     if (!tip && this.dom.dock?.parentNode) { tip = this.dom.dockTip = el('div', { class: 'dock-tip', 'aria-hidden': 'true', hidden: true }); this.dom.dock.parentNode.append(tip); }
-    if (tip) { tip.hidden = !d; if (d) tip.textContent = btns.find(b => b.classList.contains('point'))?.dataset.hint || ''; }
+    this._tipAnchor = d?.tab ? btns.find(b => b.classList.contains('point')) : inEl;
+    if (tip) { tip.hidden = !this._tipAnchor; if (this._tipAnchor) tip.textContent = d.text; }
     this._dockTipPlace();
   }
+  /** Each step of the running procedure: its dock button, whether it is an instrument step, and the action that has a button. */
+  _guideSteps(p) {
+    const g = this.guide, ctx = { p, b: p.body, prm: g.prm }, tabs = [], hands = [], ev = [];
+    for (const st of g.proc.steps) {
+      let evs = []; try { evs = st.run ? st.run(ctx) : []; } catch { evs = []; }
+      tabs.push(tabOfEvents(evs)); hands.push(!!st.hand); ev.push(evs.find(e => TAB_OF_EVENT[e?.type]) || null);
+    }
+    return { tabs, hands, ev };
+  }
+  /** Fill in the fields an action needs (dock-hint `set`: [selector, value, unit]) so the pointed button does the right thing;
+   *  returns the values for the bubble (" (NaCl 3 %, 150 mL, 20 min)"). Only fields the learner has not changed since. */
+  _applySet(act) {
+    const P = this.dom.panel; if (!act?.set?.length || !P) return '';
+    const shown = [];
+    for (const [q, v, unit] of act.set) {
+      const f = P.querySelector(q); if (!f) continue;
+      if (f.dataset.ptrSet !== String(v) || f.value === String(v)) { f.value = String(v); f.dataset.ptrSet = String(v); f.classList.add('ptr-set'); }
+      shown.push(f.tagName === 'SELECT' ? (f.selectedOptions[0]?.textContent || v) : `${v}${unit ? ' ' + unit : ''}`);
+    }
+    return shown.length ? ` (${shown.join(', ')})` : '';
+  }
+  /** The element of a control description ({ sel } or { label }) in the open section, if it is shown. */
+  _findControl(c) {
+    const P = this.dom.panel; if (!c || !P) return null;
+    const e = c.sel ? P.querySelector(c.sel) : [...P.querySelectorAll('button')].find(b => b.textContent.includes(t(c.label)));
+    return e && e.getClientRects().length ? e : null;
+  }
+  /** In a guided procedure, the step's own control in its real section does the step (with the guide's doses and checks). */
+  _guideClick(e) {
+    const g = this.guide, p = this.sim.patient; if (!g || g.finished || g.hold || !p || this.sim.finished || !this.panelOpen || this.tab === 'tab_guide') return;
+    const st = g.step; if (!st || st.hand) return;
+    const info = this._guideSteps(p); if (info.tabs[g.i] !== this.tab) return;
+    const c = this._findControl(controlOf(info.ev[g.i]));
+    if (c && c.contains(e.target)) { e.stopPropagation(); e.preventDefault(); this.guideDo(); }
+  }
   _dockTipPlace() {
-    const tip = this.dom.dockTip, b = this.dom.dockBtns?.find(x => x.classList.contains('point')); if (!tip || tip.hidden) return;
-    if (!b || this.dom.dock.hidden) { tip.hidden = true; return; }
-    const R = tip.parentNode.getBoundingClientRect(), r = b.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
-    const x = Math.max(16, Math.min(r.left + r.width / 2 - R.left - w / 2, R.width - w - 16)), y = r.top - R.top - h - 12;
+    const tip = this.dom.dockTip, a = this._tipAnchor; if (!tip || tip.hidden) return;
+    if (!a || !a.isConnected || this.dom.dock.hidden) { tip.hidden = true; return; }
+    const R = tip.parentNode.getBoundingClientRect(), r = a.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
+    const box = a.classList.contains('dockbtn') ? null : this.dom.panel?.getBoundingClientRect();
+    if (box && (r.bottom < box.top || r.top > box.bottom)) { tip.style.visibility = 'hidden'; return; }   // scrolled out of the section
+    tip.style.visibility = '';
+    if (box && box.right - R.left + 12 + w <= R.width - 8) {            // a control in a section: beside the section, so it hides none of its fields
+      const y = Math.max(8, Math.min(r.top + r.height / 2 - R.top - h / 2, R.height - h - 8));
+      tip.style.transform = `translate(${Math.round(box.right - R.left + 12)}px, ${Math.round(y)}px)`; return;
+    }
+    const x = Math.max(16, Math.min(r.left + r.width / 2 - R.left - w / 2, R.width - w - 16)), y = Math.max(8, r.top - R.top - h - 10);
     tip.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
   }
   buildDock() {
@@ -668,6 +730,10 @@ export class UI {
   }
   actNow(ev, label) {
     const r = this.sim.act(ev);
+    if (r && r.ok !== false && this.sim.patient) {                // the pointer waits while it works: a procedure, a lab, an infusion, a ventilator change
+      const s = ev.type === 'fluid.bolus' ? (ev.minutes || 0) * 60 : ev.type === 'vent.set' || ev.type === 'o2.mask' ? 45 : /^(procedure|airway)\./.test(ev.type) || ev.type === 'lab.order' ? r.willTakeS || 0 : 0;
+      if (s > 0) this._busy = { key: ev.type + (ev.kind || ''), until: this.sim.patient.t + s };
+    }
     if (r && r.ok === false) this.toast(r.error || t('err_generic'), true); else if (label) this.toast(label + (r && r.willTakeS ? ` (${Math.round(r.willTakeS)} s)` : ''));
     return r;
   }
@@ -910,7 +976,7 @@ export class UI {
       P.append(el('p', { class: 'muted small', text: t('gd_intro') }),
         el('div', { class: 'pw-pick' }, PROCEDURES.map(pr => {
           const tools = [...new Set(pr.steps.filter(s => s.hand).map(s => s.hand.tool))];
-          const b = el('button', { class: 'pw-proc', onclick: () => this.startGuide(pr) });
+          const b = el('button', { class: 'pw-proc', dataset: { proc: pr.id }, onclick: () => this.startGuide(pr) });
           b.innerHTML = `<span class="pw-proc-ic">${icon(tools[0] || 'check', 24)}</span>`;
           b.append(el('span', { class: 'pw-proc-t' }, el('b', { text: L(pr) }), el('span', { class: 'small muted', text: t('gd_nsteps', { n: pr.steps.length }) + (tools.length ? ` · ${tools.length} ${t('pw_instr')}` : '') })));
           return b;

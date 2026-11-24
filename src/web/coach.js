@@ -55,7 +55,7 @@ export class Coach {
   /** What the dock pointer needs (dock-hint.js): null when the coach is off (expert, free play, skills training). */
   dockState() {
     const p = this.ui.sim.patient, id = this.ui.sim.scenarioId; if (!p || !id || this.box.hidden || this.level === 'expert') return null;
-    const items = this.checklist(p, id); return { level: this.level, items, next: nextItem(items), said: this.said, t: p.t };
+    const items = this.checklist(p, id); return { level: this.level, items, next: nextItem(items), said: this.said, t: p.t, p };
   }
   reset() { this._live = null; this.keep = null; this.asks = 0; this.autos = 0; this.said = null; this.lastSig = ''; this._t = -1; this._stuckFrom = 0; }
   get level() { return this.ui.level; }
