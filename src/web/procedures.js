@@ -37,7 +37,7 @@ export const PROCEDURES = [
         run: () => [{ type: 'position.set', headUp: true }] },
       { id: 'preox', cam: 'head', g: 'mask', at: 'face', en: 'Pre-oxygenate: tight mask, FiO2 1.0, 3 min', fr: 'Préoxygéner : masque étanche, FiO2 1,0, 3 min',
         why: { en: 'Tight seal, 15 L/min, 3 minutes of tidal breathing (or 8 vital-capacity breaths). Target FeO2 ≥ 0.9.', fr: 'Masque étanche, 15 L/min, 3 minutes en volume courant (ou 8 capacités vitales). Objectif FeO2 ≥ 0,9.' },
-        run: () => [{ type: 'o2.mask', fio2: 1.0, seal: 0.95 }] },
+        run: () => [{ type: 'o2.mask', fio2: 1.0, seal: 0.97 }] },
       { id: 'apox', cam: 'head', g: 'touch', at: 'face', en: 'Apnoeic oxygenation: nasal cannula 15 L/min', fr: 'Oxygénation apnéique : lunettes 15 L/min',
         why: { en: 'Left on through laryngoscopy, it slows desaturation during apnoea.', fr: "Laissées en place pendant la laryngoscopie, elles ralentissent la désaturation pendant l'apnée." },
         run: () => [{ type: 'apox.set', on: true, fio2: 1, eff: 0.5 }] },
