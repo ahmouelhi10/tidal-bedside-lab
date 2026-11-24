@@ -5,7 +5,7 @@ import { DRUGS, CALCIUM } from '/engine/drugs.js';
 import { FORCED_AIR_W } from '/engine/thermal.js';
 import { fluidVolumeMl } from '/engine/infection.js';
 import { Coach, levelPicker, levelChip, loadLevel, helpUsed } from './coach.js';
-import { dockTarget, guideTarget, tabOfEvents, controlOf, criterionControl, TAB_OF_EVENT } from './dock-hint.js';
+import { dockTarget, guideTarget, tabOfEvents, controlOf, criterionControl, TAB_OF_EVENT, CRITERION_EVENT } from './dock-hint.js';
 import { bmiOf, bmiClass } from '/engine/anthropometrics.js';
 import { SKIN_TONES } from './gl/body.js';
 import { CAMERAS } from './scene.js';
@@ -298,8 +298,11 @@ export class UI {
         }
       } else {
         const st = this.coach?.dockState(); let r = st && dockTarget({ ...st, open, guiding, finished: this.sim.finished });
-        if (r?.act && this._busy && r.act.type + (r.act.kind || '') === this._busy.key && p.t < this._busy.until) r = null;   // under way: wait for it
-        if (r) d = r.inside ? { inside: this._findControl(r.act ? controlOf(r.act) : criterionControl(r.id)), text: `${t('dh_press')} ${r.text}${this._applySet(r.act)}` } : { tab: r.tab, text: `${t(r.why === 'senior' ? 'dh_senior' : 'dh_next')} ${r.text}` };
+        if (r?.act && !r.wait && this._busy && r.act.type + (r.act.kind || '') === this._busy.key && p.t < this._busy.until)   // under way: wait for it
+          r = { ...r, wait: true, act: { ...r.act, why: 'busy', left: Math.ceil(this._busy.until - p.t) } };
+        if (r?.wait) { const w = r.act, txt = t('dh_wait_' + w.why, { x: r.text, pct: w.pct, s: w.left });   // nothing to press: say why, no pulse
+          d = { wait: true, text: txt, ...(r.inside ? { at: this._findControl(controlOf(CRITERION_EVENT[r.id]) || criterionControl(r.id)) } : { at: btns.find(b => b.dataset.tab === r.tab && !b.hidden) }) }; }
+        else if (r) d = r.inside ? { inside: this._findControl(r.act ? controlOf(r.act) : criterionControl(r.id)), text: `${t('dh_press')} ${r.text}${this._applySet(r.act)}` } : { tab: r.tab, text: `${t(r.why === 'senior' ? 'dh_senior' : 'dh_next')} ${r.text}` };
       }
     }
     for (const b of btns) {
@@ -317,8 +320,8 @@ export class UI {
     // the step, written above what to press (outside the dock, which scrolls sideways on phones)
     let tip = this.dom.dockTip;
     if (!tip && this.dom.dock?.parentNode) { tip = this.dom.dockTip = el('div', { class: 'dock-tip', 'aria-hidden': 'true', hidden: true }); this.dom.dock.parentNode.append(tip); }
-    this._tipAnchor = d?.tab ? btns.find(b => b.classList.contains('point')) : inEl;
-    if (tip) { tip.hidden = !this._tipAnchor; if (this._tipAnchor) tip.textContent = d.text; }
+    this._tipAnchor = d?.wait ? d.at || null : d?.tab ? btns.find(b => b.classList.contains('point')) : inEl;
+    if (tip) { tip.hidden = !this._tipAnchor; tip.classList.toggle('wait', !!d?.wait); if (this._tipAnchor) tip.textContent = d.text; }
     this._dockTipPlace();
   }
   /** Each step of the running procedure: its dock button, whether it is an instrument step, and the action that has a button. */

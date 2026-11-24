@@ -146,3 +146,15 @@ test('pre-oxygenation points at head-up, then the 100 % face mask in the airway 
   p.dispatch({ type: 'o2.mask', fio2: 1, seal: 0.97 }); assert.equal(criterionAction('preox', p).type, 'wait', 'then the end-tidal O2 has to rise');
   p.run(300); assert.ok((p.preoxEtO2Max ?? 0) >= 0.9, `ETO2 ${p.preoxEtO2Max}`); assert.equal(criterionAction('preox', p).type, 'skip');
 });
+
+test('while a step can only wait, the beginner is told why instead of losing the pointer: the end-tidal O2, the relaxant', () => {
+  const p = scen('obese_rsi', 1); p.dispatch({ type: 'position.set', headUp: true }); p.dispatch({ type: 'o2.mask', fio2: 1, seal: 0.97 }); p.run(20);
+  const st = (open) => ({ level: 'beginner', items: checklist(p, SCENARIOS.obese_rsi), p, t: p.t, open });
+  const w = dockTarget(st(null)); assert.equal(w?.wait, true); assert.equal(w.id, 'preox'); assert.equal(w.tab, 'tab_airway'); assert.equal(w.act.why, 'preox');
+  assert.ok(w.act.pct > 21 && w.act.pct < 100 && w.act.left > 0 && w.act.left <= 180, JSON.stringify(w.act));
+  assert.equal(dockTarget(st('tab_airway')).inside, true, 'its section open: shown at the control, still without pointing');
+  assert.equal(dockTarget({ ...st(null), level: 'expert' }), null);
+  const q = scen('obese_rsi', 1); q.dispatch({ type: 'iv.access' }); q.dispatch({ type: 'drug.bolus', drug: 'propofol', amount: 200 }); q.dispatch({ type: 'drug.bolus', drug: 'rocuronium', amount: 100 }); q.run(5);
+  const a = criterionAction('intubation', q); assert.equal(a.type, 'wait'); assert.equal(a.why, 'nmb'); assert.ok(a.pct >= 0 && a.pct < 90, `${a.pct}`);
+  q.run(120); assert.equal(criterionAction('intubation', q).type, 'airway.intubate', 'relaxed: intubate');
+});

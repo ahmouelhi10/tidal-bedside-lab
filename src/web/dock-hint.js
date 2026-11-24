@@ -191,7 +191,7 @@ function resolveAction(id, p) {
     if (!p.headUp) return { type: 'position.set', headUp: true };
     if (!(p.o2?.fio2 >= 0.9)) return { ...ev, again: true };
     const on = [...(p.log || [])].reverse().find(e => e.type === 'o2.mask' && e.fio2 >= 0.9);
-    return (p.preoxEtO2Max ?? 0) < 0.9 && on && p.t - on.t < 180 ? { type: 'wait' } : ev;   // 3 min at most, then on to the induction
+    return (p.preoxEtO2Max ?? 0) < 0.9 && on && p.t - on.t < 180 ? { type: 'wait', why: 'preox', pct: Math.round((p.resp?.etO2 ?? 0) * 100), left: Math.ceil(180 - (p.t - on.t)) } : ev;   // 3 min at most, then on to the induction
   }
   if (ev.type === 'o2.mask' && (p?.airway?.intubated || p?.airway?.device === 'sga')) return { type: 'vent.set', adjust: true, set: [['#inVf', 1]] };   // on a ventilator: its FiO2
   if (id === 'hk_insulin') { const ins = (p?.drugs?.log || []).some(d => d.key === 'insulin' && d.amount >= 8);
@@ -201,7 +201,7 @@ function resolveAction(id, p) {
   if (id === 'tension_relief' || id === 'needle_technique') return { ...ev, set: [['#selSgSide', p?.chest?.side || 'R'], ['#selSgSite', 'mal5'], ['#selSgLen', 80, 'mm']] };
   if (ev.type === 'airway.intubate' && p && !p.arrest?.arrested) {                // not relaxed: the tube is refused; a hypnotic and the relaxant first
     const given = (k) => (p.drugs?.log || []).some(d => k.includes(d.key)), nmb = (() => { try { return p.drugs.effects({ inArrest: false }).nmb; } catch { return 1; } })();
-    if (nmb < 0.9) { if (!line) return { type: 'iv.access' }; return !given(['propofol', 'ketamine', 'etomidate', 'midazolam']) ? DB('ketamine') : !given(['rocuronium', 'succinylcholine']) ? DB('rocuronium') : { type: 'wait' }; }
+    if (nmb < 0.9) { if (!line) return { type: 'iv.access' }; return !given(['propofol', 'ketamine', 'etomidate', 'midazolam']) ? DB('ketamine') : !given(['rocuronium', 'succinylcholine']) ? DB('rocuronium') : { type: 'wait', why: 'nmb', pct: Math.floor(Math.max(0, nmb) * 100) }; }
   }
   if (id === 'post_rosc' && p?.arrest?.roscCount) {          // the bundle, part by part: 12-lead, temperature, then the targets
     const ordered = (w) => (p.log || []).some(e => e.type === 'order' && e.what === w), sat = (p.resp?.sao2 ?? 1) * 100, co2 = p.resp?.paco2 ?? 40;
@@ -245,6 +245,7 @@ export function criterionControl(id) {
  *  s: { level, next (the coach's next item {id, text, state} or null), items (the live checklist), said (the last senior
  *  hint {id, t} or null), t (patient time), p (the patient, for prerequisites), open (the tab whose panel is open, or null), guiding (a guided procedure runs),
  *  finished }. Returns { tab, id, text, why: 'next' | 'senior', inside (its section is open: point at the control in it) }. */
+/** wait: true when the step has nothing to press yet (act.why 'nmb' | 'preox'): the UI shows why, without pointing. */
 export function dockTarget(s) {
   if (!s || s.finished || s.guiding || s.level === 'expert') return null;
   let item = null, why = null;
@@ -258,7 +259,9 @@ export function dockTarget(s) {
   }
   const dock = item ? dockOf(item.id) : null;
   if (!dock) return null;                                                    // nothing to press
-  const act = item ? criterionAction(item.id, s.p) : null; if (act?.type === 'skip' || act?.type === 'wait') return null;
+  const act = item ? criterionAction(item.id, s.p) : null; if (act?.type === 'skip') return null;
+  if (act?.type === 'wait') { const tab = TAB_OF_EVENT[CRITERION_EVENT[item.id]?.type] || dock;   // nothing to press yet: say what it waits for, where it will happen
+    return { tab, id: item.id, text: item.text, why, act, wait: true, inside: tab === s.open }; }
   const tab = (act && TAB_OF_EVENT[act.type]) || dock;   // a missing prerequisite may live elsewhere
   return { tab, id: item.id, text: item.text, why, act, inside: tab === s.open };   // its section open: point at the control inside it
 }
