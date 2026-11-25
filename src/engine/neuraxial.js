@@ -20,7 +20,6 @@
 // spinal, given intravenously it is local anaesthetic toxicity (crises.js).
 import { clamp } from './util.js';
 
-export const SEG = Object.freeze({ C4: 4, T1: 9, T4: 12, T6: 14, T10: 18, L2: 22, S1: 26 });
 export function segName(s) {
   const n = Math.max(1, Math.round(s));
   if (n <= 8) return 'C' + n; if (n <= 20) return 'T' + (n - 8); if (n <= 25) return 'L' + (n - 20); return n <= 30 ? 'S' + (n - 25) : 'none';

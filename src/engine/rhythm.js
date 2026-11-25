@@ -19,4 +19,3 @@ export const RHYTHMS = {
 };
 export const isPerfusing = k => RHYTHMS[k].perfusing;
 export const isShockable = k => RHYTHMS[k].shockable;
-export const isArrest = k => !RHYTHMS[k].perfusing;

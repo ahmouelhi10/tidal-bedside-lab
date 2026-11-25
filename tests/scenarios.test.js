@@ -3,8 +3,13 @@ import assert from 'node:assert/strict';
 import { Patient, replay } from '../src/engine/patient.js';
 import { SCENARIOS, scenarioList, scoreSession } from '../src/engine/scenarios.js';
 import { REFERENCES } from '../src/engine/references.js';
+import { HISTORY_KEYS } from '../src/engine/clinical.js';
 import { scen, mk, runScript, aclsTeam } from './helpers/bots.js';
 import { expertRun, idleRun } from './helpers/experts.js';
+
+test('case history uses only the items the clinical scores read (a misspelt item would silently drop out of Wells, CHA2DS2-VA...)', () => {
+  for (const [id, sc] of Object.entries(SCENARIOS)) for (const k of Object.keys(sc.history || {})) assert.ok(HISTORY_KEYS.includes(k), `${id}: unknown history item ${k}`);
+});
 
 const IDS = Object.keys(SCENARIOS);
 const KINDS = new Set(['ACLS', 'Anaesthesia', 'Trauma', 'Echo', 'Infectiology', 'Emergency']);

@@ -4,8 +4,12 @@ import assert from 'node:assert/strict';
 import { mk, scen } from './helpers/bots.js';
 import { replay } from '../src/engine/patient.js';
 import { SCENARIOS, scoreSession } from '../src/engine/scenarios.js';
-import { readbackOf, READBACK_ERROR_P } from '../src/engine/team.js';
+import { readbackOf, READBACK_ERROR_P, TEAM_ACTS, TEAM_ROLES } from '../src/engine/team.js';
 import { Rng } from '../src/engine/rng.js';
+
+test('every action the team can carry out belongs to a known team member', () => {
+  for (const [type, who] of Object.entries(TEAM_ACTS)) assert.ok(TEAM_ROLES.includes(who), `${type}: unknown team member ${who}`);
+});
 
 /** a leader who listens: corrects every wrong read-back, then confirms and carries out the read-back */
 function lead(p, id, act, { listen = true } = {}) {

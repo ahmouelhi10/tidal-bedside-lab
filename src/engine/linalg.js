@@ -9,7 +9,6 @@ export function matMul(A, B) {
   }
   return C;
 }
-export function matVec(A, x) { return A.map(row => row.reduce((s, a, j) => s + a * x[j], 0)); }
 export function matScale(A, c) { return A.map(r => r.map(v => v * c)); }
 export function matAdd(A, B) { return A.map((r, i) => r.map((v, j) => v + B[i][j])); }
 export function normInf(A) { return Math.max(...A.map(r => r.reduce((s, v) => s + Math.abs(v), 0))); }
