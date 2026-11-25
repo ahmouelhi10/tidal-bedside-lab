@@ -42,6 +42,31 @@ export const INJECTS = Object.freeze(['vf', 'pea', 'asystole', 'svt', 'af', 'bra
 
 const NUMERIC_EVENT_PARAMS = ['amount', 'rate', 'volumeL', 'minutes', 'mlPerMin', 'c', 'factor', 'energy', 'mEq', 'target', 'maxWatts', 'fio2', 'seal', 'eff', 'depth', 'needleMm', 'fr', 'depthCm', 'cm', 'quality', 'value', 'hours', 'percent', 'volumeMl'];
 
+/** The physical envelope of the amounts an event may carry (REF design). Wide enough for any overdose a learner can make with
+ *  the dose buttons (an overdose is something to learn from), narrow enough to rule out a sign error or an impossible amount:
+ *  without it a negative dose would cancel a real one, and a hand-made log would still replay, verify and be scored.
+ *  Bolus: in the drug's own unit (drugs.js); infusion: per minute, a tenth of the bolus ceiling. */
+export const BOLUS_MAX = Object.freeze({ mg: 10000, mcg: 100000, units: 100000, mmol: 200, g: 100, mL: 2000 });   // REF design
+export const EVENT_RANGES = Object.freeze({                                                                         // REF design
+  'fluid.bolus': { volumeL: [0.01, 5], minutes: [0.5, 1440] },
+  'bleed.set': { mlPerMin: [0, 2000] },
+  'bicarb.bolus': { mEq: [1, 300] },
+  'thermal.ambient': { c: [-10, 50] },
+  'thermal.cover': { factor: [0.1, 2] },                     // 1 = a sheet, < 1 better insulated (thermal.js)
+  'thermal.device': { target: [30, 42], maxWatts: [0, 1000] },
+});
+function outOfRange(ev) {
+  const r = EVENT_RANGES[ev.type]; if (!r) return null;
+  for (const [k, [lo, hi]] of Object.entries(r)) if (ev[k] != null && !(ev[k] >= lo && ev[k] <= hi)) return `${k} must be in [${lo}, ${hi}]`;
+  return null;
+}
+function doseOutOfRange(ev) {
+  const unit = DRUGS[ev.drug]?.unit; if (!unit || !(unit in BOLUS_MAX)) return null;   // an unknown drug is refused further on
+  if (ev.type === 'drug.bolus' && !(ev.amount > 0 && ev.amount <= BOLUS_MAX[unit])) return `amount must be more than 0 and at most ${BOLUS_MAX[unit]} ${unit}`;
+  if (ev.type === 'drug.infusion' && !(ev.rate >= 0 && ev.rate <= BOLUS_MAX[unit] / 10)) return `rate must be in [0, ${BOLUS_MAX[unit] / 10}] ${unit}/min`;
+  return null;
+}
+
 /** Structural validation of nested event payloads (settings/opts/items) so a malformed browser payload cannot inject NaN, strings or unknown flags. */
 const VENT_NUM = { rate: [0, 60], vt: [0, 1500], fio2: [0.21, 1], peep: [0, 25], seal: [0, 1] };
 const CPR_NUM = { rate: [40, 200], depth: [0, 10] };
@@ -50,6 +75,7 @@ const FLAG_KEYS = ['ecgLeads', 'spo2Probe', 'nibp', 'aline', 'capnography', 'tem
 export const REMOVABLE = Object.freeze(['ivAccess', 'ecgLeads', 'spo2Probe', 'nibp', 'capnography', 'tempProbe', 'padsOn', 'o2']);
 function validateEventShape(ev) {
   const isNum = x => typeof x === 'number' && Number.isFinite(x);
+  const range = outOfRange(ev) || doseOutOfRange(ev); if (range) return range;
   switch (ev.type) {
     case 'vent.set': {
       const s = ev.settings; if (!s || typeof s !== 'object') return 'settings required';

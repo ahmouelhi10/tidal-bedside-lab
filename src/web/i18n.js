@@ -665,6 +665,9 @@ const ERR_FR_RE = [
   [/^parameter (\w+) must be a finite number$/, 'Le paramètre $1 doit être un nombre'],
   [/^(\S+) is not prescribed$/, "$1 n'est pas prescrit"], [/^(\S+) is already prescribed$/, '$1 est déjà prescrit'],
   [/^(\S+) has no (\w+) form here$/, "$1 n'existe pas en forme $2 ici"], [/^unknown event (.*)$/, 'Événement inconnu $1'],
+  [/^amount must be more than 0 and at most (\S+) (\S+)$/, 'La dose doit être supérieure à 0 et au plus de $1 $2'],
+  [/^rate must be in \[0, (\S+)\] (\S+)$/, 'Le débit doit être compris entre 0 et $1 $2'],
+  [/^(\w+) must be in \[(\S+), (\S+)\]$/, 'La valeur $1 doit être comprise entre $2 et $3'],
 ];
 /** An engine refusal in the current language (unknown messages are shown as they are). */
 export function errText(msg) {

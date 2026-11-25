@@ -80,6 +80,28 @@ test('malformed numeric parameters are rejected and cannot corrupt state', () =>
   p.run(60); allFinite(p.snapshot());
 });
 
+test('impossible amounts are refused: a negative dose cannot cancel a real one, and a hand-made log gains nothing', () => {
+  const bad = [{ type: 'drug.bolus', drug: 'propofol', amount: -200 }, { type: 'drug.bolus', drug: 'fentanyl', amount: 0 }, { type: 'drug.bolus', drug: 'propofol', amount: 1e9 },
+    { type: 'drug.infusion', drug: 'propofol', rate: -5 }, { type: 'drug.infusion', drug: 'propofol', rate: 1e9 }, { type: 'drug.bolus', drug: 'potassiumChloride', amount: -40 },
+    { type: 'fluid.bolus', volumeL: -5 }, { type: 'fluid.bolus', volumeL: 50 }, { type: 'fluid.bolus', volumeL: 1, minutes: 0 }, { type: 'bleed.set', mlPerMin: -500 },
+    { type: 'bleed.set', mlPerMin: 1e7 }, { type: 'bicarb.bolus', mEq: -50 }, { type: 'thermal.ambient', c: 1e6 }, { type: 'thermal.cover', factor: -1 },
+    { type: 'thermal.device', target: 90 }, { type: 'team.order', id: 1, act: { type: 'drug.bolus', drug: 'propofol', amount: -200 } }];
+  const p = mk(); p.run(5); const h = p.stateHash();
+  for (const e of bad) assert.equal(p.dispatch(e).ok, false, JSON.stringify(e));
+  assert.equal(p.stateHash(), h);                                   // nothing changed
+  // the real dose stays given: 200 mg then "-200 mg" leaves the 200 mg patient, exactly as 200 mg alone
+  const a = mk(); a.dispatch({ type: 'drug.bolus', drug: 'propofol', amount: 200 }); a.run(60);
+  const b = mk(); b.dispatch({ type: 'drug.bolus', drug: 'propofol', amount: 200 }); b.dispatch({ type: 'drug.bolus', drug: 'propofol', amount: -200 }); b.run(60);
+  assert.equal(b.stateHash(), a.stateHash());
+  // and the refusal replays the same way (a submitted log with it verifies to the same hash)
+  assert.equal(replay({ spec: b.spec, seed: b.seed, scenario: null, log: b.log, until: b.t }, SCENARIOS).stateHash(), b.stateHash());
+  // what a learner can do with the dose buttons is still accepted, overdoses included
+  const ok = [{ type: 'drug.bolus', drug: 'propofol', amount: 2000 }, { type: 'drug.bolus', drug: 'levetiracetam', amount: 4500 }, { type: 'drug.bolus', drug: 'neostigmine', amount: 12500 },
+    { type: 'drug.bolus', drug: 'magnesium', amount: 4 }, { type: 'drug.infusion', drug: 'propofol', rate: 0 }, { type: 'fluid.bolus', volumeL: 2, minutes: 240 },
+    { type: 'bleed.set', mlPerMin: 0 }, { type: 'thermal.ambient', c: 5 }, { type: 'thermal.cover', factor: 0.5 }, { type: 'thermal.device', target: 38, maxWatts: 50 }, { type: 'bicarb.bolus', mEq: 100 }];
+  const q = mk(); for (const e of ok) assert.notEqual(q.dispatch(e).ok, false, JSON.stringify(e));
+});
+
 test('baseline sweep: every sex x BMI combination starts stable, finite and physiologic', () => {
   const rows = [];
   for (const sex of ['M', 'F']) {
