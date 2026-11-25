@@ -44,3 +44,22 @@ test('submitted sessions export as de-identified CSV rows with scores, key times
     assert.ok(head.includes('score_pct') && head.includes('t_firstShock') && head.some(h => h.startsWith('crit_')));
   } finally { await s.close(); }
 });
+
+test('the export shows what helped the learner and whether the patient was the case default (study confounders)', async () => {
+  const s = createServer({ port: 0, host: '127.0.0.1', dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'tbl-res-')), quiet: true, apiToken: 'secret-token' });
+  const base = `http://127.0.0.1:${(await s.listen()).port}`, auth = { Authorization: 'Bearer secret-token' };
+  try {
+    const play = async (spec, notes) => {
+      const sess = await (await post(base + '/api/sessions', { scenario: 'obese_rsi', learner: 'P01', ...(spec ? { spec } : {}) })).json();
+      const p = new Patient(sess.spec, { seed: sess.seed, scenario: SCENARIOS.obese_rsi });
+      for (const text of notes) { p.dispatch({ type: 'note', text }); p.run(5); }
+      p.run(20); await post(`${base}/api/sessions/${sess.id}/submit`, { log: p.log, until: +p.t.toFixed(3), hash: p.stateHash() });
+    };
+    await play(null, ['level: expert']);                                                                   // unaided, the case's own patient
+    await play({ weightKg: 70 }, ['level: beginner', 'senior hint: preox', 'senior hint (unprompted): rsi', 'guide rsi: check suction', 'guide rsi: preoxygenate']);
+    const [a, b] = await (await fetch(base + '/api/research/export?format=json', { headers: auth })).json();
+    assert.deepEqual([a.level, a.senior_hints, a.guided_steps, a.patient_default], ['expert', 0, 0, 1]);
+    assert.deepEqual([b.level, b.senior_hints, b.guided_steps, b.patient_default, b.weight_kg], ['beginner', 2, 2, 0, 70]);
+    assert.equal(a.bmi, +(SCENARIOS.obese_rsi.spec.weightKg / (SCENARIOS.obese_rsi.spec.heightCm / 100) ** 2).toFixed(1));
+  } finally { await s.close(); }
+});

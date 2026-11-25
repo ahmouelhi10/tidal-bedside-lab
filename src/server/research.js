@@ -4,6 +4,22 @@
 import crypto from 'node:crypto';
 import { keyActionTimes } from '../engine/timeline.js';
 import { ANTS_CATEGORIES } from '../engine/debrief.js';
+import { SCENARIOS } from '../engine/scenarios.js';
+
+/** What helped the learner, read from the notes the client logs (coach.js, procedures.js): the help level chosen
+ *  (beginner: coach; intermediate: senior on request; expert: none), senior hints, guided-panel steps. A study compares
+ *  like with like: these are confounders, not scores. */
+function helpUsed(log) {
+  const notes = log.filter(e => e.type === 'note' && typeof e.text === 'string').map(e => e.text);
+  const lv = notes.filter(s => s.startsWith('level: ')).pop();
+  return { level: lv ? lv.slice(7) : '', senior_hints: notes.filter(s => s.startsWith('senior hint')).length, guided_steps: notes.filter(s => s.startsWith('guide ')).length };
+}
+/** The patient played, and whether it is the case's own (the learner can change sex, age and size, which changes the case). */
+function patientOf(r) {
+  const s = r.spec || {}, d = r.scenario ? SCENARIOS[r.scenario]?.spec || {} : null, keys = ['sex', 'age', 'heightCm', 'weightKg'];
+  const bmi = s.weightKg && s.heightCm ? +(s.weightKg / (s.heightCm / 100) ** 2).toFixed(1) : '';
+  return { patient_default: d ? (keys.every(k => s[k] === d[k]) ? 1 : 0) : '', sex: s.sex ?? '', age: s.age ?? '', height_cm: s.heightCm ?? '', weight_kg: s.weightKg ?? '', bmi };
+}
 
 const KEY_TIMES = ['monitoring', 'ivAccess', 'oxygen', 'firstDrug', 'airwaySecured', 'cprStart', 'firstShock', 'firstLab'];
 
@@ -28,7 +44,7 @@ export function researchRows(records, salt) {
     const k = keyActionTimes(ev), team = (r.log || []).filter(e => e.type === 'team.order').length, crit = Object.fromEntries((r.result.score?.items || []).map(i => [i.id, i.frac]));
     const row = { session: r.id.slice(0, 12), learner_pid: pid(salt, r.learner), scenario: r.scenario || 'free', created: r.createdAt, submitted: r.submittedAt || '',
       verified: r.result.verified ? 1 : 0, sim_time_s: Math.round(r.result.simTimeS ?? 0), score_pct: r.result.score?.pct ?? '', grade: r.result.score?.grade ?? '',
-      instructor_changes: (r.log || []).filter(e => e.type === 'instructor.inject').length, team_orders: team,
+      instructor_changes: (r.log || []).filter(e => e.type === 'instructor.inject').length, team_orders: team, ...helpUsed(r.log || []), ...patientOf(r),
       self_pct: r.self?.pct ?? '', ...Object.fromEntries(ANTS_CATEGORIES.map(a => ['self_ants_' + a, r.self?.ants?.[a] ?? ''])) };
     for (const kk of KEY_TIMES) row['t_' + kk] = k[kk] == null ? '' : +k[kk].toFixed(1);
     for (const id of critIds) row['crit_' + id] = crit[id] ?? '';

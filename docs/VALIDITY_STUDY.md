@@ -1,6 +1,6 @@
 # Validity study protocol
 
-**Status:** draft protocol, not yet run. It needs ethics review before any data is collected.
+**Status:** draft protocol, not yet run. It needs ethics review before any data is collected. A small pilot comes first: [PILOT.md](PILOT.md).
 
 **Purpose:** collect the evidence a school, a journal or an accreditation body asks for before trusting the simulator's scores for decisions about learners. The simulator is an education tool, not a medical device (see `INTENDED_USE.md`). This protocol is about **educational** validity: whether the scores mean what we claim.
 
