@@ -1,6 +1,7 @@
 // Simulation runtime: owns the Patient, the fixed-step clock (with fast-forward), the event log and the server session.
 import { Patient, DT } from '/engine/patient.js';
 import { SCENARIOS, scoreSession } from '/engine/scenarios.js';
+import { sendWithRetry } from './retry.js';
 
 export const SPEEDS = [0, 1, 2, 5, 10, 30];
 
@@ -85,7 +86,8 @@ export class Sim extends EventTarget {
     const local = this.score(); const out = { local, server: null, online: Boolean(this.session.id) };
     if (this.session.id) {
       try {
-        const r = await fetch(`/api/sessions/${this.session.id}/submit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ log: p.log, until: +p.t.toFixed(3), hash: p.stateHash() }) });
+        const body = JSON.stringify({ log: p.log, until: +p.t.toFixed(3), hash: p.stateHash() });
+        const r = await sendWithRetry(() => fetch(`/api/sessions/${this.session.id}/submit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body }));   // a busy server (a whole class finishing at once): try again
         if (r.ok) out.server = (await r.json()).result; else out.error = (await r.json().catch(() => ({}))).error || String(r.status);
       } catch (e) { out.error = String(e && e.message || e); out.online = false; }
     }

@@ -18,7 +18,7 @@ const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf
 export const LIMITS = Object.freeze({
   maxBodyBytes: 1_000_000, maxEvents: 20_000, maxSimSeconds: 4 * 3600, maxStrLen: 64,
   body: { age: [18, 100], heightCm: [140, 210], weightKg: [35, 250] }, bmi: [15, 65],        // BMI envelope = the range covered by the engine's baseline sweep test
-  ratePerMinute: 120, replayTimeoutMs: 120_000, replayConcurrency: 2, replayQueue: 20,
+  ratePerMinute: 120, replayTimeoutMs: 120_000, replayConcurrency: 2, replayQueue: 100,   // a whole class finishing at once queues (a few seconds each) instead of being refused (docs/DEPLOYMENT.md)
 });
 const EVENT_SET = new Set(EVENT_TYPES);
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.glb': 'model/gltf-binary', '.jpg': 'image/jpeg', '.webmanifest': 'application/manifest+json' };
@@ -117,7 +117,7 @@ export function createServer({ port = 8080, host = '0.0.0.0', dataDir = path.joi
     res.writeHead(status, { ...SECURITY_HEADERS, 'Content-Type': isStr ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers });
     res.end(payload);
   };
-  const fail = (res, status, error) => send(res, status, { error }, status === 413 ? { Connection: 'close' } : {});
+  const fail = (res, status, error) => send(res, status, { error }, status === 413 ? { Connection: 'close' } : status === 503 || status === 429 ? { 'Retry-After': '2' } : {});   // busy: the client tries again (web/retry.js)
   const tooBig = () => Object.assign(new Error('payload too large'), { status: 413 });
   const readJson = (req) => new Promise((resolve, reject) => {
     const declared = Number(req.headers['content-length']);

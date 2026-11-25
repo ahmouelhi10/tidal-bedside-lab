@@ -15,6 +15,7 @@
     "check": "node scripts/check-syntax.js",
     "verify": "npm run check && npm test",
     "smoke": "node scripts/smoke.js",
+    "load-test": "node scripts/load-test.js",
     "docs": "node scripts/gen-references.js"
   }
 }

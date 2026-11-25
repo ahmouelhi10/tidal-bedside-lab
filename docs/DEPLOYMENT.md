@@ -37,7 +37,25 @@ The app sets a strict CSP (`script-src 'self'`), `X-Frame-Options: DENY`, `nosni
 
 ## Capacity
 
-Interactive play runs entirely in the browser; the server only creates sessions and verifies submissions. Verification replays the log in a worker thread (default 2 concurrent, queue 20, 120 s timeout; a 15-minute session replays in well under a second on a laptop). One small VM serves a class of several hundred.
+Interactive play runs entirely in the browser; the server only creates sessions and verifies submissions. Verification replays the log in a worker thread (`LIMITS` in `src/server/server.js`: 2 at a time, 100 more waiting, 120 s timeout, 120 API requests a minute per address). When the queue is full the server answers `503` with `Retry-After`, and the browser sends the case again after 2, 4, 8, 16 and 16 s (`src/web/retry.js`; a refused submit leaves the session open, so this is safe), while the learner fills in the self-assessment.
+
+Measured with `npm run load-test` (25 November 2026; 20-CPU workstation, Node 24; realistic sessions played to the end by the scripted experts, 10-45 minutes of patient time; each burst from distinct addresses, sent through the browser's retry):
+
+| Simultaneous submits | Final answers | Verified | Wait p50 / p95 / max | All done | Throughput | Had to retry |
+|---|---|---|---|---|---|---|
+| 1 | 1 × 200 | 1 | 0.19 / 0.19 / 0.19 s | 0.19 s | ~310 / min | 0 |
+| 8 | 8 × 200 | 8 | 0.89 / 2.41 / 2.41 s | 2.41 s | ~200 / min | 0 |
+| 30 | 30 × 200 | 30 | 3.33 / 6.66 / 6.67 s | 6.67 s | ~270 / min | 0 |
+| 60 | 60 × 200 | 60 | 6.79 / 13.32 / 13.64 s | 13.64 s | ~265 / min | 0 |
+| 102 | 102 × 200 | 102 | 11.47 / 22.06 / 22.98 s | 22.98 s | ~265 / min | 0 |
+| 130 | 130 × 200 | 130 | 14.90 / 27.92 / 29.36 s | 29.36 s | ~265 / min | 28 |
+
+- A replay costs about 0.3-0.4 s per hour of patient time here (the longest allowed session, 4 h, 1.3 s), far under the 120 s timeout.
+- The queue, not speed, bounds a burst: up to 102 submits at the same moment are all queued; beyond that the extra learners are refused once and get through on a retry. Before this change (queue 20, no retry) a burst of 30 left 8 learners with an error.
+- The wait grows with the burst (about 0.23 s per learner ahead in the queue here). The retries cover a minute; a class far larger than the table, on a slow host, could still run out of them and see the error.
+- A queued submit holds its log in memory (at most 1 MB each, typically a few kB): 100 waiting is at most ~100 MB.
+- A smaller host is slower in proportion to its CPU (a fraction of a core on a small cloud instance: expect several times the waits above); throughput scales with `replayConcurrency` up to the number of cores.
+- Not measured: the live instructor channel (Server-Sent Events) under many viewers, and the production host itself (no load was sent to it).
 
 ## Operations
 
