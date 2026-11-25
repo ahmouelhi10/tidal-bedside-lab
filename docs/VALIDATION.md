@@ -2,7 +2,7 @@
 
 How the simulator is checked, what is verified, and - above all - what is **not**. Nothing here substitutes for review by a practising anaesthetist or emergency physician.
 
-## 1. Automated verification (399 tests, `npm test`)
+## 1. Automated verification (over 550 tests, `npm test`)
 
 | Area | What is asserted | Source of the expected value |
 |---|---|---|
