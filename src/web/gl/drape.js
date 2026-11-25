@@ -56,7 +56,7 @@ export function buildDrape(body, ls, scale = 1) {
     }
     hd[i * nz + k] = m;
   }
-  const h0 = Float32Array.from(h); h.set(hd);
+  h.set(hd);
   const base = Float32Array.from(h, (v) => v > L(0.004) ? v + L(D.clear) : L(0.003)), H = Float32Array.from(base), sag = L(D.sag);   // on the bare mattress it lies flat
   for (let it = 0; it < D.steps; it++) for (let i = 0; i < nx; i++) for (let k = 1; k < nz - 1; k++) {
     const j = i * nz + k, up = H[(i > 0 ? i - 1 : i + 1) * nz + k], dn = H[(i < nx - 1 ? i + 1 : i - 1) * nz + k];
@@ -76,12 +76,14 @@ export function buildDrape(body, ls, scale = 1) {
     const end = Math.min(i, nx - 1 - i); if (end < 2) H[j] += L(0.004) * (2 - end) / 2;   // the hem is a double layer, slightly raised
   }
   // the arms lie on top: under a hand or forearm resting on the bare mattress, or clear of the body, the cloth runs just below
-  // it (an arm resting on or pressed into the body leaves the cloth over the body: the skin under it moves as it breathes)
+  // it (an arm resting on or pressed into the body leaves the cloth over the body: the skin under it moves as it breathes).
+  // "Bare mattress" and "clear" are judged on the spread height map: right beside a big flank the cloth is not pulled down,
+  // or the cloth between that sample and the flank would cut through the hip and show it in a hole
   const held = new Uint8Array(nx * nz);
   for (let j = 0; j < H.length; j++) {
     if (aLo[j] === Infinity) continue;
-    if (h0[j] < L(0.004)) H[j] = Math.min(H[j], Math.max(L(0.002), aLo[j] - L(0.003)));
-    else if (aLo[j] - L(0.003) > h0[j] + L(D.clear)) H[j] = Math.min(H[j], aLo[j] - L(0.003));
+    if (h[j] < L(0.004)) H[j] = Math.min(H[j], Math.max(L(0.002), aLo[j] - L(0.003)));
+    else if (aLo[j] - L(0.003) > h[j] + L(D.clear)) H[j] = Math.min(H[j], aLo[j] - L(0.003));
     else continue;
     held[j] = 1;
   }
