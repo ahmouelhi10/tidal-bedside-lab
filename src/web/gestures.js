@@ -39,7 +39,7 @@ export class Gestures {
         const plan = injectionPlan(ev, ctx.arrested), ph = injectionPhases(plan, ctx.speed || 1);
         if (plan.route === 'neb') { g = { k: 'step_mask', dur: 3.2, f: site('face', W.face) }; cam = 'head'; break; }
         if (plan.route === 'im' || plan.route === 'regional') {
-          const R = scene.sideSign || 1, base = plan.route === 'im' ? [W.femoral[0] - 0.2, W.femoral[1] + 0.06, W.femoral[2] + R * 0.07] : [W.femoral[0], W.femoral[1] + 0.04, W.femoral[2] + R * 0.03];
+          const R = scene.sideSign || 1, base = plan.route === 'im' ? [W.femoral[0] - 0.4, W.femoral[1] + 0.04, W.femoral[2] + R * 0.09] : [W.femoral[0], W.femoral[1] + 0.04, W.femoral[2] + R * 0.03];
           const f = scene.surfaceAt ? scene.surfaceAt(base) : { p: base, n: [0, 1, 0] };
           g = { k: 'inject_im', dur: ph.dur, phs: ph, plan, f }; cam = 'groin'; break;
         }
@@ -65,6 +65,9 @@ export class Gestures {
     }
     if (!g) return cam;
     g.t0 = t0; g.ev = ev;
+    if (g.k === 'inject' || g.k === 'inject_im') {                              // one injection at a time: the next waits until the hands are free
+      const busy = this.list.filter(x => x.k === g.k).reduce((m, x) => Math.max(m, x.t0 + x.dur), -Infinity); if (busy > t0) g.t0 = busy;
+    }
     const helper = { 'iv.access': 'arm', ...(g.k === 'inject' ? { 'drug.bolus': 'arm', 'bicarb.bolus': 'arm' } : {}), 'procedure.needle_decompression': 'chest', 'procedure.cricothyroidotomy': 'neck', 'procedure.arterial_line': 'pulse', 'io.access': 'leg' }[ev.type]
       || (ev.type === 'procedure.central_line' ? { ijv: 'neck', scv: 'chest', fem: 'groin' }[g.site] : null);
     this._dress(scene, g, helper, ev.type === 'procedure.central_line' && g.site === 'ijv');
@@ -135,6 +138,7 @@ export class Gestures {
     this.list = this.list.filter(g => t - g.t0 < g.dur + 0.1);
     for (const m of this.marks) this._mark(c, m, t);
     for (const g of this.list) {
+      if (t < g.t0) continue;                                                  // waiting its turn
       const u = Math.min(1, (t - g.t0) / g.dur);
       this._helper(c, g, u, t);
       ({ inject: this._inject, inject_im: this._injectIm, syringe: this._syringe, cannula: this._cannula, needle: this._needle, drain: this._drain, fona: this._fona, probe: this._probe, steth: this._steth, laryn: this._laryn,

@@ -68,3 +68,12 @@ test('every finger weight stays within 0..1', () => {
     const v = x.opts[kk]; if (v != null) assert.ok(v >= 0 && v <= 1, `${k} ${kk} ${v}`);
   }
 });
+
+test('one injection at a time: a second one given during a push waits until the hands are free', () => {
+  const g = new Gestures(), sc = scene();
+  g.start(sc, { type: 'drug.bolus', drug: 'propofol', amount: 150 }); sc.t = 4;
+  g.start(sc, { type: 'drug.bolus', drug: 'rocuronium', amount: 100 });
+  const [a, b] = g.list; assert.ok(Math.abs(b.t0 - (a.t0 + a.dur)) < 1e-9, `starts at ${b.t0}, the first ends at ${a.t0 + a.dur}`);
+  const calls = []; const c = { scene: { ...sc, hands: { hand_pressL: true } }, inst: (name) => calls.push(name), seg() {}, disc() {}, blob() {} };
+  g.draw(c, 10); assert.ok(calls.filter(n => n === 'syringe').length <= 2, 'one syringe (barrel + plunger) while the second waits');
+});

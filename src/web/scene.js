@@ -2,6 +2,7 @@
 // world-to-screen projection for the floating markers. Read-only view of engine state.
 import { Gestures } from './gestures.js';
 import { breathPose, breathFrame, drapeWeights } from './breathing.js';
+import { buildDrape } from './gl/drape.js';
 import { FaceAnim } from './face.js';
 import { CprAnim } from './cpr-anim.js';
 import { BodyAnim } from './body-anim.js';
@@ -139,7 +140,7 @@ export class Scene {
       else if (name === 'arm') { c.target = at(w.rightArmIV, 0); c.yaw = (w.rightArmIV[2] - w.sternum[2]) >= 0 ? 0.05 : Math.PI - 0.05; }
       else if (name === 'groin') { c.target = at(w.femoral, 0); }
     }
-    this.auto = false; this.returnAt = null; this.view = name;
+    this.auto = false; this.returnAt = null; this.view = name; this.dolly = null;
     const to = { yaw: c.yaw, pitch: c.pitch, dist: c.dist, target: c.target };
     // smooth camera move on the orbit (shortest way round), carrying on from the current motion, swinging slightly out mid-way so it travels around the bed, not through it
     const from = { yaw: this.yaw, pitch: this.pitch, dist: this.dist, target: [...this.target] };
@@ -148,13 +149,13 @@ export class Scene {
     this.goal = to;
   }
   /** Frame a world point seen from direction `dir` (unit vector from the point toward the eye) at distance `dist`, and stay there. */
-  frameSite(p, dir, dist = 0.62) {
+  frameSite(p, dir, dist = 0.62, durS = null) {
     const d = vec3.norm(dir), pitch = clamp(Math.asin(d[1]), 0.35, 1.45), yaw = Math.atan2(d[0], d[2]);
     const from = { yaw: this.yaw, pitch: this.pitch, dist: this.dist, target: [...this.target] }, dYaw = Math.atan2(Math.sin(yaw - from.yaw), Math.cos(yaw - from.yaw));
     this.auto = false; this.returnAt = null; this.view = 'site';
     const to = { yaw: from.yaw + dYaw, pitch, dist, target: [...p] };
-    this.tw = new CamMove(from, this.camVel, to, Math.max(1.2, moveDuration(from, to).dur), 0.15); this.tw.t0 = this.t;
-    this.goal = { yaw, pitch, dist, target: [...p] };
+    this.tw = new CamMove(from, this.camVel, to, durS ?? Math.max(1.2, moveDuration(from, to).dur), 0.15); this.tw.t0 = this.t;
+    this.goal = { yaw, pitch, dist, target: [...p] }; this.dolly = null;
   }
   /** World position and outward skin normal of a named site (landmark or chest site 'R_mal5'), realistic body only. */
   siteFrame(key) {
@@ -277,6 +278,16 @@ export class Scene {
   gesture(ev, res, ctx = {}) {
     const cam = this.gest.start(this, ev, res, ctx); if (!cam) return;
     const g = this.gest.list[this.gest.list.length - 1], hold = Math.min(75, (g ? g.dur : 2) + 1.2), key = this._eventSite(ev);   // the camera stays for the whole hand-held injection (a driver does not need watching)
+    if (g?.k === 'inject' && g.f && this.world) {                                 // an IV injection: glide onto the cannula port, then come closer while the plunger goes in
+      if (g.t0 > this.t + 0.05) { this.calmUntil = g.t0 + g.dur; this.returnAt = g.t0 + g.dur + 0.6; this.slowReturn = true; return; }   // queued behind one still going: the camera is already there, it just stays
+      const port = vec3.add(g.f.p, vec3.scale(g.f.n, 0.02)), back = vec3.norm(vec3.add(g.f.n, vec3.scale(g.arm, -1.6)));   // the syringe lies back from the port along the forearm
+      const aim = vec3.add(port, vec3.scale(back, 0.05)), eye = this.operatorEye('rightArmIV', aim), d = vec3.sub(eye, aim), L = Math.hypot(...d), P = g.phs;   // aim at the middle of the syringe: port and plunger both in view
+      const narrow = this.canvas.clientWidth < 600 ? 1.3 : 1, near = 0.5 * narrow, close = 0.34 * narrow;
+      this.frameSite(aim, vec3.scale(d, 1 / L), Math.min(near, L), 2.6);
+      const T0 = Math.max(this.t, g.t0);                                         // a queued injection starts when the one before it ends
+      if (!g.plan.pump && P.push[1] - P.push[0] > 1) this.dolly = { from: Math.min(near, L), to: Math.min(close, L), t0: T0 + P.push[0], t1: T0 + P.push[1] };
+      this.calmUntil = T0 + g.dur; this.returnAt = T0 + g.dur + 0.6; this.slowReturn = true; return;
+    }
     if (g?.k === 'inject_im' && g.f) { this.frameSite(g.f.p, vec3.add(g.f.n, [0, 0, -0.6]), 0.55); this.returnAt = this.t + 1.4 + hold; return; }   // IM / block: close on the site
     if (key && this.frameStepSite(key, ev.type === 'airway.intubate' ? 0.7 : 0.58)) this.returnAt = this.t + 1.4 + hold; else this.focus(cam, hold);
   }
@@ -467,7 +478,7 @@ export class Scene {
     let b, g, M;
     if (this.asset) {
       b = buildGlbBody(this.asset.glb, this.asset.meta, spec, morph);
-      if (b.meshes.sheet) b.meshes.sheet = drapeWeights(b.meshes.sheet, b.meshes.body);   // the sheet rises with the belly under it
+      if (b.meshes.sheet) b.meshes.sheet = drapeWeights(buildDrape(b.meshes.body, b.landmarks, b.scale), b.meshes.body);   // a sheet draped on this patient's body (drape.js), rising with the belly under it
       for (const [k, m] of Object.entries(b.meshes)) if (m.region && m.idx) m.jw = jointWeights(m, k === 'sheet');   // waking movements: which limb each vertex follows
       g = Object.fromEntries(Object.entries(b.meshes).map(([k, m]) => [k, r.upload(m)]));
       M = mat4.multiply(mat4.translation(CROWN_X, BED_TOP, 0), mat4.scaling(b.scale, b.scale, b.scale));
@@ -490,6 +501,12 @@ export class Scene {
       this.hot.push({ id: 'flank', label: 'hs_flank', c: this.chestSites[this.sideSign > 0 ? 'R' : 'L'].mal5, rad: 0.11 * k }); }
     this.equip = EQUIP.map(e => ({ id: e.id, label: e.label, c: e.c, rad: e.rad, equip: true }));
     this.world = Object.fromEntries(['sternum', 'padRight', 'padLeft', 'face', 'airway', 'rightArmIV', 'leftArm', 'neck', 'abdomen', 'femoral'].map(k => [k, localToWorld(this.body.M, ls[k])]));
+    { const P = b.meshes?.body?.pos, R = b.meshes?.body?.region, sg = Math.sign(ls.leftArm[2]) || 1;   // left fingertips (the pulse oximeter probe): the arm's lowest point toward the feet
+      if (b.glb && P && R) {
+        let mx = Infinity, mz = 0; for (let v = 0; v < R.length; v++) if (R[v] === 5 && P[v * 3 + 2] * sg > 0 && P[v * 3] < mx) { mx = P[v * 3]; mz = P[v * 3 + 2]; }   // the longest finger's tip
+        let top = -Infinity; for (let v = 0; v < R.length; v++) if (R[v] === 5 && P[v * 3] < mx + 0.025 && Math.abs(P[v * 3 + 2] - mz) < 0.01) top = Math.max(top, P[v * 3 + 1]);
+        if (top > -Infinity) this.world.fingerL = localToWorld(this.body.M, [mx + 0.02, top - 0.004, mz]);
+      } }
     this.procSites = this._procSites();
     { const R = this.sideSign || 1, s = b.scale || 1, toL = (w) => [(w[0] - CROWN_X) / s, (w[1] - BED_TOP) / s, w[2] / s];   // where blood comes from (blood.js)
       const th = b.glb ? this.surfaceAt([this.world.femoral[0] - 0.14, this.world.femoral[1] + 0.03, this.world.femoral[2] + R * 0.02]) : null;
@@ -664,7 +681,7 @@ export class Scene {
       this.bendU = a && this.world ? [this.world.femoral[0] + 0.04, BED_TOP, a, 0] : null; }
     // camera rig (camera-rig.js): presets are reached by a velocity-matched minimum-jerk move (setCamera), an action frames its site and then glides back to the overview (focus),
     // a drag orbits the view and it drifts back to the framing a few seconds after release
-    if (this.returnAt != null && this.t >= this.returnAt && !this.dragging) this.setCamera('default');
+    if (this.returnAt != null && this.t >= this.returnAt && !this.dragging) { this.setCamera('default'); if (this.slowReturn && this.tw) { this.tw.dur = Math.max(this.tw.dur, 2.6); } this.slowReturn = false; this.dolly = null; }
     let lift = 0;
     if (this.auto) {
       this.tw = null; const G = { yaw: -0.62 + 0.6 * Math.sin(this.t * 0.14), pitch: 0.34, dist: 3.6, target: [0.1, 0.92, 0] }, k = 1 - Math.exp(-realDt * 3);
@@ -674,12 +691,15 @@ export class Scene {
       const o = this.tw.at(this.t - this.tw.t0);
       this.yaw = o.yaw; this.pitch = o.pitch; this.dist = o.dist; this.target = o.target; lift = o.lift;
       if (o.done) this.tw = null;
+    } else if (this.dolly && this.t >= this.dolly.t0) {                       // the push: an even, slow move in toward the syringe (smooth start and end)
+      const D = this.dolly, u = Math.min(1, (this.t - D.t0) / Math.max(0.5, D.t1 - D.t0)), e = u * u * (3 - 2 * u);
+      this.dist = D.from + (D.to - D.from) * e; if (u >= 1) this.dolly = null;
     }
     { const pc = this._camPrev, h = Math.max(realDt, 1e-3);                     // camera velocity, so the next move starts from it
       if (pc && realDt > 0) this.camVel = { yaw: (this.yaw - pc.yaw) / h, pitch: (this.pitch - pc.pitch) / h, dist: (this.dist - pc.dist) / h, target: this.target.map((v, i) => (v - pc.target[i]) / h) };
       this._camPrev = { yaw: this.yaw, pitch: this.pitch, dist: this.dist, target: [...this.target] }; }
     // hand-held: the operator's posture and breathing, strongest in close-ups and settled framings, never while travelling far
-    this.hh += ((this.reduceMotion ? 0 : (this.tw ? 0.25 : 1) * handheldAmp(this.dist)) - this.hh) * (1 - Math.exp(-realDt / 0.8));
+    this.hh += ((this.reduceMotion ? 0 : (this.tw ? 0.25 : 1) * handheldAmp(this.dist) * (this.t < (this.calmUntil ?? -1) ? 0.3 : 1)) - this.hh) * (1 - Math.exp(-realDt / 0.8));   // watching an injection: a steadier hand
     const hh = handheld(this.t, this.hh), tgt = this.target.map((v, i) => v + hh.target[i]);
     if (!this.dragging && this.releasedAt != null && this.t - this.releasedAt > 3) { const k = 1 - Math.exp(-realDt * 1.6); this.off.yaw *= 1 - k; this.off.pitch *= 1 - k; }
     const yawV = this.yaw + this.off.yaw + hh.yaw, pitchV = clamp(this.pitch + this.off.pitch + hh.pitch, 0.08, 1.52);
@@ -837,14 +857,14 @@ export class Scene {
       const pr = W.padRight; hose(up(pr, 0.02), [pr[0] + 0.3, 1.05, pr[2] - 0.35], [CART[0] + 0.19, 1.0, CART[2] + 0.17], 0.004, [0.72, 0.07, 0.06], { spec: 0.5 });
     }
     if (fl.ecgLeads) {                                          // three foam electrodes with snaps, leads gathered toward the monitor
-      const st = SF('sternum') || { p: W.sternum, n: [0, 1, 0] }, lead = [[0.12, -0.09, [0.95, 0.95, 0.95]], [0.12, 0.09, [0.9, 0.2, 0.2]], [-0.1, 0.1, [0.2, 0.8, 0.3]]];
+      const st = SF('sternum') || { p: W.sternum, n: [0, 1, 0] }, lead = [[0.12, -0.09, [0.95, 0.95, 0.95]], [0.12, 0.09, [0.9, 0.2, 0.2]], [-0.07, 0.11, [0.2, 0.8, 0.3]]];   // LL on the lower left chest: above the sheet even on the smallest body (sheet top >= 0.11 m below the sternum)
       for (const [dx, dz, col] of lead) {
         const q = [st.p[0] + dx, st.p[1], st.p[2] + dz], n = this.normalAt(q), base = ride([q[0] + n[0] * 0.012, q[1] + n[1] * 0.012 - 0.008, q[2] + n[2] * 0.012]);
         disc(base, n, [1, 0, 0], 0.02, 0.02, [0.96, 0.96, 0.94], { spec: 0.2 }); blob([base[0] + n[0] * 0.004, base[1] + n[1] * 0.004, base[2] + n[2] * 0.004], 0.005, 0.004, 0.005, [0.75, 0.77, 0.8], { spec: 0.9 });
         hose([base[0] + n[0] * 0.006, base[1] + n[1] * 0.006, base[2] + n[2] * 0.006], [base[0] + 0.12, base[1] + 0.02, -0.45], [STAND[0] - 0.25, 0.95, STAND[1] + 0.35], 0.0018, col, { spec: 0.4 });
       }
     }
-    if (fl.spo2Probe) { const f = SF('leftArm') || { p: W.leftArm, n: [0, 1, 0] }; blob(this.moved(up([f.p[0] - 0.24, f.p[1], f.p[2] + 0.03], 0.015), [1, 0, 0]), 0.022, 0.012, 0.014, [0.18, 0.22, 0.28], { spec: 0.5 }); }
+    if (fl.spo2Probe) { const f = SF('leftArm') || { p: W.leftArm, n: [0, 1, 0] }, tip = W.fingerL || [f.p[0] - 0.24, f.p[1], f.p[2] + 0.03]; blob(this.moved(up(tip, W.fingerL ? 0.004 : 0.015), [1, 0, 0]), 0.022, 0.012, 0.014, [0.18, 0.22, 0.28], { spec: 0.5 }); }
     if (fl.nibp) { const a = W.leftArm; seg(this.moved([a[0] + 0.03, a[1] - 0.02, a[2]], [1, 0, 0]), this.moved([a[0] + 0.15, a[1] - 0.02, a[2]], [1, 0, 0]), 0.05, [0.2, 0.22, 0.28], { spec: 0.15 }); }
     if (fl.ivAccess && this.gest.ok('iv', this.t)) {            // 18 G cannula taped under a clear dressing, giving set to the IV pole
       const f = SF('rightArmIV') || { p: W.rightArmIV, n: [0, 1, 0] }, ax = this.armAxis(), dir = vec3.norm(vec3.add(vec3.scale(f.n, -1), vec3.scale(ax, 2.7)));

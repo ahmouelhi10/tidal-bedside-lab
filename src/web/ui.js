@@ -213,7 +213,9 @@ export class UI {
       let r = null; try { r = monitorOnset(p.spec, ev.drug, ev.amount); } catch { /* timing unavailable */ }
       if (r) this.drugClock[ev.drug] = { t0: p.t, onsetS: r.onsetS, peakS: r.peakS, sign: r.sign };
       const plan = injectionPlan(ev, !!p.arrest?.arrested);        // what the hands are doing now, and for how long (injection.js)
-      this._inj = { name: this.describe(ev) || drugName(ev.drug), plan, ph: injectionPhases(plan, this.sim.speed || 1), t0: performance.now() };
+      const ph = injectionPhases(plan, this.sim.speed || 1), now = performance.now(), prev = (this._injQ || []).filter(j => j.route === plan.route).reduce((m, j) => Math.max(m, j.end), now);   // queued behind an injection still going
+      const j = { name: this.describe(ev) || drugName(ev.drug), plan, ph, t0: prev, end: prev + ph.dur * 1000, route: plan.route };
+      this._injQ = [...(this._injQ || []).filter(q => q.end > now), j];
     });
     // the patient's voice and the stethoscope (voice.js, body-sound.js): what they say from their state; examining the chest
     // plays each lung's breath sounds and the heart, from the engine's own findings
@@ -812,15 +814,17 @@ export class UI {
   /** The injection under way: what the hands are doing (cleaning the port, connecting, injecting with the seconds left, flushing),
    *  or that a slow drug now runs on a syringe driver. Real time, shortened with the simulation speed like the gesture. */
   _injTick() {
-    const j = this._inj; let box = this.dom.inj;
+    const nowMs = performance.now(); this._injQ = (this._injQ || []).filter(q => q.end + (q.plan.pump ? 4000 : 0) > nowMs);
+    const j = this._injQ.find(q => q.t0 <= nowMs) || null; let box = this.dom.inj;
     if (!box) { box = this.dom.inj = el('div', { class: 'inj', 'aria-live': 'polite', hidden: true }); this.dom.say?.after(box); }
     if (!j) { box.hidden = true; return; }
     const s = (performance.now() - j.t0) / 1000, P = j.ph, pl = j.plan;
-    if (s > P.dur + (pl.pump ? 4 : 0)) { this._inj = null; box.hidden = true; return; }
+    if (s > P.dur + (pl.pump ? 4 : 0)) { box.hidden = true; return; }
     const left = (k) => Math.max(0, Math.ceil(P[k][1] - s));
     const txt = pl.route === 'neb' ? t('inj_neb') : s < P.swab[1] ? t('inj_swab') : s < P.connect[1] ? t(pl.route === 'iv' ? 'inj_connect' : 'inj_needle')
       : pl.pump ? t('inj_pump', { m: Math.round(pl.pushS / 60) }) : s < P.push[1] ? t('inj_push', { s: left('push') }) : s < P.flush[1] && pl.flushMl ? t('inj_flush', { ml: pl.flushMl }) : t('inj_done');
-    box.hidden = false; box.replaceChildren(el('b', { text: j.name }), el('span', { text: txt }));
+    const waiting = this._injQ.filter(q => q.t0 > nowMs).length;
+    box.hidden = false; box.replaceChildren(el('b', { text: j.name }), el('span', { text: txt }), ...(waiting ? [el('i', { text: t('inj_next', { n: waiting }) })] : []));
   }
   /** The right column never scrolls: the trends chart is shown only when there is room for it under the monitor, the coach and the effects. */
   _fitRight() {

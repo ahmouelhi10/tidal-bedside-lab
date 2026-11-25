@@ -716,6 +716,7 @@ Object.assign(FR, { dh_tdp_k: 'Torsades : kaliémie à 4,5-5 mmol/L (contrôlez,
 Object.assign(EN, { gd_present: 'Already in place on this patient: checked' }); Object.assign(FR, { gd_present: 'Déjà en place chez ce patient : vérifié' });
 Object.assign(EN, { inj_swab: 'cleaning the port', inj_connect: 'connecting to the cannula', inj_needle: 'needle in, drawing back', inj_push: 'injecting · {s} s', inj_flush: 'flushing {ml} mL saline', inj_done: 'done', inj_pump: 'on a syringe driver over {m} min', inj_neb: 'nebuliser mask on' });
 Object.assign(FR, { inj_swab: 'désinfection du robinet', inj_connect: 'raccordement au cathéter', inj_needle: 'aiguille en place, aspiration', inj_push: 'injection · {s} s', inj_flush: 'rinçage {ml} mL de sérum', inj_done: 'terminé', inj_pump: 'au pousse-seringue sur {m} min', inj_neb: 'masque de nébulisation en place' });
+Object.assign(EN, { inj_next: '· {n} next' }); Object.assign(FR, { inj_next: '· {n} ensuite' });
 export const scenarioText = (s) => (lang === 'fr' && SCEN_FR[s.id] ? { ...s, ...SCEN_FR[s.id] } : s);
 export const CRITERION_FR = {
   ana_adrenaline: 'Adrénaline (IM 0,5 mg ou IV titrée 50 µg) dans les 5 min suivant le début',
