@@ -102,6 +102,20 @@ test('impossible amounts are refused: a negative dose cannot cancel a real one, 
   const q = mk(); for (const e of ok) assert.notEqual(q.dispatch(e).ok, false, JSON.stringify(e));
 });
 
+test('the state hash sees settings, devices, drug loads and scheduled effects at once, before they reach the vitals', () => {
+  const edits = {
+    'ventilator FiO2': p => { p.vent.fio2 = 0.5; }, 'ventilator mode': p => { p.vent.mode = 'ctrl'; }, 'oxygen mask': p => { p.o2 = { fio2: 0.6, seal: 0.9 }; },
+    'apnoeic oxygen': p => { p.apOx = { fio2: 1, eff: 0.5 }; }, 'airway device': p => { p.airway.device = 'ett'; }, 'head up': p => { p.headUp = true; },
+    'antiarrhythmic load': p => { p.antiarr = 0.5; }, 'bicarbonate given': p => { p.bicarbMmol = 1; }, 'LV function': p => { p.lv = 0.6; },
+    'post-ROSC tone': p => { p.postRoscTone = 0.65; }, 'hypoxia timer': p => { p.timers.hypoxic = 12; }, 'defibrillator charged': p => { p.defib.charged = true; },
+    'defibrillator energy': p => { p.defib.energy = 200; }, 'CPR running': p => { p.cpr.mode = 'auto'; }, 'IV access': p => { p.flags.ivAccess = !p.flags.ivAccess; },
+    'a line that completes later': p => { p.pendingEvents.push({ at: p.t + 180, run: () => {} }); }, 'bleeding controlled': p => { p.bleedControlledAt = p.t; },
+  };
+  const base = mk(); base.run(5); const h = base.stateHash();
+  for (const [what, edit] of Object.entries(edits)) { const p = mk(); p.run(5); edit(p); assert.notEqual(p.stateHash(), h, what); }
+  const same = mk(); same.run(5); assert.equal(same.stateHash(), h);                  // and two untouched runs still agree
+});
+
 test('baseline sweep: every sex x BMI combination starts stable, finite and physiologic', () => {
   const rows = [];
   for (const sex of ['M', 'F']) {

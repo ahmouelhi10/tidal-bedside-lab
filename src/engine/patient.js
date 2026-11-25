@@ -811,8 +811,16 @@ export class Patient {
     const c = this.circ, r = this.resp, v = this.vol, th = this.therm;
     const vec = [this.n, c.hr, c.sbp, c.dbp, c.mapArt, c.rap, c.co, c.x.hr, c.x.svr, r.sao2, r.paco2, r.pv, r.vO2, r.vN2, r.cv, r.lactate, v.vp, v.rbc, v.vi, v.fAmt, v.fibAmt, v.pltAmt, v.res.f, v.res.fib, v.res.plt, th.tc, th.tp, this.arrest.readiness, this.arrest.vfAmp, this.myoHypox, this.rng.state, this.chest.air, this.chest.pip, this.chest.leak, this.neck.palpable ? 1 : 0, this.neck.marked ? 1 : 0, this.neck.cannulaOk ? 1 : 0, this.rngS.state, this.rngT.state, ...this.tube.hashVec(), this.peri.volume, this.rvLoad, ...(this.ward ? this.ward.hashVec() : []), ...this.drugs.hashVec(), ...this.lytes.hashVec(), ...this.crises.hashVec(), this.flutterBlockUntil ?? -1, ...this.volatile.hashVec(), this.vol.salineLoad, this.bbb === 'L' ? 1 : this.bbb === 'R' ? 2 : 0, this.ecgx.length, this.oedema, this.varix ? (this.varix.controlled ? 2 : 1) : 0, ...(this.niv ? [['cpap', 'bipap', 'hfno'].indexOf(this.niv.mode), this.niv.fio2, this.niv.epap, this.niv.ipap, this.niv.flow] : [-1]), ...this.keto.hashVec(), ...this.neuraxial.hashVec(), ...this.ponv.hashVec(), this.aspShunt, this.hypoxicBrady ? 1 : 0];
     for (const k of Object.keys(this.drugs.pk)) vec.push(...this.drugs.pk[k].a, this.drugs.pk[k].ce);
+    // what steers the course before it shows in the vitals: settings, devices, drug loads, arrest timers and the effects
+    // scheduled for later (a line or drain that completes in minutes), so a log edited there differs at once, not later
+    const A = this.airway, V = this.vent, cp = this.cpr, df = this.defib;
+    vec.push(A.patency, A.intubated ? 1 : 0, V.rate, V.vt, V.fio2, V.peep, V.seal, V.efficiency, this.o2 ? this.o2.fio2 : -1, this.o2 ? this.o2.seal : -1,
+      this.apOx ? this.apOx.fio2 : -1, this.apOx ? this.apOx.eff : -1, this.headUp ? 1 : 0, this.antiarr, this.bicarbMmol, this.lv, this.postRoscTone, this.arrestTone,
+      this.hrSmooth, this.pcwp, this.painIndex, this.stimulus, this.tdpCount ?? 0, this.bleedControlledAt ?? -1, ...Object.values(this.timers),
+      cp.flow, cp.amp, cp.totalCompressions, cp.pendingBreaths, df.energy, df.charged ? 1 : 0, df.padsOn ? 1 : 0,
+      ...Object.values(this.flags).map(Number), this.pendingEvents.length, ...this.pendingEvents.map(e => e.at));
     let h = 0x811c9dc5;
-    const s = vec.map(x => (Number.isFinite(x) ? x.toFixed(6) : 'NaN')).join('|') + '|' + this.arrest.key;
+    const s = vec.map(x => (Number.isFinite(x) ? x.toFixed(6) : 'NaN')).join('|') + '|' + this.arrest.key + '|' + [A.device, V.mode, cp.mode, cp.surface, df.mode, this.rhythmBase].join('|');
     for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
     return h.toString(16).padStart(8, '0');
   }
