@@ -30,6 +30,22 @@ jobs:
       - name: Syntax check and test suite
         run: npm run verify
 
+  smoke:
+    name: Browser smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # Headless Chrome (preinstalled on the runner) driven over the DevTools protocol: every case in English and French,
+      # every dock section, one online case verified by the server; fails on any console error or raw translation key.
+      - name: Play every case in a real browser
+        run: npm run smoke
+        env:
+          SMOKE_REQUIRED: '1'
+
   build:
     name: Build and references
     runs-on: ubuntu-latest

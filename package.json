@@ -14,6 +14,7 @@
     "build": "node scripts/build.js",
     "check": "node scripts/check-syntax.js",
     "verify": "npm run check && npm test",
+    "smoke": "node scripts/smoke.js",
     "docs": "node scripts/gen-references.js"
   }
 }

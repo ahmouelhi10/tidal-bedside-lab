@@ -28,6 +28,7 @@ A 3D emergency-room and anaesthesia patient simulator for residents and young do
 node src/server/server.js              # http://localhost:8080
 npm test                               # over 550 automated tests (~2-5 min)
 npm run verify                         # syntax check + tests
+npm run smoke                          # play every case in headless Chrome (Node >= 22, Chrome or Chromium installed)
 npm run build                          # self-contained dist/ with BUILD.json
 npm run docs                           # regenerate docs/REFERENCES.md
 ```

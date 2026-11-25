@@ -13,6 +13,7 @@ node --test tests/pk.test.js   # one test file
 node --test --test-name-pattern="catalogue" tests/scenarios.test.js   # one test by name
 npm run check                  # node --check on every .js under src/, scripts/, tests/
 npm run verify                 # check + test (what CI runs on Node 20 and 22)
+npm run smoke                  # every case in EN and FR in headless Chrome over the DevTools protocol (~2 min; Node >= 22, Chrome; CI job "Browser smoke test")
 npm run build                  # syntax check, then copy src/docs into dist/ + dist/BUILD.json (engine sha256)
 npm run docs                   # regenerate docs/REFERENCES.md from src/engine/references.js
 ```
