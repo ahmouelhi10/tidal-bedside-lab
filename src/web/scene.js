@@ -41,7 +41,8 @@ const RESCUER_LOOK = {
   brows: { color: [1, 1, 1], spec: 0.05, alphaCut: -1, cull: false, depthWrite: false, noShadow: true },
   lashes: { color: [1, 1, 1], spec: 0.05, alphaCut: -1, cull: false, depthWrite: false, noShadow: true },
 };
-const BAGGER_GOWN = [0.36, 0.62, 0.46];   // the third rescuer's gown sleeves (hands.glb), matching the tinted scrubs
+const BAGGER_GOWN = [0.36, 0.62, 0.46];
+const BAGGER_TINT = { scrubs: [0.62, 0.95, 0.72], skin: [0.74, 0.58, 0.47], hair: [2.4, 2.3, 2.15], brows: [2.0, 1.9, 1.8] };   // the third rescuer reuses a compressor's model: another skin tone and grey hair so they are not twins   // the third rescuer's gown sleeves (hands.glb), matching the tinted scrubs
 const smooth01 = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
 const HAND_KEYS = ['act', 'relax'];
 /** Joint weights for the waking movements (wake-anim.js, shader moveP): per vertex [left arm, left leg, right leg] from the body
@@ -413,8 +414,17 @@ export class Scene {
       const pushing = q.role === 'push' && q.hands > 0, el = mid(m.elbowL, m.elbowR);   // the arms on the chest for as long as the hands are
       const pose = posture(q, R.drops?.[i] ?? 0, el[2] - m.hip[2], ra.t, i * 1.7), F = rescuerFlex(m, pose);
       const yaw = face(q.from, m) + (face(q.to, m) - face(q.from, m)) * u, M = mat4.multiply(mat4.translation(...pos), mat4.multiply(mat4.rotationY(yaw), mat4.rotationZ(pose.sway)));
-      for (const pt of who[pushing ? 'cpr' : 'idle']) r.draw(pt.g, M, { flex: F, ...RESCUER_LOOK[pt.part], ...(pt.part === 'skin' && m.skinTint ? { color: m.skinTint } : {}), ...(pt.albedo ? { albedo: pt.albedo } : {}), ...(pt.normal ? { normalMap: pt.normal } : {}) });
+      // arms on the chest (the 'cpr' model) or down (the 'idle' one): the two models cross-fade over 0.3 s instead of swapping in one frame
+      this._armMix ??= []; this._armT ??= ra.t; const want = pushing ? 1 : 0, dtm = Math.max(0, Math.min(0.1, ra.t - this._armT));
+      const mix = this._armMix[i] = this._armMix[i] == null ? want : this._armMix[i] + Math.sign(want - this._armMix[i]) * Math.min(Math.abs(want - this._armMix[i]), dtm / 0.3);
+      const look = (pt, a) => ({ flex: F, ...RESCUER_LOOK[pt.part], ...(pt.part === 'skin' && m.skinTint ? { color: m.skinTint } : {}), ...(pt.albedo ? { albedo: pt.albedo } : {}), ...(pt.normal ? { normalMap: pt.normal } : {}), ...(a < 1 ? { alpha: a, noShadow: true } : {}) });
+      // the new pose is drawn solid and the old one fades over it: where the two bodies overlap the old one is hidden behind the
+      // solid surface, so only its arms are seen fading (a whole translucent body looked like a ghost)
+      const [now, old, left] = want ? [who.cpr, who.idle, 1 - mix] : [who.idle, who.cpr, mix];
+      for (const pt of now) r.draw(pt.g, M, look(pt, 1));
+      if (left > 0.001) for (const pt of old) r.draw(pt.g, M, look(pt, left));
     });
+    this._armT = ra.t;
   }
   /** The third rescuer (rescuer-anim.js bagger): standing at the head of the bed facing the feet, the elbows where the sleeves of
    *  the two gloved hands end (mask and bag), looking down at the chest, a green gown so the team can be told apart. */
@@ -425,7 +435,7 @@ export class Scene {
     const pose = posture(q, 0, el[2] - m.hip[2], t, 4.1), F = rescuerFlex(m, pose);
     if (pos[1] > 0.04) r.draw(this.g.ub, mat4.multiply(mat4.translation(pos[0], pos[1] / 2, pos[2]), mat4.scaling(0.36, pos[1], 0.5)), { color: [0.3, 0.32, 0.35], spec: 0.2 });   // a step if the bed is high
     const M = mat4.multiply(mat4.translation(...pos), mat4.multiply(mat4.rotationY(-Math.PI / 2), mat4.rotationZ(pose.sway)));
-    for (const pt of who.cpr) r.draw(pt.g, M, { flex: F, ...RESCUER_LOOK[pt.part], ...(pt.part === 'scrubs' ? { color: [0.62, 0.95, 0.72] } : pt.part === 'skin' ? { color: [1.3, 1.12, 1.0] } : {}), ...(pt.albedo ? { albedo: pt.albedo } : {}), ...(pt.normal ? { normalMap: pt.normal } : {}) });
+    for (const pt of who.cpr) r.draw(pt.g, M, { flex: F, ...RESCUER_LOOK[pt.part], ...(BAGGER_TINT[pt.part] ? { color: BAGGER_TINT[pt.part] } : {}), ...(pt.albedo ? { albedo: pt.albedo } : {}), ...(pt.normal ? { normalMap: pt.normal } : {}) });
   }
   /** Draw one instrument with its working point at p, long axis along n, turned by angle about n. */
   _instrument(name, p, n, angle = 0, opts = {}) {
@@ -688,7 +698,9 @@ export class Scene {
     // breathing: from the engine respiratory rate and tidal volume; ventilated chest rise during BVM / vent
     const rrNow = p.resp.rr;
     this.breathPh += realDt * (rrNow / 60) * Math.PI * 2;
-    this.bag = this.rescuers?.length ? bagger(p, !!(p.cpr?.mode && p.cpr.mode !== 'off')) : null;   // a third rescuer bagging at the head: the chest rises with each squeeze
+    const cprOn = !!(p.cpr?.mode && p.cpr.mode !== 'off'), awd = p.airway?.device;
+    const bmv = !cprOn && p.vent?.mode === 'ctrl' && !p.airway?.intubated && awd !== 'sga' && awd !== 'ett';   // bag-mask ventilation with a pulse: a bag and mask, not a ventilator circuit
+    this.bag = (cprOn && this.rescuers?.length) || bmv ? bagger(p, true) : null;   // a rescuer bagging at the head: the chest rises with each squeeze
     const bp = breathPose(p, this.bag ? this.bag.cycles : this.breathPh / (Math.PI * 2)), breath = [bp.L, bp.R, bp.A];   // left chest, right chest, abdomen (breathing.js)
     // compressions: animate each engine compression event
     const cpr = this.cprAnim.update(realDt, p);              // sternum travel, mattress sink, head, arms, belly (cpr-anim.js)
@@ -938,7 +950,7 @@ export class Scene {
     // the third rescuer's bag-valve-mask: face mask in an E-C grip (on a supraglottic airway, the bag on its connector), the
     // self-inflating bag beside the head squeezed by the other hand, oxygen tubing; the person is drawn with the others below
     this._bagR = null;
-    if (this.bag && this._resc && this.hands?.hand_pressL) {
+    if (this.bag && this.hands?.hand_pressL) {                                 // outside CPR the two hands only (as for the other gestures), during CPR the third rescuer's
       const bg = this.bag, f = SF('face') || { p: W.face, n: [0, 1, 0] }, n = f.n, op = vec3.norm([1, 0.45, 0]), sq = bg.squeeze;
       const MM = bg.mask ? inst('faceMask', vec3.add(f.p, vec3.scale(n, 0.006)), n, 0, { toward: op, act: 0.85, sleeve: BAGGER_GOWN })
         : inst('press', vec3.add(f.p, vec3.scale(n, 0.08)), n, 0, { toward: op, act: 0.5, sleeve: BAGGER_GOWN });   // supraglottic airway: the other hand steadies the valve on its connector
@@ -950,7 +962,7 @@ export class Scene {
       const top = vec3.add(mid, vec3.scale(ez, rad * (1 - 0.4 * sq) + 0.004)), MH = inst('pressL', top, ez, 0, { toward: vec3.norm([1, 0.5, -0.2]), act: 0.3 + 0.7 * sq, sleeve: BAGGER_GOWN });
       const end = (M, cf) => (M && cf ? this.bent(mat4.transformPoint(M, cf.c)) : null);
       const eM = end(MM, this.hands[bg.mask ? 'hand_faceMask' : 'hand_press']?.cuff) || this.bent(vec3.add(conn, [0.25, 0.08, 0.12])), eH = end(MH, this.hands.hand_pressL.cuff);
-      if (eH) this._bagR = { e: eM.map((v, i) => (v + eH[i]) / 2), sq };
+      if (eH && this._resc) this._bagR = { e: eM.map((v, i) => (v + eH[i]) / 2), sq };
     }
     // surgical gestures: catheter, chest drain, surgical airway, ultrasound mark
     const ch = p.chest, nk = p.neck;

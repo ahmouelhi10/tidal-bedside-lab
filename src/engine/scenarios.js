@@ -812,7 +812,7 @@ SCENARIOS.status_epilepticus = {
       const l = p.drugs.log.find(x => x.key === 'levetiracetam' && x.amount >= Math.min(4500, 40 * p.body.weightKg));
       return l ? { frac: lerpScore(l.t - tNeed, 600, 1800), detail: `levetiracetam ${l.amount} mg ${Math.round(Math.max(0, l.t - tNeed) / 60)} min after it was needed` } : { frac: 0, detail: 'no second-line drug' };
     }),
-    C('se_glucose', 'Glucose checked within 15 min', 10, 'glauser2016', p => { const e = p.log.find(x => x.type === 'lab.order' && ['abg', 'chem'].includes(x.kind)); return { frac: e ? lerpScore(e.t, 900, 1800) : 0, detail: e ? `${Math.round(e.t / 60)} min` : 'not checked' }; }),
+    C('se_glucose', 'Glucose checked within 15 min', 10, 'glauser2016', p => { const e = p.log.find(x => x.type === 'lab.order' && ['cbg', 'abg', 'chem'].includes(x.kind)); return { frac: e ? lerpScore(e.t, 900, 1800) : 0, detail: e ? `${Math.round(e.t / 60)} min` : 'not checked' }; }),
     C('se_oxygen', 'Oxygen within 5 min', 10, 'glauser2016', p => { const e = p.log.find(x => ['o2.mask', 'niv.set', 'vent.set'].includes(x.type)); return { frac: e ? lerpScore(e.t, 300, 900) : 0, detail: e ? `${Math.round(e.t)} s` : 'none' }; }),
     C('se_stopped', 'Seizure stopped by 30 min', 15, 'glauser2016', p => {
       const log = p.seLog ?? [], stop = log.find(e => !e.on), again = log.filter(e => e.on).length - 1;

@@ -130,11 +130,13 @@ const DRUG_UI = [
     { k: 'epinephrine', route: 'im', fixed: 500, step: 100, label: 'IM' },
     { k: 'ephedrine', fixed: 10, step: 5 },
     { k: 'dobutamine', fixed: 250, step: 50, inf: { unit: 'mcg/kg/min', def: 5, step: 0.5, toEngine: (v, b) => v * b.weightKg } },
-    { k: 'salbutamol', fixed: 5, step: 2.5 },
     { k: 'magnesium', fixed: 2, step: 0.5 },
     { k: 'dantrolene', per: 2.5, basis: 'tbw', step: 20 },
-    { k: 'lipid', per: 1.5, basis: 'tbw', step: 10, inf: { unit: 'mL/kg/min', def: 0.25, step: 0.05, toEngine: (v, b) => v * b.weightKg } },
+    { k: 'lipid', per: 1.5, basis: 'tbw', step: 10, max: 100, inf: { unit: 'mL/kg/min', def: 0.25, step: 0.05, toEngine: (v, b) => v * b.weightKg } },
     { k: 'hydrocortisone', fixed: 200, step: 50 },
+  ] },
+  { g: 'g_resp', items: [
+    { k: 'salbutamol', fixed: 5, step: 2.5 },
     { k: 'terlipressin', fixed: 2, step: 1 },
     { k: 'ceftriaxone', fixed: 1000, step: 1000 },
     { k: 'ipratropium', fixed: 0.5, step: 0.25 },
@@ -150,7 +152,7 @@ const DRUG_UI = [
     { k: 'midazolam', route: 'im', fixed: 10, step: 2.5, label: 'IM' },
     { k: 'lorazepam', fixed: 4, step: 1 },
     { k: 'diazepam', fixed: 10, step: 2.5 },
-    { k: 'levetiracetam', per: 60, basis: 'tbw', step: 250 },
+    { k: 'levetiracetam', per: 60, basis: 'tbw', step: 250, max: 4500 },   // ESETT: 60 mg/kg, at most 4.5 g
   ] },
   { g: 'g_cardio', items: [
     { k: 'isoprenaline', fixed: 20, step: 10, inf: { unit: 'mcg/min', def: 5, step: 1, toEngine: (v) => v } },
@@ -254,6 +256,10 @@ export class UI {
       this.dom.btnNew = el('button', { id: 'btnNew', class: 'ghost', onclick: () => this.openMenu(), text: t('new_case') }),
       this.dom.btnFinish = el('button', { id: 'btnFinish', class: 'primary', onclick: () => this.onFinish?.(), text: t('finish') }),
       this.dom.opts = this.buildOpts());
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => {             // a narrow window wraps the top bar onto two rows: the side columns start below it
+      const b = Math.max(0, ...[...top.children].filter(c => c.getClientRects().length).map(c => c.getBoundingClientRect().bottom));
+      if (b) document.documentElement.style.setProperty('--toph', Math.round(b + 8) + 'px');
+    }).observe(top);
     this.dom.noGl = el('div', { class: 'nogl', hidden: true, text: t('no_webgl') });
     this.dom.pins = el('div', { class: 'pins' });
     this.dom.fx = el('div', { class: 'fx-layer', 'aria-live': 'polite' });
@@ -342,7 +348,7 @@ export class UI {
     const key = `${Math.floor(p.t)}|${open}|${guiding}|${g?.i}|${!!g?.hold}|${this.level}|${this.menuOpen}|${this.sim.finished}|${this.coach?.said?.t ?? ''}|${p.log.length}`;
     if (key === this._dockKey) return this._dockTipPlace(); this._dockKey = key;
     let d = null;                                                                        // { tab (dock button) | inside (element), text }
-    if (!this.menuOpen && !this.sim.finished && this.sim.patient) {
+    if (!this.menuOpen && !this.sim.finished && this.sim.patient && !this.echoLab?.open) {   // the echo window guides itself (its protocol shows the next view)
       if (guiding) {
         const st = g.step, info = this._guideSteps(p), step = L(st);
         const r = g.hold ? (this.level === 'expert' ? null : open === 'tab_guide' ? { inside: 'continue' } : { tab: 'tab_guide', why: 'back' })
@@ -358,8 +364,8 @@ export class UI {
         if (r?.act && !r.wait && this._busy && r.act.type + (r.act.kind || '') === this._busy.key && p.t < this._busy.until)   // under way: wait for it
           r = { ...r, wait: true, act: { ...r.act, why: 'busy', left: Math.ceil(this._busy.until - p.t) } };
         if (r?.wait) { const w = r.act, txt = t('dh_wait_' + w.why, { x: r.text, pct: w.pct, s: w.left });   // nothing to press: say why, no pulse
-          d = { wait: true, text: txt, ...(r.inside ? { at: this._findControl(controlOf(CRITERION_EVENT[r.id]) || criterionControl(r.id)) } : { at: btns.find(b => b.dataset.tab === r.tab && !b.hidden) }) }; }
-        else if (r) d = r.inside ? { inside: this._findControl(r.act ? controlOf(r.act) : criterionControl(r.id)), text: `${t('dh_press')} ${r.text}${this._applySet(r.act)}` } : { tab: r.tab, text: `${t(r.why === 'senior' ? 'dh_senior' : 'dh_next')} ${r.text}` };
+          d = { wait: true, text: txt, ...(r.inside ? { at: this._findControl(controlOf(r.ctl || CRITERION_EVENT[r.id]) || criterionControl(r.id)) } : { at: btns.find(b => b.dataset.tab === r.tab && !b.hidden) }) }; }
+        else if (r) d = r.inside ? ((set) => ({ inside: this._findControl(r.act ? controlOf(r.act) : criterionControl(r.id)), text: `${t('dh_press')} ${r.text}${set}` }))(this._applySet(r.act)) : { tab: r.tab, text: `${t(r.why === 'senior' ? 'dh_senior' : 'dh_next')} ${r.text}` };   // inside: the values first (a form may redraw), then the control
       }
     }
     for (const b of btns) {
@@ -368,6 +374,7 @@ export class UI {
       if (on) { if (b.dataset.hint !== d.text) { b.dataset.hint = d.text; b.setAttribute('aria-description', d.text); } }
       else if (b.dataset.hint != null) { delete b.dataset.hint; b.removeAttribute('aria-description'); }
     }
+    if (d?.inside) d.inside = this._onPage(d.inside); if (d?.at) d.at = this._onPage(d.at);   // on another page of the section: point at its chip
     const inEl = d?.inside || null;                                                      // the control inside the open section
     if (this._ptrEl !== inEl) {
       this._ptrEl?.classList.remove('ptr-pulse'); this._ptrEl?.removeAttribute('aria-description');
@@ -397,23 +404,31 @@ export class UI {
     const shown = [];
     for (const [q, v, unit] of act.set) {
       const f = P.querySelector(q); if (!f) continue;
-      if (f.dataset.ptrSet !== String(v) || f.value === String(v)) { f.value = String(v); f.dataset.ptrSet = String(v); f.classList.add('ptr-set'); }
+      if (f.tagName === 'SELECT' && f.closest('.wd-form')) {   // the ward's prescription form: choosing in it only fills the form (it redraws), so the pointer fills it
+        if (f.value !== String(v) && [...f.options].some(o => o.value === String(v))) { f.value = String(v); f.dispatchEvent(new Event('change', { bubbles: true })); }
+        shown.push(P.querySelector(q)?.selectedOptions[0]?.textContent || v); continue;
+      }
+      if (f.dataset.ptrSet !== String(v) || f.value === String(v)) { f.value = String(v); f.dataset.ptrSet = String(v); f.classList.add('ptr-set'); f.dispatchEvent(new Event('input', { bubbles: true })); }   // what the row shows follows at once
       shown.push(f.tagName === 'SELECT' ? (f.selectedOptions[0]?.textContent || v) : `${v}${unit ? ' ' + unit : ''}`);
     }
     return shown.length ? ` (${shown.join(', ')})` : '';
   }
   /** The element of a control description ({ sel } or { label }) in the open section, if it is shown. */
-  _findControl(c) {
+  /** The control for c in the open section. Not shown (a closed drug, another page): what opens it, unless real (the control itself or null). */
+  _findControl(c, real = false) {
     const P = this.dom.panel; if (!c || !P) return null;
-    const e = c.sel ? P.querySelector(c.sel) : [...P.querySelectorAll('button')].find(b => b.textContent.includes(t(c.label)));
-    return e && e.getClientRects().length ? e : null;
+    let e = c.sel ? P.querySelector(c.sel) || (c.alt ? P.querySelector(c.alt) : null) : [...P.querySelectorAll('button')].find(b => b.textContent.includes(t(c.label)));
+    if (!e || real) return e && e.getClientRects().length ? e : null;
+    if (!e.closest('.pg[hidden]') && !e.getClientRects().length) e = e.closest('.drug:not(.open)')?.querySelector('.dtog') || e;
+    e = this._onPage(e);
+    return e.getClientRects().length ? e : null;
   }
   /** In a guided procedure, the step's own control in its real section does the step (with the guide's doses and checks). */
   _guideClick(e) {
     const g = this.guide, p = this.sim.patient; if (!g || g.finished || g.hold || !p || this.sim.finished || !this.panelOpen || this.tab === 'tab_guide') return;
     const st = g.step; if (!st || st.hand) return;
     const info = this._guideSteps(p); if (info.tabs[g.i] !== this.tab) return;
-    const c = this._findControl(controlOf(info.ev[g.i]));
+    const c = this._findControl(controlOf(info.ev[g.i]), true);
     if (c && c.contains(e.target)) { e.stopPropagation(); e.preventDefault(); this.guideDo(); }
   }
   _dockTipPlace() {
@@ -739,6 +754,7 @@ export class UI {
   }
   onSessionStart() {
     this.closeMenu(false); this._speedBefore = 0;
+    this.echoLab?.stop(); this.bronch?.stop(); this._busy = null;                 // the last patient's echo or scope window does not stay open, nor its "under way" wait
     this.logLines = []; this.dom.logList.replaceChildren(); this.guide = null; this._unseen = 0; this._logBadge(); this.toggleLog(false);
     this.effects.reset(); this.effLines = []; this.dom.effList.replaceChildren(); this.drugClock = {}; this._labsSeen = 0;
     this.speaker?.reset(); this.bodySound?.stop(); this._talkS = null; this._saidAt = 0; if (this.dom.say) this.dom.say.hidden = true;
@@ -782,8 +798,53 @@ export class UI {
     this.dom.panelTitle.textContent = t(this.tab);
     const P = this.dom.panel; P.replaceChildren(); P.className = 'panel';   // a workspace (the infectiology ward) may have restyled the panel: start clean for every tab
     const b = this.sim.patient.body;
-    queueMicrotask(() => stepify(P));
+    queueMicrotask(() => { this._pageify(P, this.tab); stepify(P); });
     ({ tab_guide: () => this.panelGuide(P), tab_drugs: () => this.panelDrugs(P, b), tab_fluids: () => { this.panelFluids(P); fluidsExtra(this, P); }, tab_airway: () => this.panelAirway(P, b), tab_circ: () => { this.panelCirc(P); pacingExtra(this, P); }, tab_proc: () => { this.panelProc(P); procExtra(this, P); }, tab_orders: () => { this.panelOrders(P); ordersExtra(this, P); }, tab_ward: () => (this.wardView ??= new WardView(this)).render(P) })[this.tab]();
+  }
+
+  /** The right column never scrolls: the trends chart is shown only when there is room for it under the monitor, the coach and the effects. */
+  _fitRight() {
+    const R = this.dom.right, tr = R?.querySelector(':scope > .trends'); if (!tr || !R.clientHeight) return;
+    const gap = parseFloat(getComputedStyle(R).rowGap) || 8;
+    let used = 0; for (const c of R.children) if (c !== tr && !c.hidden && c.getClientRects().length) used += Math.max(c.getBoundingClientRect().height, c.scrollHeight) + gap;   // what the others need, not what they were squeezed to
+    const fit = R.clientHeight - used >= 150;
+    if (tr.hidden === fit) tr.hidden = !fit;
+  }
+  /** One page at a time inside a section: each heading (h4) or group (details) becomes a page, chosen from a row of chips
+   *  at the top, so a section fits on the screen without scrolling. What comes before the first heading stays visible. */
+  _pageify(P, tab) {
+    if (P.isConnected && !P.querySelector(':scope > .pg-bar')) for (const p of P.querySelectorAll('p.muted.small, .pw-coach > p')) p.addEventListener('click', () => p.classList.toggle('open'));   // help cut to two lines on a phone opens on tap
+    if (!P.isConnected || P.querySelector(':scope > .pg-bar') ) return;
+    const SHORT = Object.fromEntries(['sg_needle_h', 'sg_tube_h', 'sg_fona_h', 'pr_other', 'px_title', 'px_regional', 'niv_title', 'va_title', 'sc_title', 'od_monitor', 'aw_device', 'cp_cpr', 'pc_title', 'mech_title'].map(k => [t(k), t('pg_' + k)]));
+    const pages = []; let cur = null;
+    for (const n of [...P.children]) {
+      const isSum = n.tagName === 'DETAILS' && n.firstElementChild?.tagName === 'SUMMARY';
+      if (n.tagName === 'SECTION' && n.classList.contains('wd-box') && n.firstElementChild?.tagName === 'H4') {   // the ward: each box a page
+        cur = { title: n.firstElementChild.textContent.trim(), box: el('div', { class: 'pg' }) }; pages.push(cur); n.firstElementChild.remove(); n.replaceWith(cur.box); cur.box.append(n); cur = null; continue;
+      }
+      if (n.tagName === 'H4' || isSum) {
+        cur = { title: (isSum ? n.firstElementChild : n).textContent.trim(), box: el('div', { class: 'pg' }) }; pages.push(cur);
+        if (isSum) { n.firstElementChild.remove(); cur.box.append(...n.childNodes); } n.replaceWith(cur.box); continue;
+      }
+      if (cur) cur.box.append(n);
+    }
+    if (pages.length < 2) { for (const pg of pages) pg.box.prepend(el('h4', { text: pg.title })); return; }
+    this._pg ??= {};
+    const bar = el('div', { class: 'pg-bar', role: 'tablist' });
+    const show = (i) => {
+      this._pg[tab] = pages[i].title;
+      pages.forEach((pg, j) => { pg.box.hidden = j !== i; bar.children[j].classList.toggle('on', j === i); bar.children[j].setAttribute('aria-selected', String(j === i)); });
+      this._dockKey = null;                                                    // the pointer may now find its control
+    };
+    pages.forEach((pg, i) => { pg.box.setAttribute('role', 'tabpanel'); bar.append(el('button', { type: 'button', class: 'pg-chip', role: 'tab', title: pg.title, text: SHORT[pg.title] && !SHORT[pg.title].startsWith('pg_') ? SHORT[pg.title] : pg.title, onclick: () => show(i) })); });
+    pages[0].box.before(bar);
+    show(Math.max(0, pages.findIndex(pg => pg.title === this._pg[tab])));
+  }
+  /** A control on a page not shown: the chip of its page stands in for it (the pointer and the tip go there). */
+  _onPage(elm) {
+    const pg = elm?.closest?.('.pg[hidden]'); if (!pg) return elm;
+    const pgs = [...pg.parentNode.querySelectorAll(':scope > .pg')], bar = pg.parentNode.querySelector(':scope > .pg-bar');
+    return bar?.children[pgs.indexOf(pg)] || elm;
   }
 
   act(ev, label) {
@@ -860,22 +921,27 @@ export class UI {
   panelDrugs(P, b) {
     const basisW = { lbm: b.lbm, ibw: b.ibw, tbw: b.weightKg };
     for (const grp of DRUG_UI) {
-      const sec = el('details', { open: true }, el('summary', { text: t(grp.g) }));
+      const sec = el('details', { open: true }, el('summary', { text: t(grp.g + '_s'), title: t(grp.g) }));
       for (const it of grp.items) {
-        const d = DRUGS[it.k]; const def = it.fixed ?? Math.max(it.step, round(it.per * basisW[it.basis], it.step));
+        const d = DRUGS[it.k]; const def = it.fixed ?? Math.min(it.max ?? Infinity, Math.max(it.step, round(it.per * basisW[it.basis], it.step)));   // weight-based, capped at the maximum dose
         const dose = el('input', { type: 'number', min: 0, step: it.step, value: def, 'aria-label': t('dose') + ' ' + drugName(it.k, d.name) });
         const name = drugName(it.k, d.name) + (it.label ? ' (' + t('route_' + it.route) + ')' : '');
-        // one card per drug: name and dosing rule, a bolus line, and for infusions a rate line with start / stop below
-        const row = el('div', { class: 'drug', dataset: { drug: it.k } },
-          el('div', { class: 'dn' }, el('b', { text: name }), el('span', { class: 'drun', text: t('dr_running') }),
-            el('span', { class: 'muted small rule', text: it.ca ? t('ca_rule', { ml: Math.round(it.fixed / it.ca.mmolPerMl), c: it.ca.mmolPerMl }) : it.fixed ? t('basis_fixed') : `${it.per} ${d.unit}/kg · ${t('basis_' + it.basis)}` }), it.warn ? el('span', { class: 'warn small', title: t('not_in_arrest'), text: '⚠ ' + t('not_in_arrest') }) : null),
-          el('div', { class: 'dcount', hidden: true, dataset: { drug: it.k } }, el('span', { class: 'dc-txt' }), el('span', { class: 'dc-bar' }, el('i'))),
+        // one line per drug: name, the dose that will be given, and give; tapping the name opens the dose, the time to effect and the infusion
+        const det = el('div', { class: 'ddet' });
+        const row = el('div', { class: 'drug', dataset: { drug: it.k, ...(it.route ? { route: it.route } : {}) } },
+          el('div', { class: 'dhead' },
+            el('button', { type: 'button', class: 'dtog', 'aria-expanded': 'false', title: t('dr_more'), onclick: (e) => { const on = row.classList.toggle('open'); e.currentTarget.setAttribute('aria-expanded', String(on)); this._dockKey = null; } },
+              el('b', { text: name }), it.warn ? el('span', { class: 'warn', title: t('not_in_arrest'), text: ' ⚠' }) : null, el('span', { class: 'drun', text: t('dr_running') })),
+            el('span', { class: 'dgv', dataset: { unit: d.unit }, text: `${def} ${d.unit}` }),
+            this.btn(it.route && it.route !== 'iv' ? t('route_' + it.route) : t('bolus'), () => this.act({ type: 'drug.bolus', drug: it.k, amount: Number(dose.value), ...(it.route ? { route: it.route } : {}) }, `${name} ${dose.value} ${d.unit}`), 'act dgive')),
+          el('div', { class: 'dcount', hidden: true, dataset: { drug: it.k } }, el('span', { class: 'dc-txt' }), el('span', { class: 'dc-bar' }, el('i'))), det);
+        det.append(el('div', { class: 'dn' }, el('span', { class: 'muted small rule', text: it.ca ? t('ca_rule', { ml: Math.round(it.fixed / it.ca.mmolPerMl), c: it.ca.mmolPerMl }) : it.fixed ? t('basis_fixed') : `${it.per} ${d.unit}/kg · ${t('basis_' + it.basis)}` }), it.warn ? el('span', { class: 'warn small', text: '⚠ ' + t('not_in_arrest') }) : null),
           el('div', { class: 'dtime', dataset: { drug: it.k, dose: def } }, el('span', { class: 'muted small', text: '⏱ ' + t('dt_computing') })),
-          el('div', { class: 'dline' }, el('span', { class: 'dl', text: t('bolus') }), dose, el('span', { class: 'unit', text: d.unit }),
-            this.btn(it.route && it.route !== 'iv' ? t('route_' + it.route) : t('bolus'), () => this.act({ type: 'drug.bolus', drug: it.k, amount: Number(dose.value), ...(it.route ? { route: it.route } : {}) }, `${name} ${dose.value} ${d.unit}`), 'act')));
+          el('div', { class: 'dline' }, el('span', { class: 'dl', text: t('bolus') }), dose, el('span', { class: 'unit', text: d.unit })));
+        dose.addEventListener('input', () => { const g = row.querySelector('.dgv'); if (g) { g.dataset.v = dose.value; g.textContent = dose.value + ' ' + d.unit; } });   // the dose on the line is the one Give gives
         if (it.inf) {
           const rate = el('input', { type: 'number', min: 0, step: it.inf.step, value: it.inf.def, 'aria-label': t('rate') + ' ' + name });
-          row.append(el('div', { class: 'dline' }, el('span', { class: 'dl', text: t('infusion') }), rate, el('span', { class: 'unit', text: it.inf.unit })),
+          det.append(el('div', { class: 'dline' }, el('span', { class: 'dl', text: t('infusion') }), rate, el('span', { class: 'unit', text: it.inf.unit })),
             el('div', { class: 'dbtns' },
               this.btn('▶ ' + t('dr_start'), () => this.act({ type: 'drug.infusion', drug: it.k, rate: it.inf.toEngine(Number(rate.value), b) }, `${name} ${rate.value} ${it.inf.unit}`), 'act', { title: t('infusion') }),
               this.btn('■ ' + t('stop'), () => this.act({ type: 'drug.stop', drug: it.k }, name + ' - ' + t('stop')), 'ghost')));
@@ -908,7 +974,7 @@ export class UI {
       el('h4', { text: t('aw_vent') }),
       el('div', { class: 'row2' }, this.btn(t('aw_bvm_start'), () => this.act({ type: 'vent.set', settings: { mode: 'ctrl', rate: 10, vt: Math.round(7 * b.pbw), fio2: 1, peep: 0, seal: this.sim.patient.airway.intubated || this.sim.patient.airway.device === 'sga' ? 0.97 : 0.85 } }, t('aw_bvm_start')), 'act primary', { id: 'btnBvm' }), this.btn(t('aw_vent_stop'), () => this.act({ type: 'vent.set', settings: { mode: 'spont' } }, t('aw_vent_stop')), 'act')), el('div', { class: 'row4' }, el('label', { class: 'f' }, el('span', { text: t('aw_mode') }), mode), el('label', { class: 'f' }, el('span', { text: t('aw_rate') }), rate), el('label', { class: 'f' }, el('span', { text: t('aw_vt') }), vt), el('label', { class: 'f' }, el('span', { text: t('aw_fio2') }), fio2)),
       el('div', { class: 'row2' }, el('label', { class: 'f' }, el('span', { text: t('aw_peep') }), peep), this.btn(t('aw_set'), () => this.act({ type: 'vent.set', settings: { mode: mode.value, rate: Number(rate.value), vt: Number(vt.value) * b.pbw, fio2: Number(fio2.value), peep: Number(peep.value), seal: this.sim.patient.airway.intubated ? 0.97 : 0.85 } }, t('aw_set')), 'act primary')),
-      this.mechBlock());
+      el('h4', { text: t('mech_title') }), this.mechBlock());   // the ventilator curves: a page of their own
     nivExtra(this, P);
     vaporizerExtra(this, P);
   }
@@ -916,7 +982,7 @@ export class UI {
   mechBlock() {
     const vals = el('div', { class: 'mech-vals' });
     const cv = el('canvas', { class: 'mech-curves', width: 600, height: 300, 'aria-label': t('mech_curves') });
-    this.dom.mech = { vals, cv, box: el('div', { class: 'mech' }, el('h4', { text: t('mech_title') }), el('p', { class: 'muted small mech-off', text: t('mech_off') }), vals, cv) };
+    this.dom.mech = { vals, cv, box: el('div', { class: 'mech' }, el('p', { class: 'muted small mech-off', text: t('mech_off') }), vals, cv) };
     return this.dom.mech.box;
   }
   _mechTick(p) {
@@ -960,7 +1026,6 @@ export class UI {
   panelProc(P) {
     const sel = (id, opts, def) => el('select', { id }, opts.map(([v, l]) => el('option', { value: v, text: l, ...(v === def ? { selected: true } : {}) })));
     const p = this.sim.patient, startSide = p?.chest?.side || 'R';
-    if (this.echoLab) P.append(el('div', { class: 'row2' }, this.btn(t('ec_open'), () => this.echoLab.start(), 'act primary')));
     const side = sel('selSgSide', [['R', t('sg_R')], ['L', t('sg_L')]], startSide), site = sel('selSgSite', ['mcl2', 'mal5', 'aal5'].map(k => [k, t('site_' + k)]), 'mal5');
     const len = sel('selSgLen', [[50, '50 mm (14G)'], [70, '70 mm'], [80, '80 mm'], [100, '100 mm']], 50);
     const fr = sel('selSgFr', [[14, '14 Fr'], [20, '20 Fr'], [28, '28 Fr'], [32, '32 Fr'], [36, '36 Fr']], 28);
@@ -985,13 +1050,12 @@ export class UI {
     };
     const items = [['pr_pericardio', 'procedure.pericardiocentesis'], ['pr_pci', 'procedure.pci'], ['pr_lysis', 'procedure.thrombolysis'], ['pr_hyperk', 'procedure.treat_hyperkalemia']];
     P.append(
-      el('h4', { text: t('sg_title') }),
-      el('div', { class: 'sg-block' }, el('b', { class: 'small', text: t('sg_exam') }), el('div', { class: 'stack' }, this.btn(t('sg_chest_exam'), examChest, 'act', { id: 'btnExamChest' }), this.btn(t('sg_pocus'), pocus, 'act', { id: 'btnPocus' }), this.btn(t('sg_neck_palp'), () => neck('palpation'), 'act', { id: 'btnNeckPalp' }), this.btn(t('sg_neck_us'), () => neck('ultrasound'), 'act', { id: 'btnNeckUs' }))),
-      el('div', { class: 'sg-block' }, el('b', { class: 'small', text: t('sg_needle_h') }), el('div', { class: 'row2' }, f(t('sg_side'), side), f(t('sg_len'), len)), f(t('sg_site'), site), this.btn(t('sg_do_needle'), needle, 'act danger', { id: 'btnNeedle' })),
-      el('div', { class: 'sg-block' }, el('b', { class: 'small', text: t('sg_tube_h') }), el('div', { class: 'row2' }, f(t('sg_side'), side.cloneNode(true)), f(t('sg_fr'), fr)),
-        this.btn(t('sg_do_tube'), (e) => { const sd = e.currentTarget.parentNode.querySelector('select').value; const r = this.act({ type: 'procedure.chest_tube', side: sd, fr: Number(fr.value) }, t('sg_tube_h') + ' ' + sd); if (r?.ok) show([t('tube_started') + (r.willTakeS ? ` (${Math.round(r.willTakeS)} s)` : '')]); }, 'act danger', { id: 'btnTube' })),
-      el('div', { class: 'sg-block' }, el('b', { class: 'small', text: t('sg_fona_h') }), f(t('sg_tech'), tech), f(t('sg_appr'), appr), this.btn(t('sg_do_fona'), () => this.act({ type: 'procedure.cricothyroidotomy', technique: tech.value, approach: appr.value }, t('sg_fona_h')), 'act danger', { id: 'btnFona' })),
       out,
+      el('h4', { text: t('sg_exam') }), el('div', { class: 'sg-block' }, el('div', { class: 'stack' }, this.echoLab ? this.btn(t('ec_open'), () => this.echoLab.start(), 'act primary') : null, this.btn(t('sg_chest_exam'), examChest, 'act', { id: 'btnExamChest' }), this.btn(t('sg_pocus'), pocus, 'act', { id: 'btnPocus' }), this.btn(t('sg_neck_palp'), () => neck('palpation'), 'act', { id: 'btnNeckPalp' }), this.btn(t('sg_neck_us'), () => neck('ultrasound'), 'act', { id: 'btnNeckUs' }))),
+      el('h4', { text: t('sg_needle_h') }), el('div', { class: 'sg-block' }, el('div', { class: 'row2' }, f(t('sg_side'), side), f(t('sg_len'), len)), f(t('sg_site'), site), this.btn(t('sg_do_needle'), needle, 'act danger', { id: 'btnNeedle' })),
+      el('h4', { text: t('sg_tube_h') }), el('div', { class: 'sg-block' }, el('div', { class: 'row2' }, f(t('sg_side'), side.cloneNode(true)), f(t('sg_fr'), fr)),
+        this.btn(t('sg_do_tube'), (e) => { const sd = e.currentTarget.parentNode.querySelector('select').value; const r = this.act({ type: 'procedure.chest_tube', side: sd, fr: Number(fr.value) }, t('sg_tube_h') + ' ' + sd); if (r?.ok) show([t('tube_started') + (r.willTakeS ? ` (${Math.round(r.willTakeS)} s)` : '')]); }, 'act danger', { id: 'btnTube' })),
+      el('h4', { text: t('sg_fona_h') }), el('div', { class: 'sg-block' }, f(t('sg_tech'), tech), f(t('sg_appr'), appr), this.btn(t('sg_do_fona'), () => this.act({ type: 'procedure.cricothyroidotomy', technique: tech.value, approach: appr.value }, t('sg_fona_h')), 'act danger', { id: 'btnFona' })),
       el('h4', { text: t('pr_other') }), el('div', { class: 'stack' }, items.map(([k, ty]) => this.btn(t(k), () => this.act({ type: ty }, t(k)), 'act'))));
   }
   panelOrders(P) {
@@ -1000,7 +1064,7 @@ export class UI {
     P.append(el('h4', { text: t('od_monitor') }), el('div', { class: 'stack' }, att('ecgLeads', 'od_ecg'), att('spo2Probe', 'od_spo2'), this.btn(t('od_nibp'), () => { this.act({ type: 'monitor.attach', items: { nibp: true } }); this.act({ type: 'nibp.cycle' }, t('od_nibp')); }, 'act'), att('aline', 'od_aline'), att('capnography', 'od_capno'), att('tempProbe', 'od_temp'), this.btn(t('od_iv'), () => this.act({ type: 'iv.access' }, t('od_iv')), 'act')),
       el('h4', { text: t('od_orders') }), el('div', { class: 'stack' }, this.btn(t('od_ecg12'), () => { const r = this.act({ type: 'order', what: 'ecg12' }, t('od_ecg12')); showEcg12(this); if (r?.result) this.showResult(r.result); }, 'act'),   // the tracing itself (panels2.js), plus the case's written result if it has one this.btn(t('od_trop'), () => { const r = this.act({ type: 'order', what: 'troponin' }, t('od_trop')); if (r?.result) this.showResult(r.result); }, 'act'),
         this.btn(t('od_aspirin'), () => this.act({ type: 'order', what: 'aspirin', mg: 324 }, t('od_aspirin')), 'act'), this.btn(t('od_cath'), () => this.act({ type: 'order', what: 'cath_lab' }, t('od_cath')), 'act'), this.btn(t('od_call_help'), () => this.act({ type: 'order', what: 'call_help' }, t('od_call_help')), 'act'), this.btn(t('od_declare_cico'), () => this.act({ type: 'order', what: 'declare_cico' }, t('od_declare_cico')), 'act'), this.btn(t('od_ttm'), () => { this.act({ type: 'order', what: 'temperature_control' }); this.act({ type: 'thermal.device', target: 36 }, t('od_ttm')); }, 'act')),
-      el('h4', { text: t('lab_title') }), el('div', { class: 'stack' }, ...LAB_KINDS.map(k => this.btn(t('lab_' + k), () => this.act({ type: 'lab.order', kind: k }, t('lab_' + k)), 'act', { dataset: { lab: k } }))),
+      el('h4', { text: t('lab_title') }), el('div', { class: 'stack grid2' }, ...LAB_KINDS.map(k => this.btn(t('lab_' + k), () => this.act({ type: 'lab.order', kind: k }, t('lab_' + k)), 'act', { dataset: { lab: k } }))),
       this.dom.labBox = el('div', { class: 'labs' }),
       el('h4', { text: t('od_env') }), el('div', { class: 'row2' }, el('label', { class: 'f' }, el('span', { text: t('od_ambient') }), amb), this.btn(t('od_set'), () => this.act({ type: 'thermal.ambient', c: Number(amb.value) }, t('od_set')), 'act')),
       el('div', { class: 'stack' }, this.btn(t('od_cover'), () => this.act({ type: 'thermal.cover', factor: 0.5 }, t('od_cover')), 'act'), this.btn(t('od_warmer'), () => this.act({ type: 'thermal.device', target: 38, maxWatts: FORCED_AIR_W }, t('od_warmer')), 'act'), this.btn(t('od_cool'), () => this.act({ type: 'thermal.device', target: null }, t('od_cool')), 'act')));
@@ -1040,7 +1104,9 @@ export class UI {
           const tools = [...new Set(pr.steps.filter(s => s.hand).map(s => s.hand.tool))];
           const b = el('button', { class: 'pw-proc', dataset: { proc: pr.id }, onclick: () => this.startGuide(pr) });
           b.innerHTML = `<span class="pw-proc-ic">${icon(tools[0] || 'check', 24)}</span>`;
-          b.append(el('span', { class: 'pw-proc-t' }, el('b', { text: L(pr) }), el('span', { class: 'small muted', text: t('gd_nsteps', { n: pr.steps.length }) + (tools.length ? ` · ${tools.length} ${t('pw_instr')}` : '') })));
+          const [, nm, sub] = L(pr).match(/^(.*?)(?: \((.*)\))?$/);              // "Chest drain (thoracostomy)": the bracket goes on the small line
+          b.title = L(pr);
+          b.append(el('span', { class: 'pw-proc-t' }, el('b', { text: nm }), el('span', { class: 'small muted', text: (sub ? sub + ' · ' : '') + t('gd_nsteps', { n: pr.steps.length }) })));
           return b;
         })));
       return;
@@ -1048,7 +1114,7 @@ export class UI {
     const steps = g.proc.steps, cur = g.step, done = g.status.filter(x => x !== 'todo').length, hands = !!this.handsOn?.available;
     const ctx = { p, b: p.body, prm: g.prm }, evs = (st) => { try { return st.run ? st.run(ctx) : []; } catch { return []; } };
     // header: title, progress
-    P.append(el('div', { class: 'pw-head' }, el('div', {}, el('b', { text: L(g.proc) }), el('div', { class: 'pw-bar' }, el('i', { style: `width:${(100 * done / steps.length).toFixed(0)}%` })), el('span', { class: 'small muted', text: t('pw_progress', { d: done, n: steps.length }) })),
+    P.append(el('div', { class: 'pw-head' }, el('div', {}, el('b', { text: L(g.proc).replace(/ \(.*\)$/, ''), title: L(g.proc) }), el('div', { class: 'pw-bar' }, el('i', { style: `width:${(100 * done / steps.length).toFixed(0)}%` })), el('span', { class: 'small muted', text: t('pw_progress', { d: done, n: steps.length }) })),
       this.btn(t('gd_back'), () => { this.handsOn?.end(); this.guide = null; this.scene.setCamera('default'); this.buildTabs(); }, 'ghost small')));
     if (g.proc.params && !g.finished) P.append(el('div', { class: 'row2 gd-prm' }, g.proc.params.map(k => {
       const d = PARAMS[k], sel = el('select', { onchange: e => { g.prm[k] = d.num ? Number(e.target.value) : e.target.value; this.prefocusStep(); } }, d.opts.map(([v, lab]) => el('option', { value: v, text: L(lab), selected: v === g.prm[k] })));
@@ -1095,12 +1161,14 @@ export class UI {
     }
     // the step timeline
     const glyph = { done: icon('check', 14), early: icon('clock', 14), warn: '!', skipped: '–' };
-    P.append(el('h4', { text: t('pw_steps') }), el('ol', { class: 'pw-steps' }, steps.map((st, i) => {
-      const li = el('li', { class: `pw-step ${g.status[i]}${i === g.i ? ' cur' : ''}` });
+    const W = 5, lo = steps.length > W ? Math.max(0, Math.min(g.i - 1, steps.length - W)) : 0, hi = steps.length > W ? lo + W : steps.length;   // the steps around the current one; the others fold into a count
+    const more = (n, k) => (n > 0 ? el('li', { class: 'pw-more small muted', text: t(k, { n }) }) : null);
+    P.append(el('h4', { text: t('pw_steps') }), el('ol', { class: 'pw-steps' }, more(lo, 'pw_before'), ...steps.map((st, i) => {
+      const li = el('li', { class: `pw-step ${g.status[i]}${i === g.i ? ' cur' : ''}${i < lo || i >= hi ? ' far' : ''}` });
       const ic = el('span', { class: 'pw-sic' }); ic.innerHTML = g.status[i] !== 'todo' && glyph[g.status[i]] ? glyph[g.status[i]] : icon(stepIcon(st, evs(st)), 16);
       li.append(ic, el('span', { class: 'pw-st' }, el('span', { text: L(st) }), g.notes[i] ? el('span', { class: 'pw-sn', text: g.notes[i] }) : null));
       return li;
-    })));
+    }), more(steps.length - hi, 'pw_after')));
   }
   /** Begin a procedure: log it, open the workspace and frame its first site. */
   startGuide(pr) {
@@ -1338,6 +1406,7 @@ export class UI {
     signsTick(this);
     this.coach?.tick();
     this._dockPoint(p);
+    this._fitRight();
     if (this.panelOpen && this.tab === 'tab_airway') { this._mechTick(p); volTick(this); }
     if (this.panelOpen && this.tab === 'tab_orders') { this._labsTick(p); scoresTick(this); }
     if (this.panelOpen && this.tab === 'tab_circ') this._paceStatus?.();
@@ -1345,9 +1414,10 @@ export class UI {
     // the cuff re-inflates every 2.5 min once connected, like a monitor set to automatic
     if (p.flags.nibp && !this.sim.finished && this.sim.speed > 0 && p.t - (p.nibp?.t ?? -1e9) >= 150) this.sim.act({ type: 'nibp.cycle' });
     if (this.dom.monAttach) this.dom.monAttach.hidden = !!(p.flags.ecgLeads || p.flags.spo2Probe || p.flags.capnography);
-    if (this.panelOpen && this.tab === 'tab_drugs') { for (const r of this.dom.panel.querySelectorAll('.drug[data-drug]')) r.classList.toggle('running', (p.drugs?.pk?.[r.dataset.drug]?.rate ?? 0) > 0); this._drugCountdowns(p); }   // running infusions stand out
+    if (this.panelOpen && this.tab === 'tab_drugs') { for (const r of this.dom.panel.querySelectorAll('.drug[data-drug]')) { r.classList.toggle('running', (p.drugs?.pk?.[r.dataset.drug]?.rate ?? 0) > 0); const v = r.querySelector('.ddet .dline input')?.value, g = r.querySelector('.dgv'); if (g && v != null && g.dataset.v !== v) { g.dataset.v = v; g.textContent = v + ' ' + g.dataset.unit; } } this._drugCountdowns(p); }   // running infusions stand out
     const sc = p.scenario, T = p.t;
-    this.dom.clock.textContent = `${t('time')} ${mmss(T)}${sc ? ' / ' + mmss(sc.durationS) : ''}${this.sim.speed === 0 ? ' · ' + t('paused') : ''}`;
+    const clk = `${mmss(T)}${sc ? ' / ' + mmss(sc.durationS) : ''}`, pz = this.sim.speed === 0 ? ' · ' + t('paused') : '';
+    if (this.dom.clock.dataset.v !== clk + pz) { this.dom.clock.dataset.v = clk + pz; this.dom.clock.replaceChildren(el('span', { class: 'clk-l', text: t('time') + ' ' }), clk, el('span', { class: 'clk-p', text: pz })); }   // the label and 'paused' drop out on a phone
     this.dom.speedBtns.forEach(b => b.classList.toggle('on', Number(b.dataset.speed) === this.sim.speed));
     // alarm state: red pulse on cardiac arrest, amber on low saturation (when the probe is on)
     const mode = p.arrest.arrested ? 'arrest' : (p.flags.spo2Probe && p.monitor.spo2 !== null && p.monitor.spo2 < 88 ? 'hypox' : ''), sig = mode + (mode === 'arrest' ? p.arrest.key : '');

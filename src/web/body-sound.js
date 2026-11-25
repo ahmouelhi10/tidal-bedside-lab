@@ -7,6 +7,10 @@
 //  - speak(): a short line, slower and breathier when the patient is short of breath; a higher voice for a woman.
 // Sound shapes (frequencies, gains, durations) are design values tuned by ear.
 
+// system voices by name (Windows, macOS, Chrome, Android); a voice not listed is used for either sex
+const FEMALE_VOICE = /female|zira|hazel|susan|aria|jenny|sonia|libby|samantha|karen|moira|tessa|victoria|fiona|hortense|julie|denise|eloise|amelie|amélie|audrey|marie|virginie|celine|céline/i;
+const MALE_VOICE = /\bmale\b|david|mark|george|ryan|guy|daniel|alex|fred|oliver|thomas|paul|henri|claude|nicolas|jean|antoine/i;
+
 export class BodySound {
   constructor(sound) { this.sound = sound; this.noise = null; this.busyUntil = 0; }
   get ctx() { return this.sound?.on ? this.sound.ctx : null; }
@@ -30,7 +34,7 @@ export class BodySound {
   /** a: voice.js auscultation(). Returns the seconds it lasts (0 when the sound is off). */
   auscultate(a) {
     const ac = this.ctx; if (!ac || !a) return 0;
-    if (ac.state === 'suspended') ac.resume();
+    if (ac.state === 'suspended') ac.resume?.()?.catch?.(() => {});   // a browser may refuse until the page is clicked: never an uncaught error
     const now = ac.currentTime + 0.05, PART = a.rr > 0 ? Math.min(8, Math.max(3.4, 2 * 60 / a.rr + 0.3)) : 3.4, out = ac.createGain();   // two full breaths on each side out.gain.value = 0.9;
     const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1400; out.connect(lp).connect(ac.destination);   // the stethoscope cuts the highs
     ['R', 'L'].forEach((side, k) => {
@@ -42,13 +46,13 @@ export class BodySound {
           if (amp > 0) { this._burst(ac, out, tb, ti, { gain: 0.22 * amp, lo: 180, hi: 650 }); this._burst(ac, out, tb + ti, te, { gain: 0.08 * amp, lo: 150, hi: 450, attack: 0.1 }); }
           if (a.wheeze > 0.05 && amp > 0) [430, 610].forEach((f, j) => this._tone(ac, out, tb + ti + 0.05, te * 0.9, f, f * 0.93, 0.03 * a.wheeze * amp / (j + 1), 'triangle'));
           if (a.crackles > 0.05 && amp > 0 && (a.crackleSide?.[side] ?? 1) > 0) for (let c = 0; c < Math.round(3 + 7 * a.crackles); c++) {
-            const tc = tb + ti * (0.55 + 0.45 * Math.random()); this._burst(ac, out, tc, 0.012, { gain: 0.35 * a.crackles * amp, lo: 500, hi: 1300, attack: 0.1 });
+            const tc = tb + ti * (0.55 + 0.45 * Math.random()); this._burst(ac, out, tc, 0.01, { gain: 1.1 * a.crackles * amp, lo: 350, hi: 1300, attack: 0.05 });   // short, sharp pops late in inspiration
           }
         }
       }
     });
     if (a.heart) {                                                   // lub-dub under the breath sounds, all the way through
-      const T = 60 / a.heart.hr, s2 = Math.min(0.32, T * 0.42), g = 0.5 * a.heart.amp;
+      const T = 60 / a.heart.hr, s2 = Math.min(0.32, T * 0.42), g = 0.12 * a.heart.amp;   // over the lungs the heart is heard faintly, under the breath sounds
       for (let tb = now + 0.2; tb < now + 2 * PART + 0.2; tb += T) { this._tone(ac, out, tb, 0.11, 62, 44, g); this._tone(ac, out, tb + s2, 0.08, 80, 60, g * 0.7); }
     }
     const dur = 2 * PART + 0.4; this.busyUntil = performance.now() + dur * 1000;
@@ -60,7 +64,8 @@ export class BodySound {
     try {
       const u = new SpeechSynthesisUtterance(text), code = lang === 'fr' ? 'fr' : 'en';
       u.lang = code === 'fr' ? 'fr-FR' : 'en-GB'; u.rate = breathless ? 0.8 : 0.95; u.pitch = female ? 1.25 : 0.85; u.volume = 0.9;
-      const v = speechSynthesis.getVoices().find(x => x.lang?.toLowerCase().startsWith(code)); if (v) u.voice = v;
+      const all = speechSynthesis.getVoices().filter(x => x.lang?.toLowerCase().startsWith(code)), want = female ? FEMALE_VOICE : MALE_VOICE;   // a voice of the patient's sex when the system has one
+      const v = all.find(x => want.test(x.name)) || all.find(x => !(female ? MALE_VOICE : FEMALE_VOICE).test(x.name)) || all[0]; if (v) u.voice = v;
       speechSynthesis.cancel(); speechSynthesis.speak(u); return true;
     } catch { return false; }
   }

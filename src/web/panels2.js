@@ -27,9 +27,8 @@ export function procExtra(ui, P) {
       el('div', { class: 'row2' }, ui.btn(t('px_vagal_mod'), () => ui.act({ type: 'procedure.vagal', technique: 'modified' }, t('px_vagal_mod')), 'act', { title: t('px_vagal_t') }), ui.btn(t('px_vagal_std'), () => ui.act({ type: 'procedure.vagal', technique: 'standard' }, t('px_vagal_std')), 'act')),
       el('div', { class: 'row2' }, ui.btn(t('px_aline'), () => ui.act({ type: 'procedure.arterial_line', us: usA.i.checked }, t('px_aline')), 'act'), usA.node),
       el('div', { class: 'row2' }, ui.btn(t('px_cvc'), () => ui.act({ type: 'procedure.central_line', site: site.value, us: usC.i.checked }, t('px_cvc')), 'act'), el('div', {}, site, usC.node)),
-      ui.btn(t('px_ng'), () => ui.act({ type: 'procedure.ng_tube' }, t('px_ng')), 'act'),
       ui.btn(t('px_endoscopy'), () => { const r = ui.act({ type: 'procedure.endoscopy' }, t('px_endoscopy')); if (r) ui.toast(t(r.controlled ? 'px_endo_ok' : r.note ? 'px_endo_none' : 'px_endo_fail')); }, 'act'),
-      ui.btn(t('px_uc'), () => ui.act({ type: 'procedure.urinary_catheter' }, t('px_uc')), 'act'))));
+      el('div', { class: 'row2' }, ui.btn(t('px_ng'), () => ui.act({ type: 'procedure.ng_tube' }, t('px_ng')), 'act'), ui.btn(t('px_uc'), () => ui.act({ type: 'procedure.urinary_catheter' }, t('px_uc')), 'act')))));
   regionalExtra(ui, P);
 }
 
@@ -63,9 +62,9 @@ export function pacingExtra(ui, P) {
 
 /** Airway tab: non-invasive ventilation (CPAP / BiPAP) and high-flow nasal oxygen for a spontaneously breathing patient. */
 export function nivExtra(ui, P) {
-  const mode = el('select', { 'aria-label': t('niv_mode') }, ...['bipap', 'cpap', 'hfno'].map(m => el('option', { value: m, text: t('niv_' + m) })));
+  const mode = el('select', { id: 'nivMode', 'aria-label': t('niv_mode') }, ...['bipap', 'cpap', 'hfno'].map(m => el('option', { value: m, text: t('niv_' + m) })));
   const num = (v, min, max, step, l) => el('input', { type: 'number', value: v, min, max, step, 'aria-label': l });
-  const fio2 = num(0.4, 0.21, 1, 0.05, 'FiO2'), epap = num(5, 0, 20, 1, 'EPAP'), ipap = num(15, 0, 30, 1, 'IPAP'), flow = num(50, 10, 70, 5, t('niv_flow'));
+  const fio2 = Object.assign(num(ui.sim.patient?.niv?.fio2 ?? 0.4, 0.21, 1, 0.05, 'FiO2'), { id: 'nivFio2' }), epap = num(5, 0, 20, 1, 'EPAP'), ipap = num(15, 0, 30, 1, 'IPAP'), flow = num(50, 10, 70, 5, t('niv_flow'));
   const f = (l, i) => el('label', { class: 'f' }, el('span', { text: l }), i);
   P.append(el('h4', { text: t('niv_title') }), el('p', { class: 'muted small', text: t('niv_help') }),
     el('div', { class: 'row2' }, f(t('niv_mode'), mode), f('FiO2', fio2)), el('div', { class: 'row3' }, f('EPAP / CPAP', epap), f('IPAP', ipap), f(t('niv_flow'), flow)),

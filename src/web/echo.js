@@ -475,7 +475,7 @@ export class EchoLab {
     const saved = new Set(p.echo.views.filter(v => v.quality >= 0.7).map(v => v.view)), meas = new Set(p.echo.measures.map(m => m.what));
     L.replaceChildren(...ECHO_VIEWS.map((v, i) => {
       const ms = STEP_MEASURES[v], done = saved.has(v) && ms.every(m => meas.has(m) || (m === 'effusion'));
-      return el('li', { class: done ? 'done' : saved.has(v) ? 'part' : '' }, el('b', { text: `${i + 1}. ${t('ec_v_' + v)}` }), el('span', { class: 'small muted', text: t('ec_how_' + v) }),
+      return el('li', { class: (done ? 'done' : saved.has(v) ? 'part' : '') + (this._openStep === i ? ' open' : ''), title: t('ec_how_' + v), onclick: () => { this._openStep = this._openStep === i ? null : i; this._steps(); } }, el('b', { text: `${i + 1}. ${t('ec_v_' + v)}` }), el('span', { class: 'small muted', text: t('ec_how_' + v) }),
         el('span', { class: 'small', text: t('ec_look_' + v) }));
     }), el('li', { class: p.echo.reports.length ? 'done' : '' }, el('b', { text: `6. ${t('ec_tab_rep')}` }), el('span', { class: 'small muted', text: t('ec_how_rep') })));
   }

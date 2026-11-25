@@ -541,7 +541,7 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; text-ali
 .inst-srv .row2 { margin: 6px 0; }
 
 /* ---- focused echocardiography window (echo.js) */
-.echo { position: fixed; z-index: 30; right: 16px; top: 58px; bottom: 16px; width: clamp(440px, 50vw, 820px); max-width: calc(100vw - 32px); container-type: inline-size; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; border-radius: var(--r-xl); background: rgba(10, 14, 19, .95); backdrop-filter: var(--blur); border: 1px solid var(--line-2); box-shadow: var(--shadow-lg); animation: rise .25s var(--ease); }
+.echo { position: fixed; z-index: 30; right: 16px; top: 58px; bottom: 16px; width: clamp(600px, 66vw, 880px); max-width: calc(100vw - 32px); container-type: inline-size; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; border-radius: var(--r-xl); background: rgba(10, 14, 19, .95); backdrop-filter: var(--blur); border: 1px solid var(--line-2); box-shadow: var(--shadow-lg); animation: rise .25s var(--ease); }
 .echo .br-head > b::before { background: #2fd3c4; box-shadow: 0 0 0 4px rgba(47, 211, 196, .16); animation: none; }
 .ec-body { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(240px, 1fr); gap: 12px; padding: 12px; min-height: 0; overflow: hidden; }
 .ec-main { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: hidden; }
@@ -831,3 +831,166 @@ body.resizing, body.resizing * { cursor: ew-resize !important; user-select: none
 .pw-why summary { cursor: pointer; font-size: 13px; color: var(--text-2); }
 .db-level { margin: 6px 0; }
 .co-keep .co-i { color: var(--accent); }
+
+/* ---------------------------------------------------------------- sections in pages (no long scrolling) */
+.pg-bar { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 10px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.pg-chip { min-height: 0; padding: 4px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1.25; color: var(--text-2); background: rgba(255, 255, 255, .04); border: 1px solid var(--line); }
+.pg-chip:hover { color: var(--text); border-color: var(--text-2); }
+.pg-chip.on { color: #04121c; background: var(--accent); border-color: var(--accent); }
+.pg-chip.ptr-pulse { border-color: var(--warn); }
+.pg > h4:first-child { margin-top: 2px; }
+/* a drug on one line (name, dose, give); the name opens its dose, time to effect and infusion */
+.panel .drug { padding: 3px 6px 3px 2px; margin: 0 0 4px; }
+.dhead { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dtog { flex: 1 1 auto; min-width: 0; min-height: 30px; display: flex; align-items: center; gap: 6px; padding: 2px 4px 2px 18px; position: relative; background: none; border: 0; text-align: left; color: var(--text); font-size: 13px; }
+.dtog b { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dtog::before { content: ''; position: absolute; left: 6px; top: 50%; width: 5px; height: 5px; margin-top: -4px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(-45deg); transition: transform .15s var(--ease); }
+.drug.open .dtog::before { transform: rotate(45deg); }
+.dtog:hover { background: rgba(255, 255, 255, .04); }
+.dgv { flex: none; font: 600 12px var(--mono); color: var(--text-2); white-space: nowrap; }
+.dhead .dgive { flex: none; min-height: 28px; padding: 3px 10px; font-size: 12px; }
+.ddet { display: none; padding: 2px 4px 4px 18px; }
+.drug.open .ddet { display: block; }
+.drug.open { background: rgba(255, 255, 255, .045); }
+.drug .dn { margin: 0; }
+.drug .dn .rule { flex-basis: auto; font-size: 11px; }
+.dtime { margin-top: 2px; padding: 0; background: none; font-size: 11px; gap: 0 8px; }
+.dtime .dt-mon { flex-basis: auto; }
+.dline { margin-top: 4px; gap: 4px 6px; flex-wrap: nowrap; }
+.dline .dl { flex: 0 0 56px; font-size: 10px; }
+.dline .stp { flex: 0 1 112px; min-width: 88px; }
+.dline .stp button { min-height: 28px; }
+.dline .stp input[type=number] { padding: 4px 2px; }
+.dbtns { margin-top: 4px; gap: 6px; }
+.dbtns .act { min-height: 28px; padding: 3px 8px; }
+/* the 14 guided procedures: two compact columns so the list fits without scrolling */
+.panel .pw-pick { grid-template-columns: 1fr 1fr; gap: 5px; }
+.panel .pw-proc { grid-template-columns: auto 1fr; gap: 7px; padding: 6px 7px; min-height: 0; }
+.panel .pw-proc-ic { width: 28px; height: 28px; border-radius: 8px; }
+.panel .pw-proc-ic svg { width: 17px; height: 17px; }
+.panel .pw-proc-t b { font-size: 12px; line-height: 1.2; }
+.panel .pw-proc-t .small { font-size: 10.5px; }
+.panel .pw-proc { display: block; padding: 5px 8px; }
+.panel .pw-proc-ic { display: none; }
+.panel .pw-proc-t { gap: 1px; }
+.panel .pg > p.muted.small { margin: 2px 0 6px; line-height: 1.35; }
+.panel .pg .stack { margin: 6px 0; gap: 5px; }
+/* the right column fits the screen: no scrolling, never under the bottom bar */
+.hud-right { overflow: hidden; }
+.hud-right .coach { flex: 0 1 auto; min-height: 96px; max-height: none; }
+.hud-right .effects { flex: 0 1 auto; min-height: 0; overflow: hidden; }
+.hud-right .eff-list { max-height: none; overflow: hidden; }
+.hud-right .trends { flex: 0 0 auto; }
+@media (min-width: 861px) and (max-width: 1439px) { .hud-right { bottom: 122px; width: min(360px, 34vw); } }
+.co-all { margin-top: 6px; }
+.co-all summary { cursor: pointer; font-size: 12px; color: var(--text-2); }
+.co-all .co-list { margin-top: 4px; }
+.hud-right .eff-empty { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin: 0; }
+.hud-right .co-next { padding: 6px 9px; margin-bottom: 6px; }
+.hud-right .co-list { font-size: 12.5px; gap: 2px; }
+.hud-right .co-list li { min-width: 0; }
+.hud-right .co-list li > span:last-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hud-right .card { padding-top: 9px; padding-bottom: 9px; }
+.hud-right .card h3 { margin-bottom: 5px; }
+/* short screens (720-800 px high): denser controls so every page still fits */
+@media (min-width: 861px) and (max-height: 800px) {
+  .panel button, .panel select, .panel input { min-height: 30px; padding-top: 4px; padding-bottom: 4px; }
+  .panel h4 { margin: 8px 0 4px; }
+  .panel .row2, .panel .row3, .panel .row4 { gap: 6px; }
+  .hud-right .co-next > .muted, .hud-right .co-learn { display: none; }   /* the key points stay in the Briefing */
+  .hud-right .co-list { font-size: 12px; }
+  .panel .dtog, .panel .dhead .dgive { min-height: 26px; padding-top: 2px; padding-bottom: 2px; }
+  .panel .pg > p.muted.small { font-size: 11.5px; margin: 0 0 4px; }
+  .hud-right .card { padding-top: 7px; padding-bottom: 7px; }
+}
+/* phones: an open section is what the learner works with, so it gets the screen down from the small monitor;
+   the coach and effects cards step aside until it is closed (no page of a section needs scrolling) */
+@media (max-width: 600px) {
+  body:has(.hud-panel:not([hidden])) .hud-right > :not(.monWrap) { display: none; }
+  body:has(.hud-panel:not([hidden])) .hud-left { top: calc(var(--toph, 56px) + min(46vw, 260px) * .625 + 10px); max-height: none; }
+  .hud-left .hud-panel { max-height: 100%; }
+  .pg-chip { padding: 5px 10px; font-size: 13px; }
+}
+@media (max-width: 600px) {
+  .panel button, .panel select, .panel input { min-height: 30px; padding-top: 4px; padding-bottom: 4px; }
+  .panel h4 { margin: 6px 0 4px; }
+  .panel .dtog, .panel .dhead .dgive { min-height: 26px; padding-top: 2px; padding-bottom: 2px; }
+  .panel .pg > p.muted.small { font-size: 11.5px; margin: 0 0 4px; }
+  .hud-panel .phead { padding-top: 8px; padding-bottom: 8px; }
+  .panel .pg .stack { gap: 4px; margin: 4px 0; }
+}
+/* tablets and phones: the top bar wraps onto a second row instead of scrolling sideways (2x and 10x are left out) */
+@media (max-width: 860px) {
+  .hud-top { overflow-x: visible; flex-wrap: wrap; row-gap: 6px; padding-bottom: 14px; }
+  .hud-top .seg button[data-speed="2"], .hud-top .seg button[data-speed="10"] { display: none; }
+  .hud-right { top: var(--toph, 56px); }
+}
+@media (max-width: 860px) and (min-width: 601px) { .hud-left { top: var(--toph, 56px); } }
+@media (max-width: 600px) {
+  .hud-top { gap: 5px; padding: 8px 8px 12px; row-gap: 5px; }
+  .hud-top .clock { font-size: 12px; padding: 4px 10px; }
+  .hud-top > button, .hud-top .seg button { min-height: 30px; padding: 3px 8px; font-size: 12.5px; }
+  .hud-top .opts summary { width: 30px; height: 30px; font-size: 15px; }
+}
+@media (max-width: 600px) { .hud-top .clk-l, .hud-top .clk-p, .hud-top > .spacer { display: none; } }
+@media (max-width: 600px) {
+  .panel .pg > p.muted.small, .panel > p.muted.small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+  .panel p.muted.small.open { display: block; }
+  body:has(.hud-panel:not([hidden])) .monWrap { width: 40vw; margin-left: auto; }
+  body:has(.hud-panel:not([hidden])) .hud-left { top: calc(var(--toph, 56px) + 40vw * .625 + 8px); }
+}
+@media (min-width: 601px) and (max-height: 800px) {
+  .panel .pg > p.muted.small { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+  .panel p.muted.small.open { display: block; }
+}
+@media (max-height: 800px) { .mech-curves { height: 130px; } .mech-vals { margin: 4px 0 6px; gap: 4px; } .mv { padding: 4px 7px; } }
+/* the guided workspace: the step card stays, the instrument table and the step list are two pages under it */
+.panel .pw-coach { padding: 10px 12px; gap: 6px; }
+.panel .pw-coach p { font-size: 12.5px; line-height: 1.42; }
+.panel .pw-step { padding: 3px 6px; gap: 6px; grid-template-columns: 22px 1fr; }
+.panel .pw-st { min-width: 0; }
+.panel .pw-st > :first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.panel .pw-step:not(.cur) .pw-sn { display: none; }
+.panel .pw-sic { width: 20px; height: 20px; border-radius: 6px; font-size: 11px; }
+.pw-step.far { display: none; }
+.pw-more { list-style: none; padding: 1px 6px 1px 34px; font-size: 11px; }
+.panel .pw-coach > p { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+.panel .pw-coach > p.open { display: block; }
+.panel .pw-coach-top { display: none; }                         /* the step number is already in the progress line above */
+.panel .pw-head { margin-bottom: 6px; } .panel .pw-head > div { gap: 3px; } .panel .pw-head b { font-size: 14px; }
+.panel .gd-prm { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 6px; margin-bottom: 6px; }
+.panel .gd-prm .f > span { font-size: 10.5px; }
+.panel .gd-prm select { min-height: 28px; padding: 2px 4px; font-size: 12px; }
+.panel .pw-coach > p.pw-howto { -webkit-line-clamp: 1; }
+.panel .pw-table { gap: 4px; padding: 5px; }
+.panel .pw-tool { min-height: 0; gap: 2px; padding: 5px 3px 4px; font-size: 11px; }
+.panel .pw-tool svg { width: 24px; height: 24px; }
+.pg-bar { margin: 0 0 6px; padding-bottom: 6px; }
+@media (max-height: 800px) { .panel .pw-coach > .pw-effects { display: none; } }
+.panel .pw-step { padding: 2px 6px; }
+.panel .pw-sic { width: 18px; height: 18px; }
+.panel .pw-steps { gap: 1px; }
+@media (max-height: 800px) { .panel { padding-top: 8px; padding-bottom: 8px; } }
+/* echo protocol: the next view to do is spelled out, the others are one line each (tap one to read it) */
+.ec-steps li { cursor: pointer; padding: 5px 8px; }
+.ec-steps li.done > :not(b), .ec-steps li:not(.done) ~ li:not(.done):not(.open) > :not(b) { display: none; }
+.ec-steps li.done.open > :not(b) { display: block; }
+.ec-steps { gap: 4px; }
+/* echo patient tab: denser on shorter or narrower windows so it fits beside the image */
+@media (max-height: 800px), (max-width: 1100px) {
+  .ec-chips .ec-chip, .ec-chips button { min-height: 24px; padding: 2px 7px; font-size: 11.5px; }
+  .ec-pt td, .ec-pt th { padding-top: 2px; padding-bottom: 2px; }
+  .ec-case { padding: 6px 8px; }
+  .ec-case p { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin: 2px 0; }
+}
+@media (max-width: 600px) {
+  .panel .pw-coach > .pw-effects { display: none; }
+  .panel .pw-coach { padding: 8px 10px; gap: 5px; }
+  .panel .pw-head { margin-bottom: 4px; }
+  .panel .gd-prm { margin-bottom: 4px; }
+  .panel .pw-step { padding: 1px 6px; }
+  .pg-bar { margin-bottom: 4px; padding-bottom: 4px; }
+}
+/* the pre-brief's team-mode line is a sentence: it wraps instead of running off the dialog */
+.pb-team { white-space: normal; align-items: flex-start; }
+.pb-team > span { white-space: normal; min-width: 0; }

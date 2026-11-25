@@ -110,7 +110,7 @@ test('a step that needs something first points at that first: pads, charge, then
   const p = scen('witnessed_vf', 1); p.run(40);
   assert.equal(criterionAction('t_first_shock', p).type, 'defib.pads');
   p.dispatch({ type: 'defib.pads' }); assert.equal(criterionAction('t_first_shock', p).type, 'defib.charge');
-  p.dispatch({ type: 'defib.charge' }); assert.equal(criterionAction('t_first_shock', p).type, 'defib.shock', 'charging: not the charge again (it would restart)'); p.run(10); assert.equal(criterionAction('t_first_shock', p).type, 'defib.shock');
+  p.dispatch({ type: 'defib.charge' }); assert.equal(criterionAction('t_first_shock', p).type, 'wait', 'charging: wait for it (a shock now is refused), not the charge again (it would restart)'); p.run(10); assert.equal(criterionAction('t_first_shock', p).type, 'defib.shock');
   const k = scen('hyperkalaemia', 1), s = state(k, 'hyperkalaemia', { p: k, said: { id: 'hk_calcium', t: k.t }, level: 'intermediate' });
   assert.deepEqual(dockTarget(s).act, { type: 'iv.access' }); assert.equal(dockTarget(s).tab, 'tab_orders', 'no line yet: the line is in the orders');
   k.dispatch({ type: 'iv.access' }); assert.equal(dockTarget({ ...s, p: k }).tab, 'tab_drugs');
@@ -157,4 +157,44 @@ test('while a step can only wait, the beginner is told why instead of losing the
   const q = scen('obese_rsi', 1); q.dispatch({ type: 'iv.access' }); q.dispatch({ type: 'drug.bolus', drug: 'propofol', amount: 200 }); q.dispatch({ type: 'drug.bolus', drug: 'rocuronium', amount: 100 }); q.run(5);
   const a = criterionAction('intubation', q); assert.equal(a.type, 'wait'); assert.equal(a.why, 'nmb'); assert.ok(a.pct >= 0 && a.pct < 90, `${a.pct}`);
   q.run(120); assert.equal(criterionAction('intubation', q).type, 'airway.intubate', 'relaxed: intubate');
+});
+
+test('monitoring is pointed at piece by piece: after the ECG leads, the SpO2 probe, then the IV line', async () => {
+  const { criterionAction } = await import('../src/web/dock-hint.js');
+  const p = scen('stemi_vf', 1); p.dispatch({ type: 'monitor.attach', items: { ecgLeads: true } });
+  assert.deepEqual(criterionAction('monitor_iv', p).items, { spo2Probe: true });
+  p.dispatch({ type: 'monitor.attach', items: { spo2Probe: true } });
+  assert.equal(criterionAction('monitor_iv', p).type, 'iv.access');
+});
+
+test('anaphylaxis: the pointer goes to the IM adrenaline row, not the 1 mg IV one', async () => {
+  const { controlOf, CRITERION_EVENT } = await import('../src/web/dock-hint.js');
+  const c = controlOf(CRITERION_EVENT.ana_adrenaline);
+  assert.ok(c.sel.includes('[data-route="im"]'), c.sel);
+  assert.ok(controlOf({ type: 'drug.bolus', drug: 'propofol' }).sel.includes(':not([data-route])'));
+});
+
+test('defibrillation: pads, charge, wait while it charges, shock; a refused shock is not a shock; still in VF two minutes later, shock again', async () => {
+  const { criterionAction } = await import('../src/web/dock-hint.js');
+  const p = scen('witnessed_vf', 1); p.run(40); assert.ok(p.arrest.arrested); p.dispatch({ type: 'cpr.start', mode: 'auto' });
+  assert.equal(criterionAction('t_first_shock', p).type, 'defib.pads'); p.dispatch({ type: 'defib.pads' });
+  assert.equal(criterionAction('t_first_shock', p).type, 'defib.charge'); p.dispatch({ type: 'defib.charge' });
+  assert.equal(criterionAction('t_first_shock', p).type, 'wait', 'charging: nothing to press yet');
+  assert.equal(p.dispatch({ type: 'defib.shock' }).ok, false, 'a shock before the charge is refused');
+  assert.equal(criterionAction('t_first_shock', p).type, 'wait', 'and the pointer does not count it as done');
+  p.run(8); assert.equal(criterionAction('t_first_shock', p).type, 'defib.shock');
+  p.dispatch({ type: 'defib.shock' }); assert.equal(criterionAction('t_first_shock', p).type, 'skip');
+  const st = (q) => { const items = checklist(q, SCENARIOS.witnessed_vf); return { level: 'beginner', items, next: nextItem(items), said: null, t: q.t, p: q }; };
+  p.arrest.arrested = true; p.arrest.setRhythm('VF', p.t); assert.equal(dockTarget(st(p))?.id, 'arrest_cpr', 'an arrest without CPR: compressions first'); p.dispatch({ type: 'cpr.start', mode: 'auto' }); p.run(30); assert.notEqual(dockTarget(st(p))?.id, 'acls_cycle', 'not before 2 min');
+  p.run(95); const r = dockTarget(st(p)); assert.equal(r?.id, 'acls_cycle'); assert.equal(r.tab, 'tab_circ'); assert.equal(r.act.type, 'defib.charge');
+});
+
+test('the infectiology ward: following the pointer plan step by step (ward-plan.js) scores full marks and ends the case', async () => {
+  const { wardStep } = await import('../src/web/ward-plan.js');
+  const { scoreSession } = await import('../src/engine/scenarios.js');
+  for (const id of ['inf_pyelo', 'inf_cap', 'inf_sab', 'inf_esbl']) {
+    const p = scen(id, 7); let end = false;
+    for (let n = 0; n < 2000 && !end; n++) { const s = wardStep(p.ward, id); if (s.act.type === 'ward.finish') end = true; else assert.notEqual(p.dispatch(s.act).ok, false, `${id}: ${JSON.stringify(s.act)}`); }
+    assert.ok(end, id + ': reaches the end'); assert.equal(Math.round(scoreSession(p).pct), 100, id);
+  }
 });

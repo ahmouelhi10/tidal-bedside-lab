@@ -55,7 +55,7 @@ export class Coach {
   /** What the dock pointer needs (dock-hint.js): null when the coach is off (expert, free play, skills training). */
   dockState() {
     const p = this.ui.sim.patient, id = this.ui.sim.scenarioId; if (!p || !id || this.box.hidden || this.level === 'expert') return null;
-    const items = this.checklist(p, id); return { level: this.level, items, next: nextItem(items), said: this.said, t: p.t, p };
+    const items = this.checklist(p, id); return { level: this.level, items, next: nextItem(items), said: this.said, t: p.t, p, tx: t };
   }
   reset() { this._live = null; this.keep = null; this.asks = 0; this.autos = 0; this.said = null; this.lastSig = ''; this._t = -1; this._stuckFrom = 0; }
   get level() { return this.ui.level; }
@@ -97,13 +97,17 @@ export class Coach {
       if (!force && sig === this.lastSig) return; this.lastSig = sig;
       const ICON = { done: '✓', part: '◐', todo: '○', later: '·', keep: '◇' };
       const learn = SCENARIOS[id]?.learning || [];
+      const li = (i) => el('li', { class: 'co-' + i.state, title: i.text + (en && i.detail ? ' - ' + i.detail : '') }, el('span', { class: 'co-i', text: ICON[i.state] }), el('span', { text: i.text }));
+      const wasOpen = !!this.box.querySelector('.co-all[open]');
       this.box.replaceChildren(
         el('h3', { text: t('co_title') }),
         nx ? el('div', { class: 'co-next' }, el('span', { class: 'co-k', text: t('co_next') }), el('b', { text: nx.text }), nx.detail && en ? el('span', { class: 'muted small', text: nx.detail }) : null)
           : el('div', { class: 'co-next ok' }, el('b', { text: t('co_alldone') })),
-        el('ol', { class: 'co-list' }, items.map(i => el('li', { class: 'co-' + i.state, title: en ? i.detail || '' : '' }, el('span', { class: 'co-i', text: ICON[i.state] }), el('span', { text: i.text })))),
-        el('p', { class: 'muted small', text: t('co_legend') }),
+        // what matters now stays in view; what is done or not yet relevant folds away, so the card fits beside the monitor
+        el('ol', { class: 'co-list', title: t('co_legend') }, items.filter(i => i.state !== 'done' && i.state !== 'later' && i !== nx).map(li)),   // the next one is already in the box above
+        items.some(i => i.state === 'done' || i.state === 'later') ? el('details', { class: 'co-all' }, el('summary', { title: t('co_legend'), text: t('co_more', { d: items.filter(i => i.state === 'done').length, l: items.filter(i => i.state === 'later').length }) }), el('ol', { class: 'co-list' }, items.filter(i => i.state === 'done' || i.state === 'later').map(li))) : null,
         learn.length ? el('details', { class: 'co-learn' }, el('summary', { text: t('co_points') }), el('ul', { class: 'small' }, learn.map(x => el('li', { text: x })))) : null);
+      if (wasOpen) this.box.querySelector('.co-all')?.setAttribute('open', '');
       return;
     }
     if (this.level === 'intermediate') {

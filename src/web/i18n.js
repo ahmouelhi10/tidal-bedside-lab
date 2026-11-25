@@ -673,6 +673,46 @@ export function errText(msg) {
   for (const [re, fr] of ERR_FR_RE) if (re.test(msg)) return msg.replace(re, fr);
   return msg;
 }
+// short names for the drug pages (the chips at the top of the Drugs section)
+Object.assign(EN, { g_hypnotics_s: 'Hypnotics', g_opioids_s: 'Opioids', g_nmb_s: 'Relaxants', g_vaso_s: 'Vasoactive', g_acls_s: 'ACLS', g_crisis_s: 'Crisis', g_pacu_s: 'Recovery', g_neuro_s: 'Seizures', g_cardio_s: 'Cardio', g_metab_s: 'Metabolic', g_regional_s: 'Regional', dr_more: 'Dose, time to effect and infusion' });
+Object.assign(FR, { g_hypnotics_s: 'Hypnotiques', g_opioids_s: 'Opioïdes', g_nmb_s: 'Curares', g_vaso_s: 'Vasoactifs', g_acls_s: 'RCP', g_crisis_s: 'Crises', g_pacu_s: 'SSPI', g_neuro_s: 'Convulsions', g_cardio_s: 'Cardio', g_metab_s: 'Métabolique', g_regional_s: 'ALR', dr_more: "Dose, délai d'action et perfusion" });
+// short names for the page chips at the top of a section (the full title stays as the chip's tooltip)
+Object.assign(EN, { pg_sg_needle_h: 'Needle', pg_sg_tube_h: 'Chest drain', pg_sg_fona_h: 'Front of neck', pg_pr_other: 'Other', pg_px_title: 'Lines and tubes', pg_px_regional: 'Regional', pg_niv_title: 'NIV / high flow', pg_va_title: 'Volatile', pg_sc_title: 'Scores', pg_od_monitor: 'Monitoring', pg_aw_device: 'Device', pg_cp_cpr: 'Compressions', pg_pc_title: 'Pacing', pg_mech_title: 'Curves', g_resp_s: 'Other', g_resp: 'Respiratory, steroids and other' });
+Object.assign(FR, { pg_sg_needle_h: 'Aiguille', pg_sg_tube_h: 'Drain', pg_sg_fona_h: 'Cou', pg_pr_other: 'Autres', pg_px_title: 'Voies et sondes', pg_px_regional: 'ALR', pg_niv_title: 'VNI / haut débit', pg_va_title: 'Halogénés', pg_sc_title: 'Scores', pg_od_monitor: 'Monitorage', pg_aw_device: 'Dispositif', pg_cp_cpr: 'Compressions', pg_pc_title: 'Entraînement', pg_mech_title: 'Courbes', g_resp_s: 'Autres', g_resp: 'Respiratoire, corticoïdes et autres' });
+Object.assign(EN, { co_more: '{d} done · {l} for later: show all' }); Object.assign(FR, { co_more: '{d} faits · {l} pour plus tard : tout voir' });
+Object.assign(EN, { pw_before: '{n} earlier steps', pw_after: '{n} more steps' }); Object.assign(FR, { pw_before: '{n} étapes avant', pw_after: '{n} étapes après' });
+Object.assign(EN, { dh_cycle: '2-minute rhythm check: still shockable, shock again', dh_wait_charge: 'Wait: the defibrillator is charging ({s} s), then shock' });
+Object.assign(FR, { dh_cycle: 'Contrôle du rythme à 2 min : toujours choquable, choquez à nouveau', dh_wait_charge: 'Attendez : le défibrillateur se charge ({s} s), puis choquez' });
+Object.assign(EN, { dh_wait_map: 'Wait: the vasopressor is taking effect ({s} s), then more if the pressure is still low' });
+Object.assign(FR, { dh_wait_map: 'Attendez : le vasopresseur agit ({s} s), puis davantage si la pression reste basse' });
+Object.assign(EN, { dh_wait_o2: 'Wait: the SpO2 is settling after the oxygen change ({s} s), target 88-92 %' });
+Object.assign(FR, { dh_wait_o2: "Attendez : la SpO2 se stabilise après le changement d'oxygène ({s} s), cible 88-92 %" });
+Object.assign(EN, { dh_wait_tube: 'Wait: the tube is going in (about {s} s); keep watching the SpO2' });
+Object.assign(FR, { dh_wait_tube: 'Attendez : la sonde est en cours de passage (environ {s} s) ; surveillez la SpO2' });
+Object.assign(EN, { dh_wait_bolus: 'Wait: the 3 % saline is running ({s} s), then recheck the sodium', dh_oxygen: 'SpO2 under 90 %: give oxygen' });
+Object.assign(FR, { dh_wait_bolus: 'Attendez : le NaCl 3 % passe ({s} s), puis recontrôlez la natrémie', dh_oxygen: "SpO2 sous 90 % : donnez de l'oxygène" });
+Object.assign(EN, { dh_wait_bp: 'Wait: the labetalol is taking effect ({s} s), then another dose if the MAP is down less than 15 %' });
+Object.assign(FR, { dh_wait_bp: 'Attendez : le labétalol agit ({s} s), puis une autre dose si la PAM a baissé de moins de 15 %' });
+Object.assign(EN, { dh_wait_hypnotic: 'Wait: the hypnotic is taking effect ({s} s), then intubate' });
+Object.assign(FR, { dh_wait_hypnotic: "Attendez : l'hypnotique agit ({s} s), puis intubez" });
+Object.assign(EN, { dh_ventilate: 'Airway in, not breathing: ventilate now' });
+Object.assign(FR, { dh_ventilate: 'Voies aériennes en place, pas de respiration : ventilez maintenant' });
+Object.assign(EN, { dh_cpr: 'Cardiac arrest: start chest compressions', dh_shock: 'VF/VT: defibrillate now', dh_epi: 'Adrenaline 1 mg IV or IO, every 3-5 min' });
+Object.assign(FR, { dh_cpr: 'Arrêt cardiaque : commencez les compressions thoraciques', dh_shock: 'FV/TV : défibrillez maintenant', dh_epi: 'Adrénaline 1 mg IV ou IO, toutes les 3 à 5 min' });
+Object.assign(EN, { dh_lipid: 'LAST: lipid emulsion running, bolus repeated twice 5 min apart', dh_epi_last: 'LAST: adrenaline at most 1 mcg/kg' });
+Object.assign(FR, { dh_lipid: 'LAST : émulsion lipidique en perfusion, bolus répété deux fois à 5 min', dh_epi_last: 'LAST : adrénaline 1 µg/kg au plus' });
+Object.assign(EN, { dh_adeno: 'Still in SVT: adenosine 12 mg, rapid push and flush', dh_wait_adeno: 'Wait: watch the monitor after the adenosine ({s} s), then 12 mg if it is still SVT', dh_cardiovert: 'Unstable: synchronised cardioversion' });
+Object.assign(FR, { dh_adeno: 'Toujours en TSV : adénosine 12 mg, injection rapide et rinçage', dh_wait_adeno: "Attendez : regardez le scope après l'adénosine ({s} s), puis 12 mg si la TSV persiste", dh_cardiovert: 'Instable : cardioversion synchronisée' });
+Object.assign(EN, { dh_wait_blood: 'Wait: the unit is running ({s} s), then another if the shock index is still above 1' });
+Object.assign(FR, { dh_wait_blood: "Attendez : l'unité passe ({s} s), puis une autre si l'index de choc reste au-dessus de 1" });
+Object.assign(EN, { dh_bmv: 'Not breathing: bag-mask ventilation now' });
+Object.assign(FR, { dh_bmv: 'Ne respire pas : ventilation au masque maintenant' });
+Object.assign(EN, { dh_se_refr: 'Still fitting after the second-line drug: refractory status, anaesthesia and intubation' });
+Object.assign(FR, { dh_se_refr: 'Toujours en crise après la deuxième ligne : état de mal réfractaire, anesthésie et intubation' });
+Object.assign(EN, { dh_w_sample: 'Before any antibiotic: the cultures and the source sample', dh_w_order: 'Order the first tests', dh_w_empiric: 'Start the empiric antibiotic (EUCAST dose)', dh_w_line: 'Staphylococcus in the blood with a line: remove the line', dh_w_tte: 'S. aureus bacteraemia: echocardiography', dh_w_fubc: 'Follow-up blood cultures 48 h after the first positive', dh_w_narrow: 'The antibiogram is back: narrow to the targeted agent', dh_w_oral: 'Stable and eating: switch to oral', dh_w_stop: 'Course complete: stop the antibiotic', dh_w_wait: 'Let time pass and watch the observations and results', dh_w_end: 'No relapse after stopping: end the case' });
+Object.assign(FR, { dh_w_sample: 'Avant tout antibiotique : hémocultures et prélèvement du site', dh_w_order: 'Prescrivez les premiers examens', dh_w_empiric: "Débutez l'antibiothérapie probabiliste (dose EUCAST)", dh_w_line: 'Staphylocoque dans le sang avec un cathéter : retirez le cathéter', dh_w_tte: 'Bactériémie à S. aureus : échocardiographie', dh_w_fubc: 'Hémocultures de contrôle 48 h après la première positive', dh_w_narrow: "L'antibiogramme est rendu : désescaladez vers la molécule ciblée", dh_w_oral: 'Stable et alimenté : relais oral', dh_w_stop: "Durée atteinte : arrêtez l'antibiotique", dh_w_wait: 'Laissez passer le temps et suivez les constantes et les résultats', dh_w_end: "Pas de rechute après l'arrêt : terminez le cas" });
+Object.assign(EN, { dh_tdp_k: 'Torsades: potassium to 4.5-5 mmol/L (check it, then replace)', dh_tdp_mg: 'Torsades again: magnesium 2 g once more', dh_tdp_rate: 'Torsades: heart rate to 90-110 (more isoprenaline)' });
+Object.assign(FR, { dh_tdp_k: 'Torsades : kaliémie à 4,5-5 mmol/L (contrôlez, puis corrigez)', dh_tdp_mg: 'Nouvelle torsade : magnésium 2 g une fois de plus', dh_tdp_rate: "Torsades : fréquence à 90-110 (plus d'isoprénaline)" });
 export const scenarioText = (s) => (lang === 'fr' && SCEN_FR[s.id] ? { ...s, ...SCEN_FR[s.id] } : s);
 export const CRITERION_FR = {
   ana_adrenaline: 'Adrénaline (IM 0,5 mg ou IV titrée 50 µg) dans les 5 min suivant le début',

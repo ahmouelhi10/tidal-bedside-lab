@@ -79,8 +79,9 @@ export function expertRun(p, id) {
     case 'last_block': {                                                                              // oxygen, lipid 1.5 mL/kg then infusion as soon as signs appear
       while (p.lastSignT == null && p.t < 600) p.run(2);
       const w = p.body.weightKg;
-      runScript(p, [[p.t + 10, { type: 'o2.mask', fio2: 0.8 }], [p.t + 20, { type: 'drug.bolus', drug: 'lipid', amount: Math.round(1.5 * w) }], [p.t + 25, { type: 'drug.infusion', drug: 'lipid', rate: 0.25 * w }]], 1200);
-      if (p.arrest.arrested) { p.dispatch({ type: 'cpr.start' }); p.run(10); }
+      runScript(p, [[p.t + 10, { type: 'o2.mask', fio2: 0.8 }], [p.t + 20, { type: 'drug.bolus', drug: 'lipid', amount: Math.round(1.5 * w) }], [p.t + 25, { type: 'drug.infusion', drug: 'lipid', rate: 0.25 * w }]], p.t + 30);
+      let cpr = false;                                                                                  // an arrest: CPR at once, stopped at ROSC (not left to the end of the case)
+      while (p.t < 1200) { p.run(2); if (p.arrest.arrested && !cpr) { cpr = true; p.dispatch({ type: 'cpr.start' }); } else if (!p.arrest.arrested && cpr) { cpr = false; p.dispatch({ type: 'cpr.stop' }); } }
       return p;
     }
     case 'heart_block':                                                                               // pads, atropine, analgesia, pace

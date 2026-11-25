@@ -41,7 +41,7 @@ export class WardView {
     return el('div', { class: 'wd-head card' },
       el('div', { class: 'wd-clock' }, el('b', { text: wardClock(w.h) }), el('span', { class: 'muted small', text: t('wd_hours', { h: w.h }) })),
       el('div', { class: 'wd-time' }, el('span', { class: 'small muted', text: t('wd_advance') }),
-        ...[1, 4, 12, 24].map(h => el('button', { class: 'ghost', onclick: () => adv(h), text: `+${h} h` })),
+        ...[1, 4, 12, 24].map(h => el('button', { class: 'ghost', dataset: { adv: h }, onclick: () => adv(h), text: `+${h} h` })),
         el('button', { class: 'ghost', onclick: () => adv(toMorning()), text: t('wd_morning') })),
       el('div', { class: 'small muted', text: t('wd_patient', { sex: t(sp.sex === 'F' ? 'female' : 'male'), age: sp.age, h: sp.heightCm, w: sp.weightKg, bmi: bmiOf(sp.weightKg, sp.heightCm).toFixed(1), ibw: Math.round(b.ibw) }) }));
   }
@@ -66,7 +66,7 @@ export class WardView {
   microBox(w) {
     const S = (kind) => this.act({ type: 'ward.sample', kind }, t('wd_s_' + kind));
     const box = el('section', { class: 'wd-box' }, el('h4', { text: t('wd_micro') }),
-      el('div', { class: 'wd-btns' }, ['blood', 'urine', 'sputum', 'uag'].map(k => el('button', { class: 'ghost', onclick: () => S(k), text: t('wd_s_' + k) }))));
+      el('div', { class: 'wd-btns' }, ['blood', 'urine', 'sputum', 'uag'].map(k => el('button', { class: 'ghost', dataset: { ws: k }, onclick: () => S(k), text: t('wd_s_' + k) }))));
     const reps = w.reports();
     if (!reps.length) box.append(el('p', { class: 'small muted', text: t('wd_no_samples') }));
     let showAst = false;
@@ -102,13 +102,13 @@ export class WardView {
   rxBox(w) {
     const f = this.form, a = ABX[f.drug]; if (!a.routes.includes(f.route)) f.route = a.routes[0];
     const dose = doseFor(f.drug, f.route, f.dose, this.p.body);
-    const sel = (opts, val, on) => el('select', { onchange: e => { on(e.target.value); this.redraw(); } }, opts.map(([v, txt]) => el('option', { value: v, text: txt, selected: v === val })));
-    const drugSel = sel(ABX_KEYS.map(k => [k, abxName(k)]).sort((x, y) => x[1].localeCompare(y[1], getLang())), f.drug, v => { f.drug = v; });
-    const routeSel = sel(a.routes.map(r => [r, t('wd_' + r)]), f.route, v => { f.route = v; });
-    const doseSel = sel([['std', t('wd_std')], ...(a.dose[f.route]?.high ? [['high', t('wd_high')]] : [])], dose?.level ?? 'std', v => { f.dose = v; });
+    const sel = (id, opts, val, on) => el('select', { id, onchange: e => { on(e.target.value); this.redraw(); } }, opts.map(([v, txt]) => el('option', { value: v, text: txt, selected: v === val })));
+    const drugSel = sel('wdDrug', ABX_KEYS.map(k => [k, abxName(k)]).sort((x, y) => x[1].localeCompare(y[1], getLang())), f.drug, v => { f.drug = v; });
+    const routeSel = sel('wdRoute', a.routes.map(r => [r, t('wd_' + r)]), f.route, v => { f.route = v; });
+    const doseSel = sel('wdDose', [['std', t('wd_std')], ...(a.dose[f.route]?.high ? [['high', t('wd_high')]] : [])], dose?.level ?? 'std', v => { f.dose = v; });
     const doseTxt = dose ? [dose.text, dose.mg ? t('wd_mg_range', { a: dose.mg[0], b: dose.mg[1], w: this.p.spec.weightKg }) : '', dose.loadingMg ? t('wd_loading', { mg: dose.loadingMg, w: this.p.spec.weightKg }) : ''].filter(Boolean).join(' · ') : '';
     const box = el('section', { class: 'wd-box' }, el('h4', { text: t('wd_rx') }),
-      el('div', { class: 'wd-form' }, drugSel, routeSel, doseSel, el('button', { class: 'primary', onclick: () => this.act({ type: 'ward.rx.start', drug: f.drug, route: f.route, dose: dose?.level ?? 'std' }, abxName(f.drug)), text: t('wd_prescribe') })),
+      el('div', { class: 'wd-form' }, drugSel, routeSel, doseSel, el('button', { class: 'primary', id: 'wdRx', onclick: () => this.act({ type: 'ward.rx.start', drug: f.drug, route: f.route, dose: dose?.level ?? 'std' }, abxName(f.drug)), text: t('wd_prescribe') })),
       el('p', { class: 'small muted', text: `${t('wd_eucast_dose')}: ${doseTxt}` }));
     const last = w.labs[w.labs.length - 1];
     box.append(el('p', { class: 'small muted', text: last ? t('wd_crcl', { v: Math.round(cockcroftGault(this.p.spec, last.creat)) }) : t('wd_crcl_none') }));
@@ -116,7 +116,7 @@ export class WardView {
     for (const r of w.rx) {
       const days = ((w.h - r.startH) / 24).toFixed(1), dd = doseFor(r.drug, r.route, r.dose, this.p.body);
       box.append(el('div', { class: 'wd-rx' }, el('span', {}, el('b', { text: abxName(r.drug) }), ` ${t('wd_' + r.route)} · ${dd?.text ?? ''} · ${t('wd_since', { when: wardClock(r.startH), d: days })}`),
-        el('button', { class: 'ghost danger tiny', onclick: () => this.act({ type: 'ward.rx.stop', drug: r.drug }, t('wd_stop') + ' ' + abxName(r.drug)), text: t('wd_stop') })));
+        el('button', { class: 'ghost danger tiny', dataset: { stop: r.drug }, onclick: () => this.act({ type: 'ward.rx.stop', drug: r.drug }, t('wd_stop') + ' ' + abxName(r.drug)), text: t('wd_stop') })));
     }
     const past = w.courses.filter(r => r.stopH !== null);
     if (past.length) box.append(el('p', { class: 'small muted', text: t('wd_past') + ': ' + past.map(r => `${abxName(r.drug)} ${t('wd_' + r.route)} (${((r.stopH - r.startH) / 24).toFixed(1)} ${t('wd_days')})`).join(', ') }));
@@ -129,9 +129,9 @@ export class WardView {
     const vol = fluidVolumeMl(this.p.body);
     const list = [['labs', t('wd_o_labs')], ['lactate', t('wd_o_lactate')], ['fluids30', t('wd_o_fluids', { ml: vol, w: this.p.spec.weightKg })], ['cxr', t('wd_o_cxr')], ['renal_us', t('wd_o_renal_us')], ['tte', t('wd_o_tte')], ...(w.lineIn ? [['remove_line', t('wd_o_remove_line')]] : [])];
     const box = el('section', { class: 'wd-box' }, el('h4', { text: t('wd_orders') }),
-      el('div', { class: 'wd-btns' }, list.map(([k, txt]) => el('button', { class: 'ghost', onclick: () => this.act({ type: 'ward.order', what: k }, txt), text: txt }))));
+      el('div', { class: 'wd-btns' }, list.map(([k, txt]) => el('button', { class: 'ghost', dataset: { wo: k }, onclick: () => this.act({ type: 'ward.order', what: k }, txt), text: txt }))));
     for (const x of this.results.filter(x => x.r.finding || x.r.volumeMl).slice(-5).reverse()) box.append(el('div', { class: 'small wd-rep' }, el('b', { text: `${t('wd_o_' + x.what, { ml: x.r.volumeMl ?? '', w: this.p.spec.weightKg })} · ${wardClock(x.h)}` }), el('span', { text: x.r.finding ? t('wd_f_' + x.r.finding) : t('wd_given') })));
-    box.append(el('div', { class: 'wd-end' }, el('p', { class: 'small muted', text: t('wd_end_hint') }), el('button', { class: 'primary', onclick: () => this.ui.onFinish?.(), text: t('wd_end') })));
+    box.append(el('div', { class: 'wd-end' }, el('p', { class: 'small muted', text: t('wd_end_hint') }), el('button', { class: 'primary', id: 'wdEnd', onclick: () => this.ui.onFinish?.(), text: t('wd_end') })));
     return box;
   }
 }

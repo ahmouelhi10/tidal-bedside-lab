@@ -133,6 +133,14 @@ Reviewer: an infectious-diseases physician or clinical microbiologist, ideally w
 - **INF-5 Course model**: the host-course constants listed in VALIDATION section 2 (stability within 1-4 days on active therapy, ICU within 3 days untreated, relapse after 3 days of therapy).
 - **INF-6 Not covered**: AWaRe categories (source not retrievable), allergy, drug toxicity and levels, C. difficile, local resistance rates.
 
+## 5c. Cardiac arrest from local anaesthetic toxicity (found while playing the cases, 2026-11-25)
+
+In the `last_block` case (70-year-old woman, 158 cm, 55 kg), when the toxicity causes a PEA or asystolic arrest, chest compressions give an average coronary perfusion pressure of 8-10 mmHg. ROSC in the engine needs at least 15 mmHg for 30 s (`cpr.js`, REF paradis1990) once the cause is cleared (`laCv` < 0.8, reached about 4 min after lipid). With adrenaline limited to 1 µg/kg as the LAST guideline asks (REF neal2018), the pressure seldom reaches 15. In 12 simulated runs with lipid (bolus, infusion, two repeat boluses), adrenaline 1 µg/kg every 3 min and continuous CPR, all four PEA or asystolic arrests were still in arrest after 25 minutes, while the VF arrests recovered after shocks.
+
+| Question for the reviewer | Accept / Change / Remove |
+|---|---|
+| Is it plausible for teaching that LAST-induced PEA/asystole almost never recovers within 25 min despite lipid and good CPR, or should lipid support the coronary perfusion during CPR more (larger effect on vascular tone in `crises.js`, design value)? | |
+
 ## 6. Beyond the items above
 
 - **Scenarios**: review the clinical story, the scripted events and the scoring criteria of the eight scenarios in `scenarios.js` (STEMI to VF, witnessed VF, opioid overdose to hypoxic PEA, rapid-sequence induction at BMI 45, haemorrhage, tension pneumothorax, can't intubate can't oxygenate, endobronchial tube with secretions), and the tube-depth and secretion model in `ett.js`. Weights and time thresholds are educational choices and have not been tested against learner outcomes.

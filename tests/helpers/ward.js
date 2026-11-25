@@ -1,13 +1,8 @@
 // Scripted infectiology learners: a guideline-following "expert" and variants used by tests/infection.test.js and the scenario tests.
 // They act only through Patient.dispatch, so every run replays.
 
-/** Expert plan per infectiology case. */
-export const WARD_PLANS = {
-  inf_pyelo: { samples: ['blood', 'blood', 'urine'], orders: ['labs'], empiric: [['ceftriaxone', 'iv', 'std']], targeted: null, oral: ['ciprofloxacin', 'std'], days: 7 },
-  inf_cap: { samples: ['blood', 'blood', 'sputum', 'uag'], orders: ['labs', 'cxr'], empiric: [['ceftriaxone', 'iv', 'std'], ['clarithromycin', 'iv', 'std']], targeted: [['amoxicillin', 'iv', 'high']], oral: ['amoxicillin', 'high'], days: 5 },
-  inf_sab: { samples: ['blood', 'blood'], orders: ['labs'], empiric: [['vancomycin', 'iv', 'std']], targeted: [['flucloxacillin', 'iv', 'std']], oral: null, days: 14, fromClearance: true, line: true },
-  inf_esbl: { samples: ['blood', 'blood', 'urine'], orders: ['lactate', 'fluids30'], empiric: [['meropenem', 'iv', 'std'], ['amikacin', 'iv', 'std']], targeted: [['meropenem', 'iv', 'std']], oral: null, days: 7 },
-};
+import { WARD_PLANS } from '../../src/web/ward-plan.js';   // the same plan the beginner pointer follows
+export { WARD_PLANS };
 
 /** Run the ward course as an expert would. opts.days overrides the duration; opts.noCultures skips sampling; opts.delayH delays the first dose. */
 export function wardExpert(p, id, opts = {}) {
