@@ -13,6 +13,7 @@
 //  - the fingers work (hands.glb morph targets, opts.act / opts.relax): the thumb pushes the plunger, the index slides the
 //    catheter off the needle, fingertips press, grips firm up; an empty hand comes in loosely curled and flattens on the skin;
 //  - at intubation the right hand passes the tube while the left holds the laryngoscope.
+import { injectionPlan, injectionPhases } from './injection.js';
 const ease = (x) => { x = Math.min(1, Math.max(0, x)); return Math.min(1, x * x * x * (x * (6 * x - 15) + 10)); };   // minimum jerk (never past 1 by rounding)
 const seg01 = (u, a, b) => ease((u - a) / (b - a));       // 0 before a, 1 after b
 const add = (p, v, k = 1) => [p[0] + v[0] * k, p[1] + v[1] * k, p[2] + v[2] * k];
@@ -29,12 +30,21 @@ export class Gestures {
   ok(name, t) { return !(this.hold[name] > t); }
 
   /** Begin a gesture for an engine event. Returns the camera preset the scene should frame, or null. */
-  start(scene, ev, res) {
+  start(scene, ev, res, ctx = {}) {
     const W = scene.world; if (!W || !ev || (res && res.ok === false)) return null;
     const t0 = scene.t, site = (key, fallback) => scene.siteFrame?.(key) || { p: fallback, n: [0, 1, 0] };
     let g = null, cam = null;
     switch (ev.type) {
-      case 'drug.bolus': case 'bicarb.bolus': { const f = site('rightArmIV', W.rightArmIV); g = { k: 'syringe', dur: 2.8, f, arm: scene.armAxis() }; cam = 'arm'; break; }
+      case 'drug.bolus': case 'bicarb.bolus': {                 // an injection as it is really given: scrub the port, connect, push over the drug's time, flush, withdraw (injection.js)
+        const plan = injectionPlan(ev, ctx.arrested), ph = injectionPhases(plan, ctx.speed || 1);
+        if (plan.route === 'neb') { g = { k: 'step_mask', dur: 3.2, f: site('face', W.face) }; cam = 'head'; break; }
+        if (plan.route === 'im' || plan.route === 'regional') {
+          const R = scene.sideSign || 1, base = plan.route === 'im' ? [W.femoral[0] - 0.2, W.femoral[1] + 0.06, W.femoral[2] + R * 0.07] : [W.femoral[0], W.femoral[1] + 0.04, W.femoral[2] + R * 0.03];
+          const f = scene.surfaceAt ? scene.surfaceAt(base) : { p: base, n: [0, 1, 0] };
+          g = { k: 'inject_im', dur: ph.dur, phs: ph, plan, f }; cam = 'groin'; break;
+        }
+        const f = site('rightArmIV', W.rightArmIV); g = { k: 'inject', dur: ph.dur, phs: ph, plan, f, arm: scene.armAxis() }; cam = 'arm'; break;
+      }
       case 'iv.access': { const f = site('rightArmIV', W.rightArmIV); g = { k: 'cannula', dur: 3.2, f, arm: scene.armAxis() }; cam = 'arm'; this.hold.iv = t0 + 3.2 * 0.62; break; }
       case 'procedure.needle_decompression': {
         const f = site(`${ev.side || 'R'}_${ev.site || 'mcl2'}`, W.sternum);
@@ -55,7 +65,7 @@ export class Gestures {
     }
     if (!g) return cam;
     g.t0 = t0; g.ev = ev;
-    const helper = { 'iv.access': 'arm', 'procedure.needle_decompression': 'chest', 'procedure.cricothyroidotomy': 'neck', 'procedure.arterial_line': 'pulse', 'io.access': 'leg' }[ev.type]
+    const helper = { 'iv.access': 'arm', ...(g.k === 'inject' ? { 'drug.bolus': 'arm', 'bicarb.bolus': 'arm' } : {}), 'procedure.needle_decompression': 'chest', 'procedure.cricothyroidotomy': 'neck', 'procedure.arterial_line': 'pulse', 'io.access': 'leg' }[ev.type]
       || (ev.type === 'procedure.central_line' ? { ijv: 'neck', scv: 'chest', fem: 'groin' }[g.site] : null);
     this._dress(scene, g, helper, ev.type === 'procedure.central_line' && g.site === 'ijv');
     this.list.push(g); return cam;
@@ -127,7 +137,7 @@ export class Gestures {
     for (const g of this.list) {
       const u = Math.min(1, (t - g.t0) / g.dur);
       this._helper(c, g, u, t);
-      ({ syringe: this._syringe, cannula: this._cannula, needle: this._needle, drain: this._drain, fona: this._fona, probe: this._probe, steth: this._steth, laryn: this._laryn,
+      ({ inject: this._inject, inject_im: this._injectIm, syringe: this._syringe, cannula: this._cannula, needle: this._needle, drain: this._drain, fona: this._fona, probe: this._probe, steth: this._steth, laryn: this._laryn,
         press: this._press, step_swab: this._swab, step_scalpel: this._scalpelStep, step_mask: this._mask, step_pads: this._pads,
         step_syringe: this._syringeStep, step_tourniquet: this._tourniquet, step_scope: this._scope, io: this._io, cvc: this._cvc, pericard: this._pericard, ng: this._ng })[g.k]?.call(this, c, g, u, t);
     }
@@ -167,6 +177,37 @@ export class Gestures {
     const f = g.f, dir = norm(add(neg(f.n), g.arm, 1.6));                       // shallow, along the forearm, into the cannula port
     const q = this._pose(add(f.p, f.n, 0.02), dir, 0, 0.18 * (1 - seg01(u, 0, 0.3)) + 0.18 * seg01(u, 0.82, 1), 0, g, t);
     this._syringeAt(c, q, 0.011 * seg01(u, 0.36, 0.74));                         // a slow, steady push
+  }
+  /** IV injection through the cannula port, in phases (seconds, g.ph): the other hand steadies the forearm; an alcohol swab
+   *  scrubs the needle-free port; the syringe comes in along the arm and twists on (Luer); the thumb pushes the plunger at an even
+   *  rate over the drug's time; that syringe comes off and a saline syringe flushes the line; the hand leaves. A drug given over
+   *  many minutes is not pushed by hand: the syringe is connected and the hand lets go (it runs on a syringe driver, syringe.js). */
+  _inject(c, g, u, t) {
+    const f = g.f, s = u * g.dur, P = g.phs, at = (k) => Math.min(1, Math.max(0, (s - P[k][0]) / Math.max(1e-3, P[k][1] - P[k][0])));
+    const port = add(f.p, f.n, 0.02), dir = norm(add(neg(f.n), g.arm, 1.6));
+    if (s < P.swab[1]) {                                                       // scrub the hub: small fast circles on the port
+      const k = at('swab'), a = this._tan(f, HEAD), b = this._tan(f, [0, 0, 1]), ang = k * Math.PI * 10, lift = 0.1 * (1 - seg01(k, 0, 0.2)) + 0.1 * seg01(k, 0.85, 1), m = this._path(g, lift / REACH, t);
+      c.inst('forcepsGauze', add(add(add(add(port, a, 0.005 * Math.cos(ang)), b, 0.005 * Math.sin(ang)), f.n, lift), m.off), norm(add(f.n, a, -0.8)), m.roll, { toward: g.op });
+      return;
+    }
+    const conn = at('connect'), twist = 0.9 * seg01(conn, 0.6, 1);
+    if (s < P.flush[0] || !g.plan.flushMl) {                                   // the drug syringe: in, twist on, push (and off when there is no flush)
+      const leave = g.plan.flushMl ? 0 : at('leave'), away = 0.18 * (1 - seg01(conn, 0, 0.7)) + 0.18 * seg01(leave, 0, 1);
+      const q = this._pose(port, dir, 0, away, twist, g, t), push = g.plan.pump ? 0 : 0.011 * at('push');   // an even rate: linear, not eased
+      if (!(g.plan.pump && s > P.connect[1] + 0.4)) this._syringeAt(c, q, push);   // on a driver: the hand lets go once it is connected
+      return;
+    }
+    const fl = at('flush'), lv = at('leave');                                  // saline flush: the drug syringe off, the flush on, a quick push, off
+    const away = fl < 0.25 ? 0.18 * seg01(fl, 0, 0.25) : fl < 0.45 ? 0.18 * (1 - seg01(fl, 0.25, 0.45)) : 0.18 * seg01(lv, 0, 1);
+    this._syringeAt(c, this._pose(port, dir, 0, away, twist, g, t), fl < 0.25 ? 0.011 : 0.011 * seg01(fl, 0.45, 1));
+  }
+  /** IM (anterolateral thigh) or a regional block: the needle in at 90 degrees to its depth, a short draw-back, the push, out. */
+  _injectIm(c, g, u, t) {
+    const f = g.f, s = u * g.dur, P = g.phs, at = (k) => Math.min(1, Math.max(0, (s - P[k][0]) / Math.max(1e-3, P[k][1] - P[k][0])));
+    if (s < P.swab[1]) return this._swab(c, g, at('swab') * 0.9 + 0.05, t);
+    const inn = at('connect'), out = at('leave'), depth = g.plan.route === 'im' ? 0.025 : 0.03;
+    const away = 0.14 * (1 - seg01(inn, 0, 0.6)) + 0.14 * seg01(out, 0.2, 1), inside = depth * seg01(inn, 0.6, 1) * (1 - seg01(out, 0, 0.2));
+    this._syringeAt(c, this._pose(f.p, neg(f.n), inside, away, 0, g, t), s < P.push[0] ? -0.002 * seg01(inn, 0.85, 1) : 0.011 * at('push'));
   }
   _cannula(c, g, u, t) {
     const f = g.f, dir = norm(add(neg(f.n), g.arm, g.steep || 2.7));            // IV: 15-20 degrees to the skin; arterial line (steep 1.7): 30 degrees

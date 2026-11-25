@@ -8,6 +8,8 @@
 //    benzodiazepines orange, opioids blue, neuromuscular blockers red, vasopressors violet, local anaesthetics grey...).
 // Glucose 10 % and lipid emulsion run from bags at high rates, not from a syringe pump, so they are not shown here.
 
+import { injectionPlan } from './injection.js';
+
 export const SYRINGE_ML = 50, NEAR_END_ML = 3, PUMPS = 4;
 /** Strength of the 50 mL syringe, in the engine's dose unit per mL (mg, mcg, units or g per mL). Design values. */
 export const CONC = { propofol: 10, ketamine: 10, midazolam: 1, dexmedetomidine: 4, remifentanil: 50, fentanyl: 50, rocuronium: 10,
@@ -45,6 +47,14 @@ export function syringePumps(p) {
     const inSyr = SYRINGE_ML - (used % SYRINGE_ML);                                          // an empty syringe is replaced by a full one
     const label = LABEL[drug] || 'white', running = now > 0;
     out.push({ drug, label, rgb: LABEL_RGB[label], milky: drug === 'propofol', rateMlH: now * 60 / CONC[drug], ml: inSyr, running, nearEnd: running && inSyr < NEAR_END_ML, t0: s.t0 });
+  }
+  // a dose given over many minutes (magnesium, tranexamic acid, levetiracetam, potassium...): its own 50 mL syringe on a driver,
+  // emptied at an even rate over the drug's time (injection.js), then shown stopped
+  for (const e of p.log || []) {
+    if (e.type !== 'drug.bolus' || !fin(e.amount) || e.amount <= 0) continue;
+    const plan = injectionPlan(e, false); if (!plan.pump) continue;
+    const left = Math.max(0, 1 - (p.t - e.t) / plan.pushS), label = LABEL[e.drug] || 'white', running = left > 0;
+    out.push({ drug: e.drug, label, rgb: LABEL_RGB[label], milky: false, rateMlH: running ? SYRINGE_ML * 3600 / plan.pushS : 0, ml: SYRINGE_ML * left, running, nearEnd: running && SYRINGE_ML * left < NEAR_END_ML, t0: e.t });
   }
   out.sort((a, b) => (b.running - a.running) || (b.t0 - a.t0));
   return out.slice(0, PUMPS).map(({ t0, ...q }) => q);

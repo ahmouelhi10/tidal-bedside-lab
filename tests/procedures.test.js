@@ -52,3 +52,20 @@ test('the new skills leave the patient as the procedure should', () => {
   assert.ok(play('ng').flags.ngTube && play('uc').flags.urineCath);
   assert.notEqual(play('spinal').neuraxial.sensory, 'none', 'the spinal block is up');
 });
+
+test('skills training: each procedure starts without the equipment it puts on (the learner places it); the removal replays', async () => {
+  const { equipmentOf, hasEquipment, PARAMS } = await import('../src/web/procedures.js');
+  const { replay } = await import('../src/engine/patient.js');
+  const { SCENARIOS } = await import('../src/engine/scenarios.js');
+  for (const pr of PROCEDURES) {
+    const id = CASE[pr.id], p = id ? scen(id, 3) : mk(), prm = Object.fromEntries((pr.params || []).map(k => [k, PARAMS[k]?.opts?.[0]?.[0]]));
+    const off = equipmentOf(pr, { p, b: p.body, prm }).filter(k => hasEquipment(p, k));
+    if (off.length) assert.equal(p.dispatch({ type: 'equipment.remove', items: off }).ok, true, pr.id);
+    for (const k of equipmentOf(pr, { p, b: p.body, prm })) assert.equal(hasEquipment(p, k), false, `${pr.id}: ${k} already on the patient`);
+    p.run(30);
+    const q = replay({ spec: p.spec, seed: p.seed, scenario: id || null, log: p.log.map(e => ({ ...e })), until: p.t }, SCENARIOS);
+    assert.equal(q.stateHash(), p.stateHash(), pr.id + ' replays');
+  }
+  const p = mk(); assert.equal(p.dispatch({ type: 'equipment.remove', items: ['heart'] }).ok, false, 'unknown equipment refused');
+  assert.equal(p.dispatch({ type: 'equipment.remove', items: 'ivAccess' }).ok, false, 'a list is required');
+});

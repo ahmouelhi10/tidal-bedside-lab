@@ -13,6 +13,7 @@ import { BedAnim, bendPoint, bendWeight, turnDir } from './bed.js';
 import { RescuerAnim, posture, rescuerFlex, bagger } from './rescuer-anim.js';
 import { DripAnim, dropAt } from './drip.js';
 import { syringePumps, pumpScreen, SYRINGE_ML } from './syringe.js';
+import { injectionPlan } from './injection.js';
 import { t as tr, drugName } from './i18n.js';
 import { CamMove, moveDuration, handheld, handheldAmp } from './camera-rig.js';
 import { Renderer, mat4, vec3 } from './gl/renderer.js';
@@ -227,7 +228,8 @@ export class Scene {
   /** Site key of an engine event, for the operator's viewpoint during its gesture. */
   _eventSite(ev) {
     switch (ev.type) {
-      case 'drug.bolus': case 'bicarb.bolus': case 'iv.access': return 'rightArmIV';
+      case 'drug.bolus': case 'bicarb.bolus': { const r = injectionPlan(ev).route; return r === 'neb' ? 'face' : r === 'iv' ? 'rightArmIV' : null; }   // IM (thigh) and regional: framed by their camera preset
+      case 'iv.access': return 'rightArmIV';
       case 'procedure.needle_decompression': return `${ev.side || 'R'}_${ev.site || 'mcl2'}`;
       case 'procedure.chest_tube': return `${ev.side || 'R'}_mal5`;
       case 'procedure.cricothyroidotomy': case 'exam.neck': return 'neck';
@@ -272,9 +274,10 @@ export class Scene {
     if (this.eyeC) { this.frameSite(this.eyeC, [-0.3, 0.95, 0], 0.3); this.returnAt = this.t + (this.tw ? this.tw.dur : 1.4) + 3.6; } else this.focus('head', 3.6);   // close over the face, upright
   }
   /** An engine action happened: play the matching hand gesture, frame it, then return to the overview. */
-  gesture(ev, res) {
-    const cam = this.gest.start(this, ev, res); if (!cam) return;
-    const g = this.gest.list[this.gest.list.length - 1], hold = (g ? g.dur : 2) + 1.2, key = this._eventSite(ev);
+  gesture(ev, res, ctx = {}) {
+    const cam = this.gest.start(this, ev, res, ctx); if (!cam) return;
+    const g = this.gest.list[this.gest.list.length - 1], hold = Math.min(75, (g ? g.dur : 2) + 1.2), key = this._eventSite(ev);   // the camera stays for the whole hand-held injection (a driver does not need watching)
+    if (g?.k === 'inject_im' && g.f) { this.frameSite(g.f.p, vec3.add(g.f.n, [0, 0, -0.6]), 0.55); this.returnAt = this.t + 1.4 + hold; return; }   // IM / block: close on the site
     if (key && this.frameStepSite(key, ev.type === 'airway.intubate' ? 0.7 : 0.58)) this.returnAt = this.t + 1.4 + hold; else this.focus(cam, hold);
   }
   /** A guided-procedure step without an engine gesture of its own: frame the site and play a generic hand gesture. */

@@ -18,12 +18,17 @@ function record(start) {
 const at = (calls, name, u0, u1, f) => calls.filter(x => x.name === name && x.u >= u0 && x.u <= u1 && (!f || f(x)));
 const max = (xs, k) => Math.max(0, ...xs.map(x => x.opts[k] || 0));
 
-test('syringe: the hand holds the barrel and the thumb pushes the plunger home as the drug goes in', () => {
-  const { calls } = record((g, sc) => g.start(sc, { type: 'drug.bolus' }));
-  const withHand = (x) => !x.opts.noHand;
+test('syringe: the port is scrubbed, the syringe connected, the thumb pushes the plunger home over the drug time, then a flush', () => {
+  const { calls, gest } = record((g, sc) => { const r = g.start(sc, { type: 'drug.bolus', drug: 'fentanyl', amount: 100 }); return g.list[0]; });
+  const P = gest.phs, U = (s) => s / gest.dur, withHand = (x) => !x.opts.noHand;
+  assert.ok(at(calls, 'forcepsGauze', 0, U(P.swab[1]) - 0.005).length > 0, 'the port is cleaned first');
+  assert.equal(at(calls, 'syringe', 0, U(P.swab[1]) - 0.005).length, 0, 'no syringe while cleaning');
   assert.ok(at(calls, 'syringe', 0, 1, x => x.opts.only).every(x => x.opts.noHand), 'the plunger moves without a hand of its own');
-  assert.ok(max(at(calls, 'syringe', 0, 0.3, withHand), 'act') < 0.01, 'thumb at rest before the push');
-  assert.ok(max(at(calls, 'syringe', 0.76, 0.8, withHand), 'act') > 0.95, 'plunger home');
+  assert.ok(max(at(calls, 'syringe', U(P.connect[0]), U(P.push[0]), withHand), 'act') < 0.05, 'thumb at rest until the push');
+  const mid = at(calls, 'syringe', U((P.push[0] + P.push[1]) / 2) - 0.01, U((P.push[0] + P.push[1]) / 2) + 0.01, withHand);
+  assert.ok(max(mid, 'act') > 0.3 && max(mid, 'act') < 0.7, 'half way through the push: half pushed (an even rate)');
+  assert.ok(max(at(calls, 'syringe', U(P.push[1]) - 0.01, U(P.push[1]), withHand), 'act') > 0.95, 'plunger home at the end of the push');
+  assert.ok(P.push[1] - P.push[0] >= 30 - 1e-6 && P.flush[1] > P.flush[0], 'fentanyl over 30 s, then a flush');
 });
 
 test('IV cannula: the index slides the catheter off the needle after the flashback, not before', () => {

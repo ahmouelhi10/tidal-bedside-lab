@@ -994,3 +994,8 @@ body.resizing, body.resizing * { cursor: ew-resize !important; user-select: none
 /* the pre-brief's team-mode line is a sentence: it wraps instead of running off the dialog */
 .pb-team { white-space: normal; align-items: flex-start; }
 .pb-team > span { white-space: normal; min-width: 0; }
+/* the injection under way (ui._injTick): above the dock, small, the drug and what the hands are doing */
+.inj { position: absolute; z-index: 4; left: 50%; top: 96px; transform: translateX(-50%); display: flex; gap: 8px; align-items: baseline; padding: 6px 12px; border-radius: 999px; background: rgba(10, 16, 22, .82); border: 1px solid var(--line-2); color: var(--text); font-size: 12.5px; white-space: nowrap; pointer-events: none; }
+.inj b { font-weight: 650; } .inj span { color: var(--accent); font-variant-numeric: tabular-nums; }
+@media (max-width: 600px) { .inj { top: calc(var(--toph, 56px) + 4px); font-size: 11.5px; } }
+.say:has(~ .inj:not([hidden])) { top: 138px; }   /* the patient's words under the injection label */

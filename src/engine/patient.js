@@ -31,7 +31,7 @@ export const DT = 0.1;
 const AIRWAYS = { none: 1.0, chin_lift: 0.8, jaw_thrust: 0.9, opa: 0.9, sga: 0.95, ett: 1.0 };
 
 /** Every intervention accepted by Patient.dispatch(); the server validates replay logs against this list. */
-export const EVENT_TYPES = Object.freeze(['drug.bolus', 'bicarb.bolus', 'drug.infusion', 'drug.stop', 'fluid.bolus', 'blood.transfuse', 'bleed.set', 'bleed.control', 'order', 'airway.set', 'position.set', 'airway.intubate', 'vent.set', 'o2.mask', 'apox.set', 'monitor.attach', 'iv.access', 'nibp.cycle', 'cpr.start', 'cpr.stop', 'cpr.compress', 'cpr.switch', 'cpr.surface', 'defib.pads', 'defib.setEnergy', 'defib.mode', 'defib.charge', 'defib.shock', 'procedure.needle_decompression', 'procedure.chest_tube', 'procedure.cricothyroidotomy', 'exam.chest', 'exam.pocus', 'exam.neck', 'procedure.pericardiocentesis', 'procedure.pci', 'procedure.thrombolysis', 'procedure.treat_hyperkalemia', 'airway.tube_adjust', 'bronch.insert', 'bronch.suction', 'bronch.remove', 'thermal.device', 'thermal.cover', 'thermal.ambient', 'echo.view', 'echo.measure', 'echo.report', 'ward.advance', 'ward.sample', 'ward.rx.start', 'ward.rx.stop', 'ward.order', 'lab.order', 'instructor.inject', 'team.order', 'team.confirm', 'team.correct', 'io.access', 'pacing.set', 'procedure.arterial_line', 'procedure.central_line', 'procedure.ng_tube', 'procedure.urinary_catheter', 'exam.ecg12', 'vaporizer.set', 'n2o.set', 'niv.set', 'procedure.vagal', 'procedure.endoscopy', 'neuraxial.spinal', 'neuraxial.epidural', 'neuraxial.assess', 'note']);
+export const EVENT_TYPES = Object.freeze(['drug.bolus', 'bicarb.bolus', 'drug.infusion', 'drug.stop', 'fluid.bolus', 'blood.transfuse', 'bleed.set', 'bleed.control', 'order', 'airway.set', 'position.set', 'airway.intubate', 'vent.set', 'o2.mask', 'apox.set', 'monitor.attach', 'iv.access', 'nibp.cycle', 'cpr.start', 'cpr.stop', 'cpr.compress', 'cpr.switch', 'cpr.surface', 'defib.pads', 'defib.setEnergy', 'defib.mode', 'defib.charge', 'defib.shock', 'procedure.needle_decompression', 'procedure.chest_tube', 'procedure.cricothyroidotomy', 'exam.chest', 'exam.pocus', 'exam.neck', 'procedure.pericardiocentesis', 'procedure.pci', 'procedure.thrombolysis', 'procedure.treat_hyperkalemia', 'airway.tube_adjust', 'bronch.insert', 'bronch.suction', 'bronch.remove', 'thermal.device', 'thermal.cover', 'thermal.ambient', 'echo.view', 'echo.measure', 'echo.report', 'ward.advance', 'ward.sample', 'ward.rx.start', 'ward.rx.stop', 'ward.order', 'lab.order', 'instructor.inject', 'team.order', 'team.confirm', 'team.correct', 'io.access', 'pacing.set', 'procedure.arterial_line', 'procedure.central_line', 'procedure.ng_tube', 'procedure.urinary_catheter', 'exam.ecg12', 'vaporizer.set', 'n2o.set', 'niv.set', 'procedure.vagal', 'procedure.endoscopy', 'neuraxial.spinal', 'neuraxial.epidural', 'neuraxial.assess', 'equipment.remove', 'note']);
 /** What a live instructor can change during a case (event 'instructor.inject'). Each goes through the replay log like any
  *  other event, so a session run with an instructor still replays to the same hash. Clinical course after the change is the
  *  engine's own physiology; the changes themselves are scenario-design choices (REF design). */
@@ -46,6 +46,8 @@ const NUMERIC_EVENT_PARAMS = ['amount', 'rate', 'volumeL', 'minutes', 'mlPerMin'
 const VENT_NUM = { rate: [0, 60], vt: [0, 1500], fio2: [0.21, 1], peep: [0, 25], seal: [0, 1] };
 const CPR_NUM = { rate: [40, 200], depth: [0, 10] };
 const FLAG_KEYS = ['ecgLeads', 'spo2Probe', 'nibp', 'aline', 'capnography', 'tempProbe'];
+/** What equipment.remove can take off (skills training starts without the equipment the learner is about to place). */
+export const REMOVABLE = Object.freeze(['ivAccess', 'ecgLeads', 'spo2Probe', 'nibp', 'capnography', 'tempProbe', 'padsOn', 'o2']);
 function validateEventShape(ev) {
   const isNum = x => typeof x === 'number' && Number.isFinite(x);
   switch (ev.type) {
@@ -56,6 +58,10 @@ function validateEventShape(ev) {
         else if (k in VENT_NUM) { if (!isNum(v) || v < VENT_NUM[k][0] || v > VENT_NUM[k][1]) return `invalid ${k}`; }
         else return `unknown ventilator setting ${k}`;
       }
+      return null;
+    }
+    case 'equipment.remove': {
+      if (!Array.isArray(ev.items) || ev.items.length > REMOVABLE.length || !ev.items.every(k => REMOVABLE.includes(k))) return 'items must be a list of removable equipment';
       return null;
     }
     case 'monitor.attach': {
@@ -296,6 +302,9 @@ export class Patient {
       case 'cpr.switch': this.cpr.switchCompressor(t); return { ok: true };
       case 'cpr.surface': this.cpr.surface = ev.surface; return { ok: true };
       case 'defib.pads': this.flags.padsOn = true; this.defib.padsOn = true; return { ok: true };
+      case 'equipment.remove':                                   // equipment off the patient (skills training: the learner places it)
+        for (const k of ev.items) { if (k === 'o2') this.o2 = null; else { this.flags[k] = false; if (k === 'padsOn') this.defib.padsOn = false; if (k === 'nibp') this.nibp = { sbp: null, dbp: null, t: null }; } }
+        return { ok: true, removed: ev.items.slice() };
       case 'defib.setEnergy': this.defib.setEnergy(ev.energy); return { ok: true };
       case 'defib.mode': this.defib.mode = ev.mode; return { ok: true };
       case 'defib.charge': this.defib.charge(t); return { ok: true, readyAt: this.defib.chargeAt };

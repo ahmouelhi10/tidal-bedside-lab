@@ -49,7 +49,7 @@ sim.addEventListener('engineEvent', (e) => {
     else if (['VF', 'VT_PULSELESS', 'TORSADES', 'PEA', 'ASYSTOLE'].includes(x.to)) ui.toast(t('ev_arrest') + ': ' + x.to, true);
   } else ui.log(x.type);
 });
-sim.addEventListener('action', (e) => { try { scene.gesture?.(e.detail.event, e.detail.result); } catch (err) { console.warn('gesture skipped:', err && err.message); }
+sim.addEventListener('action', (e) => { try { scene.gesture?.(e.detail.event, e.detail.result, { arrested: !!sim.patient?.arrest?.arrested, speed: sim.speed }); } catch (err) { console.warn('gesture skipped:', err && err.message); }
    const d = ui.describe(e.detail.event); if (d) ui.log(d + (e.detail.result && e.detail.result.ok === false ? ' ✗' : '')); });
 sim.addEventListener('speed', () => ui.refresh());
 

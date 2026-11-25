@@ -9,7 +9,8 @@ import { dockTarget, guideTarget, tabOfEvents, controlOf, criterionControl, TAB_
 import { bmiOf, bmiClass } from '/engine/anthropometrics.js';
 import { SKIN_TONES } from './gl/body.js';
 import { CAMERAS } from './scene.js';
-import { PROCEDURES, PARAMS, Guide, SKILL_CASE } from './procedures.js';
+import { PROCEDURES, PARAMS, Guide, SKILL_CASE, equipmentOf, hasEquipment } from './procedures.js';
+import { injectionPlan, injectionPhases } from './injection.js';
 import { icon, stepIcon } from './icons.js';
 import { TOOLS } from './handson.js';
 import { faults } from './handson-eval.js';
@@ -211,6 +212,8 @@ export class UI {
       if (ev.type !== 'drug.bolus' || (e.detail.result && e.detail.result.ok === false) || !p) return;
       let r = null; try { r = monitorOnset(p.spec, ev.drug, ev.amount); } catch { /* timing unavailable */ }
       if (r) this.drugClock[ev.drug] = { t0: p.t, onsetS: r.onsetS, peakS: r.peakS, sign: r.sign };
+      const plan = injectionPlan(ev, !!p.arrest?.arrested);        // what the hands are doing now, and for how long (injection.js)
+      this._inj = { name: this.describe(ev) || drugName(ev.drug), plan, ph: injectionPhases(plan, this.sim.speed || 1), t0: performance.now() };
     });
     // the patient's voice and the stethoscope (voice.js, body-sound.js): what they say from their state; examining the chest
     // plays each lung's breath sounds and the heart, from the engine's own findings
@@ -766,7 +769,11 @@ export class UI {
     this.buildTabs();
     this.syncSetupFromSession(); this.syncPins(); this.syncChrome();
     const skill = this.pendingSkill && PROCEDURES.find(pr => pr.id === this.pendingSkill);
-    if (skill) setTimeout(() => this.startGuide(skill), 400);
+    if (skill) {                                                    // skills training: the patient starts without the equipment this procedure puts on, so the learner places it
+      const p = this.sim.patient, prm = Object.fromEntries((skill.params || []).map(k => [k, PARAMS[k]?.opts?.[0]?.[0]])), off = equipmentOf(skill, { p, b: p.body, prm }).filter(k => hasEquipment(p, k));
+      if (off.length) this.sim.act({ type: 'equipment.remove', items: off });
+      setTimeout(() => this.startGuide(skill), 400);
+    }
     this.liveLink?.start();                                         // live instructor channel (online sessions only)
     this.dom.teamBox?.replaceChildren(); this._teamId = 0;
     this.coach?.start(); if (this.coach && this.pendingSkill) this.coach.box.hidden = true;   // skills training: the guided panel is the help
@@ -802,6 +809,19 @@ export class UI {
     ({ tab_guide: () => this.panelGuide(P), tab_drugs: () => this.panelDrugs(P, b), tab_fluids: () => { this.panelFluids(P); fluidsExtra(this, P); }, tab_airway: () => this.panelAirway(P, b), tab_circ: () => { this.panelCirc(P); pacingExtra(this, P); }, tab_proc: () => { this.panelProc(P); procExtra(this, P); }, tab_orders: () => { this.panelOrders(P); ordersExtra(this, P); }, tab_ward: () => (this.wardView ??= new WardView(this)).render(P) })[this.tab]();
   }
 
+  /** The injection under way: what the hands are doing (cleaning the port, connecting, injecting with the seconds left, flushing),
+   *  or that a slow drug now runs on a syringe driver. Real time, shortened with the simulation speed like the gesture. */
+  _injTick() {
+    const j = this._inj; let box = this.dom.inj;
+    if (!box) { box = this.dom.inj = el('div', { class: 'inj', 'aria-live': 'polite', hidden: true }); this.dom.say?.after(box); }
+    if (!j) { box.hidden = true; return; }
+    const s = (performance.now() - j.t0) / 1000, P = j.ph, pl = j.plan;
+    if (s > P.dur + (pl.pump ? 4 : 0)) { this._inj = null; box.hidden = true; return; }
+    const left = (k) => Math.max(0, Math.ceil(P[k][1] - s));
+    const txt = pl.route === 'neb' ? t('inj_neb') : s < P.swab[1] ? t('inj_swab') : s < P.connect[1] ? t(pl.route === 'iv' ? 'inj_connect' : 'inj_needle')
+      : pl.pump ? t('inj_pump', { m: Math.round(pl.pushS / 60) }) : s < P.push[1] ? t('inj_push', { s: left('push') }) : s < P.flush[1] && pl.flushMl ? t('inj_flush', { ml: pl.flushMl }) : t('inj_done');
+    box.hidden = false; box.replaceChildren(el('b', { text: j.name }), el('span', { text: txt }));
+  }
   /** The right column never scrolls: the trends chart is shown only when there is room for it under the monitor, the coach and the effects. */
   _fitRight() {
     const R = this.dom.right, tr = R?.querySelector(':scope > .trends'); if (!tr || !R.clientHeight) return;
@@ -1173,8 +1193,22 @@ export class UI {
   /** Begin a procedure: log it, open the workspace and frame its first site. */
   startGuide(pr) {
     const p = this.sim.patient; if (!p) return;
-    this.handsOn?.end(); this.guide = new Guide(pr, p); this.sim.act({ type: 'note', text: `guide ${pr.id}: start` });
+    this.handsOn?.end(); this.guide = new Guide(pr, p); this.sim.act({ type: 'note', text: `guide ${pr.id}: start` }); this._skipPresent();
     this.tab = 'tab_guide'; this.panelOpen = true; this.dom.card.hidden = true; this.buildTabs(); this.prefocusStep(0);
+  }
+  /** A step that only puts on equipment the patient already has (a case that began monitored, with a line): marked as already in
+   *  place, with its note, and the guide moves on, instead of asking the learner to place it again. */
+  _skipPresent() {
+    const g = this.guide, p = this.sim.patient; if (!g || !p) return;
+    const PLACE = new Set(['iv.access', 'io.access', 'monitor.attach', 'defib.pads', 'o2.mask', 'nibp.cycle']);
+    const there = (e) => (e.type === 'iv.access' || e.type === 'io.access' ? p.flags.ivAccess : e.type === 'monitor.attach' ? Object.keys(e.items || {}).every(k => !e.items[k] || p.flags[k])
+      : e.type === 'defib.pads' ? p.flags.padsOn : e.type === 'o2.mask' ? !!p.o2 && p.o2.fio2 >= (e.fio2 ?? 0) - 0.01 : true);
+    for (let k = 0; k < 20 && g.step && !g.finished; k++) {
+      const st = g.step; let evs = []; try { evs = st.run ? st.run({ p, b: p.body, prm: g.prm }) : []; } catch { evs = []; }
+      if (!evs.length || !evs.every(e => PLACE.has(e.type)) || !evs.some(e => e.type !== 'nibp.cycle') || !evs.every(there)) return;
+      g.status[g.i] = 'done'; g.notes[g.i] = t('gd_present');
+      this.sim.act({ type: 'note', text: `guide ${g.proc.id}: ${st.id} (already in place)` }); g.i++;
+    }
   }
   /** The game moves the camera in advance: to the current step's site (its skin normal) or to the step's preset view. */
   prefocusStep(delayMs = 0) {
@@ -1278,7 +1312,7 @@ export class UI {
       el('p', { class: 'small muted', text: t('gd_miss_retry') }));
   }
   _guideNext() {
-    const g = this.guide; g.i++; this.prefocusStep(g.finished ? 0 : 2400);
+    const g = this.guide; g.i++; this._skipPresent(); this.prefocusStep(g.finished ? 0 : 2400);
     if (g.finished) setTimeout(() => this.scene.setCamera('default'), 2400);
     if (g.finished) {
       const s = g.summary(); this.sim.act({ type: 'note', text: `guide ${g.proc.id}: end ${s.done}/${s.n} in order, ${s.early} early, ${s.warn} with a problem, ${s.skipped} skipped` });
@@ -1406,7 +1440,7 @@ export class UI {
     signsTick(this);
     this.coach?.tick();
     this._dockPoint(p);
-    this._fitRight();
+    this._fitRight(); this._injTick();
     if (this.panelOpen && this.tab === 'tab_airway') { this._mechTick(p); volTick(this); }
     if (this.panelOpen && this.tab === 'tab_orders') { this._labsTick(p); scoresTick(this); }
     if (this.panelOpen && this.tab === 'tab_circ') this._paceStatus?.();

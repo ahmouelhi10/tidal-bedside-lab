@@ -438,3 +438,24 @@ const VIS = {
   'ng.confirm': ['syringe', 'face'], 'uc.insert': ['touch', 'groin'], 'spinal.coload': ['syringe', 'arm'], 'spinal.assess': ['touch', 'chest'], 'iv.tourniquet': ['tourniquet', 'arm'],
 };
 for (const pr of PROCEDURES) for (const st of pr.steps) { const v = VIS[`${pr.id}.${st.id}`]; if (v) [st.g, st.at] = v; }
+
+/** The equipment a procedure puts on the patient itself (equipment.remove keys): a skills-training session starts without it,
+ *  so the learner places it, and a guided step finds it already there in a case that began with it. */
+export function equipmentOf(pr, ctx) {
+  const out = new Set();
+  for (const st of pr.steps) for (const ev of stepEquipment(st, ctx)) out.add(ev);
+  return [...out];
+}
+export function stepEquipment(st, ctx) {
+  let evs = []; try { evs = st.run ? st.run(ctx) : []; } catch { evs = []; }
+  const out = [];
+  for (const e of evs) {
+    if (e.type === 'iv.access' || e.type === 'io.access') out.push('ivAccess');
+    else if (e.type === 'monitor.attach') out.push(...Object.keys(e.items || {}).filter(k => e.items[k]));
+    else if (e.type === 'defib.pads') out.push('padsOn');
+    else if (e.type === 'o2.mask') out.push('o2');
+  }
+  return out;
+}
+/** Is this piece of equipment on the patient now? (keys of equipmentOf) */
+export const hasEquipment = (p, k) => (k === 'o2' ? !!p.o2 : !!p.flags?.[k]);
