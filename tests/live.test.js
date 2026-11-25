@@ -36,7 +36,7 @@ function sseReader(res) {
     }
   })();
   return {
-    next: (ev) => { const q = queue.findIndex(x => x.ev === ev); if (q >= 0) return Promise.resolve(queue.splice(q, 1)[0].data); return new Promise((resolve, reject) => { waiting.push({ ev, resolve }); setTimeout(() => reject(new Error('timeout waiting for ' + ev)), 4000); }); },
+    next: (ev) => { const q = queue.findIndex(x => x.ev === ev); if (q >= 0) return Promise.resolve(queue.splice(q, 1)[0].data); return new Promise((resolve, reject) => { waiting.push({ ev, resolve }); setTimeout(() => reject(new Error('timeout waiting for ' + ev)), 15000); }); },
     close: () => reader.cancel().catch(() => {}),
   };
 }
@@ -63,13 +63,15 @@ test('learner state reaches the instructor and the instructor change reaches the
     assert.equal(hello.learnerOnline, true); assert.equal(hello.spec.weightKg, sess.spec.weightKg);
     assert.deepEqual(await learner.next('watchers'), { watchers: 1 });
     assert.equal((await post(`${base}/api/live/${sess.id}/state`, { t: 12, hr: 88 })).status, 204);
+    // straight after (well inside LIVE_LIMITS.minStateMs): checked here, not after the other requests below, which on a
+    // busy CI runner can take longer than the window and then rightly let a second push through
+    assert.equal((await post(`${base}/api/live/${sess.id}/state`, { t: 13 })).status, 429, 'state pushes are rate limited per channel');
     assert.deepEqual(await instr.next('state'), { t: 12, hr: 88 });
     const r = await (await post(`${base}/api/live/join/${open.code}/cmd`, { what: 'bleed', mlPerMin: 250 })).json();
     assert.deepEqual(r, { ok: true, seq: 1, delivered: true });
     assert.deepEqual(await learner.next('cmd'), { seq: 1, what: 'bleed', mlPerMin: 250 });
     assert.equal((await post(`${base}/api/live/join/${open.code}/cmd`, { what: 'nope' })).status, 400);
     assert.equal((await fetch(`${base}/api/live/join/ZZZZZZ`)).status, 404);
-    assert.equal((await post(`${base}/api/live/${sess.id}/state`, { t: 13 })).status, 429, 'state pushes are rate limited per channel');
     learner.close(); instr.close();
   });
 });
