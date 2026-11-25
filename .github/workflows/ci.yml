@@ -33,14 +33,15 @@ jobs:
   smoke:
     name: Browser smoke test
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25   # ~2 min on a 20-core workstation; a hosted runner is several times slower
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
       # Headless Chrome (preinstalled on the runner) driven over the DevTools protocol: every case in English and French,
-      # every dock section, one online case verified by the server; fails on any console error or raw translation key.
+      # every dock section, one online case verified by the server; fails on any console error, raw translation key or
+      # text below WCAG AA contrast.
       - name: Play every case in a real browser
         run: npm run smoke
         env:

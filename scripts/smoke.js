@@ -1,7 +1,7 @@
 // Browser smoke test, with no dependency: starts the server on a free port, opens the app in headless Chrome driven over
 // the DevTools protocol (Node's built-in WebSocket), and plays it the way a learner would:
 //  - every scenario, in English and in French: start it, open every dock section, and look for any interface text that is
-//    still a raw translation key (e_g_ "wd_r_amox");
+//    still a raw translation key (e_g_ "wd_r_amox") or below WCAG AA contrast against its real background;
 //  - one case online end to end: the server issues the seed, the browser plays it, the server replays the log and must
 //    find the same state hash;
 //  - throughout: any uncaught exception, console error or failed request fails the run.
@@ -54,21 +54,61 @@ const PAGE_SCAN = `(() => {                                    // raw translatio
   document.querySelectorAll('[title],[aria-label],[placeholder]').forEach(e => { for (const a of ['title', 'aria-label', 'placeholder']) { const v = e.getAttribute(a); if (v && KEY.test(v)) out.add(a + '=' + v); } });
   return [...out];
 })()`;
-const playCase = (id, lang) => `(async () => {
+// Text contrast (WCAG 2 AA: 4.5:1, or 3:1 for large text) against the real background: the panel colours (gradient stops
+// included) composited, where a panel is see-through, over both a dark scene and a light wall behind it (the worse counts).
+// Text inside an element still fading in or out is left for a later visit; an element faded out (opacity under 0.05)
+// is not shown and not measured.
+const PAGE_CONTRAST = `(() => {
+  const parse = (c) => { const m = c.match(/rgba?\\(([^)]+)\\)/); if (!m) return null; const p = m[1].split(/[ ,/]+/).filter(Boolean).map(Number); return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1]; };
+  const stops = (img) => [...(img || '').matchAll(/rgba?\\([^)]+\\)/g)].map(m => parse(m[0]));
+  const over = (t, b) => [t[0] * t[3] + b[0] * (1 - t[3]), t[1] * t[3] + b[1] * (1 - t[3]), t[2] * t[3] + b[2] * (1 - t[3]), 1];
+  const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+  const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  const moving = new Set(document.getAnimations().filter(a => a.playState === 'running' && a.effect?.getTiming?.().iterations !== Infinity).map(a => a.effect.target).filter(Boolean));
+  const inMotion = (e) => { for (; e; e = e.parentElement) if (moving.has(e)) return true; return false; };   // fading in or out: measured on a later visit
+  const out = [], memo = new Map(), st = (e) => memo.get(e) || (memo.set(e, getComputedStyle(e)), memo.get(e));   // one style lookup per element per scan
+  const opac = new Map(), opOf = (e) => { if (!e) return 1; if (!opac.has(e)) opac.set(e, +st(e).opacity * opOf(e.parentElement)); return opac.get(e); };
+  for (const el of document.querySelectorAll('body *')) {
+    if (!el.firstChild) continue;
+    const own = [...el.childNodes].filter(n => n.nodeType === 3 && n.nodeValue.trim()).map(n => n.nodeValue.trim()).join(' '); if (!own) continue;
+    if (!el.offsetParent && st(el).position !== 'fixed') continue;
+    const cs = st(el); if (cs.visibility === 'hidden') continue;
+    const r = el.getBoundingClientRect(); if (r.width < 2 || r.height < 2) continue;
+    const op = opOf(el); if (op < 0.05 || inMotion(el)) continue;
+    const fg = parse(cs.color); if (!fg) continue;
+    const layers = []; let solid = false;
+    for (let e = el; e && !solid; e = e.parentElement) { const s = st(e), b = parse(s.backgroundColor), g = stops(s.backgroundImage);
+      if (g.length) { layers.push(g); if (g.every(c => c[3] >= 1)) solid = true; } if (b && b[3] > 0) { layers.push([b]); if (b[3] >= 1) solid = true; } }
+    const combos = (i) => i === layers.length ? [[]] : combos(i + 1).flatMap(rest => layers[i].map(a => [a, ...rest]));
+    let worst = Infinity;
+    for (const bd of solid ? [[0, 0, 0, 1]] : [[8, 10, 14, 1], [205, 210, 214, 1]]) for (const c of combos(0).slice(0, 64)) { let bg = bd; for (const l of c.slice().reverse()) bg = over(l, bg); worst = Math.min(worst, ratio(over([fg[0], fg[1], fg[2], fg[3] * op], bg), bg)); }
+    const size = parseFloat(cs.fontSize), large = size >= 24 || (+cs.fontWeight >= 700 && size >= 18.66);
+    if (worst < (large ? 3 : 4.5)) out.push('"' + own.slice(0, 30) + '" ' + cs.color + ' ' + worst.toFixed(2) + ':1 (' + ((typeof el.className === 'string' && el.className) || el.tagName.toLowerCase()) + ')');
+  }
+  return out;
+})()`;
+const playCase = (id, lang, checkContrast) => `(async () => {
   const { sim, ui } = window.__tbl, i18n = await import('/i18n.js'), wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const low = new Set(), contrast = async () => { if (!${checkContrast ? 'true' : 'false'}) return; for (const x of ${PAGE_CONTRAST}) low.add(x); };   // colours do not change with the language: checked in English
   const scan = () => ${PAGE_SCAN};
-  i18n.setLang(${JSON.stringify(lang)}); sim.online = false;
+  if (i18n.getLang() !== ${JSON.stringify(lang)}) {                      // the way a learner switches: the Language setting (it rebuilds the interface)
+    const sel = document.getElementById('selLang'); sel.value = ${JSON.stringify(lang)}; sel.dispatchEvent(new Event('change')); await wait(300);
+  }
+  if (i18n.getLang() !== ${JSON.stringify(lang)}) throw new Error('the language did not switch to ${lang}');
+  sim.online = false;
   await sim.start({ scenarioId: ${JSON.stringify(id)} }); ui.onSessionStart(); await wait(150);
   [...document.querySelectorAll('button')].find(b => /ready|prêt/i.test(b.textContent))?.click(); await wait(100);
   const tabs = [...document.querySelectorAll('.dock button, nav button')];
-  let hits = scan(); for (const b of tabs) { b.click(); await wait(60); hits = hits.concat(scan()); }
+  let hits = scan(); await contrast(); for (const b of tabs) { b.click(); await wait(60); hits = hits.concat(scan()); await contrast(); }
   sim.patient.run(60);                                                 // a minute of physiology must stay finite
   const bad = []; const walk = (o, p, d) => { if (d > 3 || !o) return; for (const [k, v] of Object.entries(o)) { if (typeof v === 'number' && !Number.isFinite(v)) bad.push(p + k); else if (v && typeof v === 'object' && !Array.isArray(v)) walk(v, p + k + '.', d + 1); } };
   walk(sim.patient.snapshot(), '', 0);
-  return { tabs: tabs.length, rawKeys: [...new Set(hits)], nonFinite: bad };
+  sim.patient.run(1); await wait(100); await contrast();             // alarms and banners that a minute brought up
+  return { tabs: tabs.length, rawKeys: [...new Set(hits)], nonFinite: bad, lowContrast: [...low] };
 })()`;
 const ONLINE_CASE = `(async () => {
-  const { sim } = window.__tbl, i18n = await import('/i18n.js'); i18n.setLang('en');
+  const { sim } = window.__tbl, i18n = await import('/i18n.js');
+  if (i18n.getLang() !== 'en') { const sel = document.getElementById('selLang'); sel.value = 'en'; sel.dispatchEvent(new Event('change')); await new Promise(r => setTimeout(r, 300)); }
   await sim.probeServer(); if (!sim.online) return { error: 'the page did not reach the server' };
   await sim.start({ scenarioId: 'obese_rsi' }); const p = sim.patient;
   for (const e of [{ type: 'position.set', headUp: true }, { type: 'o2.mask', fio2: 0.8, seal: 0.95 }, { type: 'drug.bolus', drug: 'propofol', amount: 200 },
@@ -120,15 +160,15 @@ async function main() {
 
     let played = 0;
     for (const lang of ['en', 'fr']) for (const id of ids) {
-      const before = problems.length, r = await evaluate(playCase(id, lang), `${lang} ${id}`); played++;
+      const before = problems.length, r = await evaluate(playCase(id, lang, lang === 'en'), `${lang} ${id}`); played++;
       if (r.tabs < 5) problems.push(`${lang} ${id}: only ${r.tabs} dock sections found`);
       for (const k of r.rawKeys) problems.push(`${lang} ${id}: raw translation key on screen: ${k}`);
       for (const k of r.nonFinite) problems.push(`${lang} ${id}: non-finite value after a minute: ${k}`);
+      for (const k of r.lowContrast) if (!problems.some(p => p.endsWith(k))) problems.push(`${lang} ${id}: text below WCAG AA contrast: ${k}`);
       if (problems.length > before) for (const p of problems.slice(before)) if (!p.startsWith(`${lang} ${id}`)) problems[problems.indexOf(p)] = `${lang} ${id}: ${p}`;
     }
     const online = await evaluate(ONLINE_CASE, 'online case');
     if (online.error) problems.push(`online case: ${online.error}`); else if (online.verified !== true) problems.push(`online case: the server replay did not verify (session ${online.id})`);
-    await evaluate(`import('/i18n.js').then(m => m.setLang('en'))`, 'reset language');
 
     console.log(`smoke: played ${played} cases (EN and FR), every dock section opened; online case ${online.verified === true ? 'verified by the server' : 'NOT verified'}; ${((Date.now() - started) / 1000).toFixed(0)} s`);
   } catch (e) {
