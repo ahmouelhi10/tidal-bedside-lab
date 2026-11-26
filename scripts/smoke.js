@@ -2,10 +2,13 @@
 // the DevTools protocol (Node's built-in WebSocket), and plays it the way a learner would:
 //  - every scenario, in English and in French: start it, open every dock section, and look for any interface text that is
 //    still a raw translation key (e_g_ "wd_r_amox") or below WCAG AA contrast against its real background;
+//  - every guided procedure with hands-on steps, played with the real mouse (trusted DevTools input events): drag each
+//    instrument from the table onto its site, then hold, push or cut; every hands-on step must succeed by hand, first try;
 //  - one case online end to end: the server issues the seed, the browser plays it, the server replays the log and must
 //    find the same state hash;
 //  - throughout: any uncaught exception, console error or failed request fails the run.
-// Usage: npm run smoke   (CHROME_PATH=... to choose the browser; SMOKE_REQUIRED=1 fails instead of skipping without one)
+// Usage: npm run smoke   (CHROME_PATH=... to choose the browser; SMOKE_REQUIRED=1 fails instead of skipping without one;
+//                         SMOKE_ONLY=cases or SMOKE_ONLY=handson runs one part; SMOKE_PROCS=iv,rsi limits the procedures)
 import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { createServer } from '../src/server/server.js';
@@ -96,7 +99,7 @@ const playCase = (id, lang, checkContrast) => `(async () => {
   }
   if (i18n.getLang() !== ${JSON.stringify(lang)}) throw new Error('the language did not switch to ${lang}');
   sim.online = false;
-  await sim.start({ scenarioId: ${JSON.stringify(id)} }); ui.onSessionStart(); await wait(150);
+  await ui.onStart({ scenarioId: ${JSON.stringify(id)}, spec: {}, learner: '', tone: 2 }); await wait(150);   // what the Start button does (it also draws the case's patient)
   [...document.querySelectorAll('button')].find(b => /ready|prêt/i.test(b.textContent))?.click(); await wait(100);
   const tabs = [...document.querySelectorAll('.dock button, nav button')];
   let hits = scan(); await contrast(); for (const b of tabs) { b.click(); await wait(60); hits = hits.concat(scan()); await contrast(); }
@@ -106,11 +109,68 @@ const playCase = (id, lang, checkContrast) => `(async () => {
   sim.patient.run(1); await wait(100); await contrast();             // alarms and banners that a minute brought up
   return { tabs: tabs.length, rawKeys: [...new Set(hits)], nonFinite: bad, lowContrast: [...low] };
 })()`;
+// ---- hands-on procedures, played with the real mouse: drag the instrument from the table onto the patient, then hold,
+// push or cut as the step asks. The page only reports where things are on screen; the gestures are trusted mouse events
+// sent through the DevTools protocol, so they go through the same pointer handlers a learner's mouse does.
+const START_PROC = (id) => `(async () => {
+  const { sim, ui, scene } = window.__tbl, wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const { PROCEDURES, SKILL_CASE } = await import('/procedures.js');
+  const pr = PROCEDURES.find(p => p.id === ${JSON.stringify(id)});
+  for (let i = 0; i < 100 && !(scene.asset && scene.instruments); i++) await wait(100);   // the realistic patient and the instrument models
+  if (!(scene.asset && scene.instruments)) return { error: 'the patient or instrument models did not load' };
+  sim.online = false; await ui.onStart({ scenarioId: SKILL_CASE[pr.id] || null, spec: {}, learner: '', tone: 2 }); await wait(150);
+  [...document.querySelectorAll('button')].find(b => /ready|prêt/i.test(b.textContent))?.click(); await wait(150);
+  ui.startGuide(pr); await wait(200);
+  return { steps: pr.steps.length, hands: pr.steps.filter(s => s.hand).map(s => s.id) };
+})()`;
+/** Where the current step's instrument tile and target are on screen, once the camera has settled on the step. */
+const GUIDE_STATE = `(async () => {
+  const { sim, ui, scene } = window.__tbl, g = ui.guide, wait = (ms) => new Promise(r => setTimeout(r, ms));
+  if (!g) return { error: 'no guide' };
+  if (g.finished) return { finished: true };
+  const s = g.step, p = sim.patient;
+  if (g.hold) return { i: g.i, id: s.id, hold: true };
+  const rem = g.remaining(p); if (rem > 0) p.run(rem + 1);                         // the step must wait (a drug's onset): let patient time pass
+  const h = s.hand; if (!h) return { i: g.i, id: s.id, button: true };
+  const W = scene.world, cs = scene.chestSites;
+  const tgt = h.target === 'chestSite' ? cs[g.prm.side || 'R'][h.site || g.prm.site || 'mal5'] : W[h.target];
+  const ax = h.axis === 'cross' ? [0, 0, 1] : [1, 0, 0], len = ((h.minCm ?? 2) + (h.maxCm ?? 4)) / 200;   // a stroke: half-way between the shortest and longest cut, along the body
+  // an incision is judged by its midpoint: cut across the site, from half a length before it to half a length after
+  const P = (k) => [tgt[0] + ax[0] * len * k, tgt[1], tgt[2] + ax[2] * len * k], cut = h.gesture === 'stroke';
+  const shot = () => ({ a: scene.project(cut ? P(-0.5) : tgt), b: scene.project(P(0.5)) });
+  // the guide frames the step's site after a short delay: wait until the camera is headed there and has arrived
+  const key = h.target === 'chestSite' ? (g.prm.side || 'R') + '_' + (h.site || g.prm.site || 'mal5') : h.target, site = scene.siteFrame?.(key)?.p || tgt;
+  const there = () => scene.goal?.target && Math.hypot(scene.goal.target[0] - site[0], scene.goal.target[1] - site[1], scene.goal.target[2] - site[2]) < 0.02 && !scene.tw;
+  for (let k = 0; k < 80 && !there(); k++) await wait(100);
+  // aim by checking, not by trusting the camera: the body point under the drop pixel must be on the site (within a third of
+  // the step's tolerance; for a cut, the cut's start). Software rendering in headless Chrome is slow, so this can take seconds.
+  const c0 = scene.canvas.getBoundingClientRect(), aim = cut ? P(-0.5) : tgt, tol = (h.radiusCm ?? 3) / 300;
+  let cur = shot(), off = Infinity;
+  for (let k = 0; k < 150; k++) {
+    cur = shot(); const hit = cur.a && scene.pickBody(c0.left + cur.a.x, c0.top + cur.a.y);
+    off = hit ? Math.hypot(hit.p[0] - aim[0], hit.p[1] - aim[1], hit.p[2] - aim[2]) : Infinity;
+    if (off < tol && !scene.tw) break; await wait(100);
+  }
+  if (!(off < tol)) return { i: g.i, id: s.id, error: 'the site is not under its own projection after 15 s (' + (off * 100).toFixed(1) + ' cm off, view ' + scene.view + ')' };
+  const tile = document.querySelector('.pw-table.live .pw-tool[data-tool="' + h.tool + '"]'); if (!tile) return { i: g.i, id: s.id, error: 'no live instrument tile for ' + h.tool };
+  const r = tile.getBoundingClientRect(), c = scene.canvas.getBoundingClientRect();
+  return { i: g.i, id: s.id, gesture: h.gesture, tool: h.tool, tile: { x: r.left + r.width / 2, y: r.top + r.height / 2 },
+    at: cur.a && { x: c.left + cur.a.x, y: c.top + cur.a.y, visible: cur.a.visible }, to: cur.b && { x: c.left + cur.b.x, y: c.top + cur.b.y },
+    holdMs: ((h.holdS ?? 2) + 0.4) * 1000, pushPx: ((h.minCm + h.maxCm) / 2) / (h.cmPerPx ?? 0.05) };
+})()`;
+const GUIDE_CHECK = (id) => `(() => {
+  const { sim, ui } = window.__tbl, g = ui.guide, notes = sim.patient.log.filter(e => e.type === 'note').map(e => e.text);
+  const hands = new Set(g ? g.proc.steps.filter(s => s.hand).map(s => s.id) : []);
+  return { finished: !!g?.finished, status: g ? [...g.status] : [], handsOn: notes.filter(n => n.startsWith('guide ${id}:') && n.includes('[hands-on:')),
+    present: notes.filter(n => n.startsWith('guide ${id}:') && n.endsWith('(already in place)') && hands.has(n.slice('guide ${id}: '.length, -' (already in place)'.length))).length,
+    failed: notes.filter(n => n.startsWith('guide attempt ${id}:')) };
+})()`;
+
 const ONLINE_CASE = `(async () => {
-  const { sim } = window.__tbl, i18n = await import('/i18n.js');
+  const { sim, ui } = window.__tbl, i18n = await import('/i18n.js');
   if (i18n.getLang() !== 'en') { const sel = document.getElementById('selLang'); sel.value = 'en'; sel.dispatchEvent(new Event('change')); await new Promise(r => setTimeout(r, 300)); }
   await sim.probeServer(); if (!sim.online) return { error: 'the page did not reach the server' };
-  await sim.start({ scenarioId: 'obese_rsi' }); const p = sim.patient;
+  await ui.onStart({ scenarioId: 'obese_rsi', spec: {}, learner: '', tone: 2 }); const p = sim.patient;
   for (const e of [{ type: 'position.set', headUp: true }, { type: 'o2.mask', fio2: 0.8, seal: 0.95 }, { type: 'drug.bolus', drug: 'propofol', amount: 200 },
     { type: 'drug.bolus', drug: 'rocuronium', amount: 100 }, { type: 'procedure.arterial_line', us: true }]) { sim.act(e); p.run(30); }
   p.run(120); const out = await sim.finish();
@@ -157,9 +217,10 @@ async function main() {
     const ids = await evaluate(`import('/engine/scenarios.js').then(m => Object.keys(m.SCENARIOS))`, 'scenario list');
     const webgl = await evaluate(`Boolean(document.createElement('canvas').getContext('webgl2'))`, 'WebGL2 check');
     console.log(`smoke: ${ids.length} scenarios, WebGL2 ${webgl ? 'available' : 'not available (procedural fallback)'}`);
+    if (process.env.SMOKE_DEBUG) console.log('smoke: page', JSON.stringify(await evaluate(`(async () => { let n = 0; const t0 = performance.now(); await new Promise(r => { const f = () => { n++; if (performance.now() - t0 < 1000) requestAnimationFrame(f); else r(); }; requestAnimationFrame(f); }); return { visibility: document.visibilityState, focus: document.hasFocus(), framesPerSecond: n }; })()`, 'frame rate')));
 
-    let played = 0;
-    for (const lang of ['en', 'fr']) for (const id of ids) {
+    let played = 0; const only = process.env.SMOKE_ONLY || '', tCases = Date.now();     // SMOKE_ONLY=cases | handson: one part only (CI runs them as two jobs)
+    for (const lang of ['en', 'fr']) for (const id of only === 'handson' ? [] : ids) {
       const before = problems.length, r = await evaluate(playCase(id, lang, lang === 'en'), `${lang} ${id}`); played++;
       if (r.tabs < 5) problems.push(`${lang} ${id}: only ${r.tabs} dock sections found`);
       for (const k of r.rawKeys) problems.push(`${lang} ${id}: raw translation key on screen: ${k}`);
@@ -167,6 +228,45 @@ async function main() {
       for (const k of r.lowContrast) if (!problems.some(p => p.endsWith(k))) problems.push(`${lang} ${id}: text below WCAG AA contrast: ${k}`);
       if (problems.length > before) for (const p of problems.slice(before)) if (!p.startsWith(`${lang} ${id}`)) problems[problems.indexOf(p)] = `${lang} ${id}: ${p}`;
     }
+    if (played) console.log(`smoke: ${played} cases played in ${((Date.now() - tCases) / 1000).toFixed(0)} s`);
+    // hands-on procedures with the real mouse
+    const mouse = (type, x, y, extra = {}) => send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, pointerType: 'mouse', ...extra });
+    const glide = async (x0, y0, x1, y1, n = 12) => { for (let k = 1; k <= n; k++) { await mouse('mouseMoved', x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n); await sleep(16); } };
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const procs = (await evaluate(`import('/procedures.js').then(m => m.PROCEDURES.filter(p => p.steps.some(s => s.hand)).map(p => p.id))`, 'procedure list'))
+      .filter(id => only !== 'cases' && (!process.env.SMOKE_PROCS || process.env.SMOKE_PROCS.split(',').includes(id)));   // SMOKE_PROCS=iv,rsi: only these
+    let gestures = 0;
+    for (const id of procs) {
+      const t0 = Date.now(), before = problems.length, start = await evaluate(START_PROC(id), `start ${id}`);
+      if (start.error) { problems.push(`hands-on ${id}: ${start.error}`); continue; }
+      for (let guard = 0; guard < start.steps * 3; guard++) {
+        const ts = Date.now(), st = await evaluate(GUIDE_STATE, `${id} step state`);
+        if (process.env.SMOKE_DEBUG) console.log(`    ${id} step ${st.i} ${st.id || ''} ${st.hold ? 'hold' : st.button ? 'button' : st.gesture || ''} (state ${Date.now() - ts} ms)`);
+        if (st.error) { problems.push(`hands-on ${id}: ${st.error}`); break; }
+        if (st.finished) break;
+        if (st.hold) { await evaluate(`document.getElementById('btnGuideNext')?.click()`, 'continue'); await sleep(200); continue; }
+        if (st.button) { await evaluate(`document.getElementById('btnGuideDo')?.click()`, 'perform'); await sleep(250); continue; }
+        if (!st.at || !st.at.visible) { problems.push(`hands-on ${id} ${st.id}: the target is off screen`); break; }
+        // drag the instrument from the table and drop it on the site
+        await mouse('mousePressed', st.tile.x, st.tile.y); await glide(st.tile.x, st.tile.y, st.at.x, st.at.y, 6); await mouse('mouseReleased', st.at.x, st.at.y); await sleep(120);
+        // then the gesture itself
+        if (st.gesture === 'hold') { await mouse('mousePressed', st.at.x, st.at.y); await sleep(st.holdMs); await mouse('mouseReleased', st.at.x, st.at.y); }
+        else if (st.gesture === 'push') { await mouse('mousePressed', st.at.x, st.at.y); await glide(st.at.x, st.at.y, st.at.x, st.at.y + st.pushPx, 5); await mouse('mouseReleased', st.at.x, st.at.y + st.pushPx); }
+        else if (st.gesture === 'stroke') { await mouse('mousePressed', st.at.x, st.at.y); await glide(st.at.x, st.at.y, st.to.x, st.to.y, 6); await mouse('mouseReleased', st.to.x, st.to.y); }
+        else if (st.gesture === 'rotate') { await mouse('mousePressed', st.at.x, st.at.y); await glide(st.at.x, st.at.y, st.at.x + 150, st.at.y, 5); await mouse('mouseReleased', st.at.x + 150, st.at.y); }
+        gestures++; await sleep(250);
+        const after = await evaluate(GUIDE_CHECK(id), `${id} check`);
+        if (after.failed.length) { problems.push(`hands-on ${id} ${st.id}: ${after.failed.pop()}`); break; }
+      }
+      const end = await evaluate(GUIDE_CHECK(id), `${id} end`);
+      if (problems.length === before) {
+        if (!end.finished) problems.push(`hands-on ${id}: the procedure did not reach its end (steps ${end.status.join(',')})`);
+        const byHand = start.hands.length - end.present;                    // a step whose equipment the case already has is marked in place, not played
+        if (end.handsOn.length !== byHand) problems.push(`hands-on ${id}: ${end.handsOn.length} of ${byHand} hands-on steps done by hand`);
+      }
+      console.log(`smoke:   ${id}: ${end.handsOn.length} hands-on steps by mouse, ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+    }
+    if (procs.length) console.log(`smoke: ${procs.length} hands-on procedures, ${gestures} gestures with the real mouse`);
     const online = await evaluate(ONLINE_CASE, 'online case');
     if (online.error) problems.push(`online case: ${online.error}`); else if (online.verified !== true) problems.push(`online case: the server replay did not verify (session ${online.id})`);
 

@@ -13,7 +13,7 @@ node --test tests/pk.test.js   # one test file
 node --test --test-name-pattern="catalogue" tests/scenarios.test.js   # one test by name
 npm run check                  # node --check on every .js under src/, scripts/, tests/
 npm run verify                 # check + test (what CI runs on Node 20 and 22)
-npm run smoke                  # every case in EN and FR in headless Chrome over the DevTools protocol: console errors, raw i18n keys, WCAG AA text contrast, one server-verified case (~2 min; Node >= 22, Chrome; CI job "Browser smoke test")
+npm run smoke                  # headless Chrome over the DevTools protocol: every case in EN and FR, the hands-on procedures with the real mouse, console errors, raw i18n keys, WCAG AA contrast, one server-verified case (~8 min; Node >= 22, Chrome; SMOKE_ONLY=cases|handson runs one part, as the two CI jobs do)
 npm run build                  # syntax check, then copy src/docs into dist/ + dist/BUILD.json (engine sha256)
 npm run docs                   # regenerate docs/REFERENCES.md from src/engine/references.js
 ```

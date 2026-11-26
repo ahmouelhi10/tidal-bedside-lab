@@ -24,7 +24,7 @@ PORT=8080 DATA_DIR=/var/lib/tbl API_TOKEN=<long random string> node src/server/s
 docker build -t tidal-bedside-lab .
 docker run -d --name tbl -p 8080:8080 -v tbl-data:/data -e API_TOKEN=... tidal-bedside-lab
 ```
-The image runs as the unprivileged `node` user and has a `/api/health` health check. **The Dockerfile was written but not build-tested in the authoring environment** (no Docker daemon/network); run `bash scripts/docker-smoke.sh` once on a machine with Docker (the `docker` job in `.github/workflows/ci.yml` does the same on every push) before relying on it. The script builds the image, starts it, and checks the health endpoint, the `Cache-Control: no-cache` header, the token-gated instructor API, session creation and the container health status.
+The image runs as the unprivileged `node` user and has a `/api/health` health check. The `docker` job in `.github/workflows/ci.yml` builds the image and runs `bash scripts/docker-smoke.sh` against it on every push (green since 25 November 2026); run the script yourself on a machine with Docker to check a local build. The script builds the image, starts it, and checks the health endpoint, the `Cache-Control: no-cache` header, the token-gated instructor API, session creation and the container health status.
 
 ## Reverse proxy and TLS
 

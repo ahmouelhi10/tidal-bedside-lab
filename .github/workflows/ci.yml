@@ -31,21 +31,26 @@ jobs:
         run: npm run verify
 
   smoke:
-    name: Browser smoke test
+    name: Browser smoke test (${{ matrix.part }})
     runs-on: ubuntu-latest
-    timeout-minutes: 25   # ~2 min on a 20-core workstation; a hosted runner is several times slower
+    timeout-minutes: 25   # software WebGL in headless Chrome runs at a few frames per second; the two parts run side by side
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [cases, handson]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      # Headless Chrome (preinstalled on the runner) driven over the DevTools protocol: every case in English and French,
-      # every dock section, one online case verified by the server; fails on any console error, raw translation key or
-      # text below WCAG AA contrast.
-      - name: Play every case in a real browser
+      # Headless Chrome (preinstalled on the runner) driven over the DevTools protocol. cases: every case in English and
+      # French, every dock section, one online case verified by the server. handson: every guided procedure with hands-on
+      # steps played with the real mouse. Both fail on any console error, raw translation key or text below WCAG AA contrast.
+      - name: Play it in a real browser
         run: npm run smoke
         env:
           SMOKE_REQUIRED: '1'
+          SMOKE_ONLY: ${{ matrix.part }}
 
   build:
     name: Build and references

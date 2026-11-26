@@ -33,7 +33,7 @@ npm run build                          # self-contained dist/ with BUILD.json
 npm run docs                           # regenerate docs/REFERENCES.md
 ```
 
-Docker: `docker build -t tidal-bedside-lab . && docker run -p 8080:8080 -v tbl-data:/data -e API_TOKEN=change-me tidal-bedside-lab` (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md); the Dockerfile has not been build-tested in the authoring environment - `scripts/docker-smoke.sh` and the `docker` job in `.github/workflows/ci.yml` do that on a machine with a Docker daemon).
+Docker: `docker build -t tidal-bedside-lab . && docker run -p 8080:8080 -v tbl-data:/data -e API_TOKEN=change-me tidal-bedside-lab` (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md); the `docker` job in `.github/workflows/ci.yml` builds the image and runs `scripts/docker-smoke.sh` against it on every push).
 
 ## Layout
 

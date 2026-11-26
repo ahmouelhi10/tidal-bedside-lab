@@ -1317,7 +1317,7 @@ export class UI {
   }
   _guideNext() {
     const g = this.guide; g.i++; this._skipPresent(); this.prefocusStep(g.finished ? 0 : 2400);
-    if (g.finished) setTimeout(() => this.scene.setCamera('default'), 2400);
+    if (g.finished) setTimeout(() => { if (this.guide === g) this.scene.setCamera('default'); }, 2400);   // unless another procedure has started meanwhile (it frames its own first step)
     if (g.finished) {
       const s = g.summary(); this.sim.act({ type: 'note', text: `guide ${g.proc.id}: end ${s.done}/${s.n} in order, ${s.early} early, ${s.warn} with a problem, ${s.skipped} skipped` });
       // progress: steps done in order count fully, early or problematic ones half, skipped ones nothing
