@@ -19,7 +19,7 @@ A 3D emergency-room and anaesthesia patient simulator for residents and young do
   - anaesthesia crises: anaphylaxis, malignant hyperthermia, local anaesthetic toxicity, complete heart block, torsades de pointes;
   - medical emergencies: DKA, status epilepticus, COPD exacerbation, SVT, hyperkalaemia, hypoglycaemia, Mobitz II bradycardia, hyponatraemia, pulmonary oedema, hypertensive emergency, variceal bleeding;
   - regional anaesthesia and recovery: hypotension after a spinal, high spinal, postoperative nausea and vomiting.
-- **Server-side verification**: the server issues the random seed; the client records an event log; on submit the server replays the session in a worker thread with the same engine and compares a state hash, then stores its own score. A doctored log or forged hash is reported as unverified.
+- **Server-side verification**: the server issues the random seed; the client records an event log; on submit the server replays the session in a worker thread with the same engine and compares a state hash, then stores its own score. *Verified* means the replay reproduced the hash the client sent and the log carries exactly the instructor changes the server delivered. It shows the result is consistent with the log; it does not prove the learner played every action by hand, since the engine is public and a learner could compute the hash of an edited log.
 - English and French UI. Zero runtime dependencies (Node >= 20, any modern browser with WebGL2; the app degrades gracefully without WebGL2).
 
 ## Quick start

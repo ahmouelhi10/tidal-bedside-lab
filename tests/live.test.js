@@ -76,6 +76,25 @@ test('learner state reaches the instructor and the instructor change reaches the
   });
 });
 
+test('a delivered instructor change is kept on the session: the honest log verifies, a log without it does not', async () => {
+  await withServer(async (base) => {
+    const run = async (keep) => {
+      const sess = await (await post(base + '/api/sessions', { scenario: null })).json();
+      const open = await (await post(`${base}/api/live/${sess.id}/open`, {})).json();
+      const learner = sseReader(await fetch(`${base}/api/live/${sess.id}/stream`)); await learner.next('watchers');
+      assert.equal((await post(`${base}/api/live/join/${open.code}/cmd`, { what: 'bleed', mlPerMin: 300 })).status, 200);
+      const { seq, ...cmd } = await learner.next('cmd');
+      const p = new Patient(sess.spec, { seed: sess.seed }); p.run(20);
+      if (keep) p.dispatch({ type: 'instructor.inject', ...cmd }); p.run(20);
+      const r = await (await post(`${base}/api/sessions/${sess.id}/submit`, { log: p.log, until: +p.t.toFixed(3), hash: p.stateHash() })).json();
+      assert.equal((await post(`${base}/api/live/join/${open.code}/cmd`, { what: 'vf' })).status, 409, 'no changes once the case is submitted');
+      learner.close(); return r.result;
+    };
+    const honest = await run(true); assert.equal(honest.verified, true, JSON.stringify(honest));
+    const dropped = await run(false); assert.equal(dropped.verified, false); assert.ok(dropped.instructorMismatch);
+  });
+});
+
 test('a session with instructor changes replays to the same hash, and the changes act on the physiology', () => {
   const p = mk({}, { seed: 11 });
   p.run(30); p.dispatch({ type: 'instructor.inject', what: 'bleed', mlPerMin: 400 });

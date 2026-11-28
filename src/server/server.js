@@ -8,7 +8,7 @@ import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import { SCENARIOS, scenarioList } from '../engine/scenarios.js';
 import { EVENT_TYPES } from '../engine/patient.js';
-import { createLive } from './live.js';
+import { createLive, checkInjects } from './live.js';
 import { researchRows, validateSelf } from './research.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -100,6 +100,7 @@ class ReplayPool {
 export function createServer({ port = 8080, host = '0.0.0.0', dataDir = path.join(ROOT, 'data'), webDir = path.join(ROOT, 'src', 'web'), engineDir = path.join(ROOT, 'src', 'engine'), apiToken = process.env.API_TOKEN || '', quiet = false, trustProxy = process.env.TRUST_PROXY === '1' } = {}) {
   const store = new SessionStore(dataDir);
   const pool = new ReplayPool({ concurrency: LIMITS.replayConcurrency, maxQueue: LIMITS.replayQueue, timeoutMs: LIMITS.replayTimeoutMs });
+  const inflight = new Set();                                      // session ids (and id:self) with a submit or self-assessment in progress
   const started = Date.now(), hits = new Map();
   const debug = process.env.LOG_LEVEL === 'debug';
   const info = (level, ...a) => { if (!quiet && (level !== 'debug' || debug)) log(level, ...a); };
@@ -177,26 +178,41 @@ export function createServer({ port = 8080, host = '0.0.0.0', dataDir = path.joi
       if (!SessionStore.validId(id)) return fail(res, 400, 'invalid session id');
       const rec = store.get(id); if (!rec) return fail(res, 404, 'session not found');
       if (parts.length === 3 && m === 'GET') return send(res, 200, url.searchParams.get('log') === '1' && authorised(req) ? { ...publicView(rec), log: rec.log ?? [] } : publicView(rec));
+      // One submit and one self-assessment per session. The request body and the replay are awaited, so the session is
+      // held (inflight) from the first check to the write, and the write is built from a fresh read: a second request sent
+      // meanwhile gets 409 and cannot replace a stored result or drop a stored self-assessment.
       if (parts.length === 4 && parts[3] === 'submit' && m === 'POST') {
-        if (rec.status === 'submitted') return fail(res, 409, 'session already submitted');
-        const b = await readJson(req);
-        const lv = validateLog(b.log, b.until); if (!lv.ok) return fail(res, 400, lv.error);
-        const sc = rec.scenario ? SCENARIOS[rec.scenario] : null;
-        if (sc && b.until > sc.durationS * 2) return fail(res, 400, 'until exceeds twice the scenario duration');
-        let out;
-        try { out = await pool.run({ spec: rec.spec, seed: rec.seed, scenario: rec.scenario, log: lv.log, until: b.until }); }
-        catch (e) { return fail(res, e.status || 500, e.message); }
-        const clientHash = typeof b.hash === 'string' ? b.hash.slice(0, 16) : null;
-        const result = { verified: clientHash === out.hash, serverHash: out.hash, clientHash, simTimeS: out.t, events: lv.log.length, score: out.score, arrests: out.arrests, roscCount: out.roscCount, final: { rhythm: out.snapshot.rhythm, map: out.snapshot.map, spo2: out.snapshot.spo2, hr: out.snapshot.hr } };
-        const done = { ...rec, status: 'submitted', submittedAt: new Date().toISOString(), result, log: lv.log };
-        store.put(done); info('info', 'session submitted', { id, verified: result.verified, pct: out.score?.pct });
-        return send(res, 200, publicView(done));
+        if (rec.status === 'submitted' || inflight.has(id)) return fail(res, 409, 'session already submitted');
+        inflight.add(id);
+        try {
+          const b = await readJson(req);
+          const lv = validateLog(b.log, b.until); if (!lv.ok) return fail(res, 400, lv.error);
+          const sc = rec.scenario ? SCENARIOS[rec.scenario] : null;
+          if (sc && b.until > sc.durationS * 2) return fail(res, 400, 'until exceeds twice the scenario duration');
+          let out;
+          try { out = await pool.run({ spec: rec.spec, seed: rec.seed, scenario: rec.scenario, log: lv.log, until: b.until }); }
+          catch (e) { return fail(res, e.status || 500, e.message); }
+          const cur = store.get(id); if (!cur || cur.status === 'submitted') return fail(res, 409, 'session already submitted');
+          const clientHash = typeof b.hash === 'string' ? b.hash.slice(0, 16) : null;
+          // instructor changes must be exactly the ones the server relayed to this session (live.js), in order
+          const instr = checkInjects(cur.instructor || [], lv.log);
+          const result = { verified: clientHash === out.hash && instr.ok, serverHash: out.hash, clientHash, simTimeS: out.t, events: lv.log.length, score: out.score, keyTimes: out.keyTimes,
+            ...(instr.ok ? {} : { instructorMismatch: instr.error }), arrests: out.arrests, roscCount: out.roscCount, final: { rhythm: out.snapshot.rhythm, map: out.snapshot.map, spo2: out.snapshot.spo2, hr: out.snapshot.hr } };
+          const done = { ...cur, status: 'submitted', submittedAt: new Date().toISOString(), result, log: lv.log };
+          store.put(done); info('info', 'session submitted', { id, verified: result.verified, pct: out.score?.pct });
+          return send(res, 200, publicView(done));
+        } finally { inflight.delete(id); }
       }
       if (parts.length === 4 && parts[3] === 'self' && m === 'POST') {   // the learner's self-assessment, once, after the case
         if (rec.status !== 'submitted') return fail(res, 409, 'submit the session first');
-        if (rec.self) return fail(res, 409, 'self-assessment already recorded');
-        const v = validateSelf(await readJson(req)); if (!v.ok) return fail(res, 400, v.error);
-        store.put({ ...rec, self: v.self }); return send(res, 200, { ok: true });
+        const key = id + ':self';
+        if (rec.self || inflight.has(key)) return fail(res, 409, 'self-assessment already recorded');
+        inflight.add(key);
+        try {
+          const v = validateSelf(await readJson(req)); if (!v.ok) return fail(res, 400, v.error);
+          const cur = store.get(id); if (!cur || cur.status !== 'submitted' || cur.self) return fail(res, 409, 'self-assessment already recorded');
+          store.put({ ...cur, self: v.self }); return send(res, 200, { ok: true });
+        } finally { inflight.delete(key); }
       }
       return fail(res, 405, 'method not allowed');
     }

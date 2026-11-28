@@ -11,7 +11,10 @@ import { Ward, ABX, categorize } from './infection.js';
 import { ECHO_VIEWS, reportTruth } from './echo.js';
 
 // ----------------------------------------------------------------------------- helpers over the log
-const ev = (p, type, pred = () => true) => p.log.filter(e => e.type === type && pred(e));
+/** The learner's actions the engine did not refuse: a refused event stays in the replay log (so a replay refuses it
+ *  identically) but earns no credit, since nothing happened. Patient.dispatch marks it (non-enumerable `refused`). */
+export const acts = (p) => p.log.filter(e => !e.refused);
+const ev =(p, type, pred = () => true) => acts(p).filter(e => e.type === type && pred(e));
 const first = (arr) => (arr.length ? arr[0] : null);
 const arrestT0 = p => (p.arrest.arrestStarts && p.arrest.arrestStarts.length ? p.arrest.arrestStarts[0] : null);
 const drugsGiven = (p, key) => p.drugs.log.filter(d => d.key === key);
@@ -161,7 +164,7 @@ export const criteria = {
   }),
   // surgical gestures
   examinedChest: () => C('chest_exam', 'Examine the chest (inspection, percussion, auscultation) or scan it (lung sliding) before acting', 10, 'atls', p => {
-    const e = p.log.filter(x => x.type === 'exam.chest' || x.type === 'exam.pocus'); if (!e.length) return { frac: 0, detail: 'no chest examination' };
+    const e = acts(p).filter(x => x.type === 'exam.chest' || x.type === 'exam.pocus'); if (!e.length) return { frac: 0, detail: 'no chest examination' };
     const d = p.chest.tensionT0 === null ? 0 : e[0].t - p.chest.tensionT0;
     return { frac: lerpScore(d, 60, 240), detail: `first at ${e[0].t.toFixed(0)} s` };
   }),
@@ -174,6 +177,8 @@ export const criteria = {
   needleTechnique: () => C('needle_technique', 'Needle decompression: correct side, catheter long enough for the chest wall, and no cardiac risk on the left', 12, 'ahmad2025', p => {
     const a = p.chest.attempts.filter(x => x.kind === 'needle'); const tubeFirst = p.chest.attempts.find(x => x.kind === 'tube' && x.ok);
     if (!a.length) return tubeFirst ? null : { frac: 0, detail: 'no needle attempt' };
+    // a decompression with no side, site or length (the legacy ideal path) shows no technique: it earns nothing here
+    if (a[0].legacy) return { frac: 0, detail: 'side, site and needle length not chosen' };
     const f = a[0]; let frac = f.relieved ? 1 : f.wrongSide ? 0 : f.reached ? 0.3 : 0.3;
     if (f.risk) frac *= 0.5;
     const extra = a.length - 1; if (extra > 0) frac *= Math.max(0.5, 1 - 0.2 * extra);
@@ -200,7 +205,7 @@ export const criteria = {
     const d = s - (p.cicoDesatT ?? s); return { frac: lerpScore(d, 60, 240), detail: `started ${d.toFixed(0)} s after SpO2 < 90%` };
   }),
   fonaTechnique: () => C('fona_technique', 'Scalpel-bougie-tube (vertical incision when the landmarks are impalpable)', 14, 'das2015', p => {
-    const first = p.log.find(x => x.type === 'procedure.cricothyroidotomy'); if (!first) return { frac: 0, detail: 'none performed' };
+    const first = acts(p).find(x => x.type === 'procedure.cricothyroidotomy'); if (!first) return { frac: 0, detail: 'none performed' };
     const tech = first.technique ?? 'scalpel_bougie', app = first.approach ?? 'palpate', pal = p.neck.palpable || p.neck.marked;
     let frac = tech === 'scalpel_bougie' ? 1 : 0.5;      // REF umek2020, nap4 (cannula fails often); rees2019 shows the opposite in novices, so not a zero
     if (!pal && app !== 'vertical') frac *= 0.6;
@@ -374,7 +379,7 @@ SCENARIOS.cico = {
   track(p) {
     p.minSpo2 = Math.min(p.minSpo2 ?? 100, p.resp.sao2 * 100); p.minMap = Math.min(p.minMap ?? 999, p.circ.mapArt);
     if (p.cicoDesatT == null && p.resp.sao2 < 0.9) p.cicoDesatT = p.t;
-    if (p.fonaStartT == null) { const f = p.log.find(x => x.type === 'procedure.cricothyroidotomy'); if (f) p.fonaStartT = f.t; }
+    if (p.fonaStartT == null) { const f = acts(p).find(x => x.type === 'procedure.cricothyroidotomy'); if (f) p.fonaStartT = f.t; }
   },
   score: () => [criteria.declareCico(), criteria.limitAttempts(), criteria.fonaTiming(), criteria.fonaTechnique(), criteria.fonaAchieved(), criteria.noHypoxia(), criteria.airwayVent(), criteria.survival('Oxygenating and stable at end (secured airway)', { requireIntubated: true }), criteria.demarche('fona')],
   learning: ["Plan A-B-C-D (DAS 2015): maximum three attempts at laryngoscopy, one supraglottic device, optimise the mask, then declare CICO and go to the neck - do not keep trying the mouth while the SpO2 falls.",
@@ -673,8 +678,8 @@ SCENARIOS.mh_crisis = {
       if (!d || tot < 2.5 * p.body.weightKg) return { frac: d ? 0.3 : 0, detail: `${tot.toFixed(0)} mg in total` };
       return { frac: lerpScore(d.t - t0, 600, 1200), detail: `${tot.toFixed(0)} mg, first ${Math.round(d.t - t0)} s after EtCO2 > 55` };
     }),
-    C('mh_trigger_off', 'Vaporiser off within 5 min of EtCO2 > 55 (hypnosis kept with propofol)', 10, 'hopkins2021', p => { const t0 = p.mhRecognisedT; if (t0 == null) return null; const e = p.log.find(x => x.type === 'vaporizer.set' && x.percent === 0 && x.t >= t0); return { frac: e ? lerpScore(e.t - t0, 300, 900) : 0, detail: e ? `${Math.round(e.t - t0)} s` : 'sevoflurane left on' }; }),
-    C('mh_cool', 'Active cooling started', 10, 'hopkins2021', p => ({ frac: p.log.some(e => e.type === 'thermal.device' && e.target != null && e.target < 37) ? 1 : 0, detail: '' })),
+    C('mh_trigger_off', 'Vaporiser off within 5 min of EtCO2 > 55 (hypnosis kept with propofol)', 10, 'hopkins2021', p => { const t0 = p.mhRecognisedT; if (t0 == null) return null; const e = acts(p).find(x => x.type === 'vaporizer.set' && x.percent === 0 && x.t >= t0); return { frac: e ? lerpScore(e.t - t0, 300, 900) : 0, detail: e ? `${Math.round(e.t - t0)} s` : 'sevoflurane left on' }; }),
+    C('mh_cool', 'Active cooling started', 10, 'hopkins2021', p => ({ frac: acts(p).some(e => e.type === 'thermal.device' && e.target != null && e.target < 37) ? 1 : 0, detail: '' })),
     C('mh_vent', 'Minute ventilation increased (rate x1.5 or more)', 10, 'hopkins2021', p => ({ frac: p.vent.rate >= 18 ? 1 : 0, detail: `rate ${p.vent.rate}/min` })),
     C('mh_temp', 'Peak core temperature (38.5 full marks, 40 none)', 15, 'design', p => ({ frac: lerpScore((p.maxTemp ?? 37) - 38.5, 0, 1.5), detail: `peak ${(p.maxTemp ?? 37).toFixed(1)} C` })),
     criteria.survival(),
@@ -692,7 +697,7 @@ SCENARIOS.last_block = {
   track(p) { if (p.lastSignT == null && (p.crises.seizure || p.arrest.arrested || p.crises.laCv > 0.6)) p.lastSignT = p.t; },
   score: () => [
     timedCrit('last_lipid', 'Lipid emulsion 20 % (1.5 mL/kg) within 3 min of the first sign', 35, 'neal2018', ['lipid'], p => p.lastSignT, 60, 300),
-    C('last_airway', 'Oxygen / airway support', 15, 'neal2018', p => ({ frac: p.log.some(e => ['o2.mask', 'airway.set', 'airway.intubate', 'vent.set'].includes(e.type)) ? 1 : 0, detail: '' })),
+    C('last_airway', 'Oxygen / airway support', 15, 'neal2018', p => ({ frac: acts(p).some(e => ['o2.mask', 'airway.set', 'airway.intubate', 'vent.set'].includes(e.type)) ? 1 : 0, detail: '' })),
     C('last_no_vaso', 'No vasopressin (avoid in LAST)', 10, 'neal2018', p => ({ frac: drugsGiven(p, 'vasopressin').length ? 0 : 1, detail: '' })),
     criteria.survival(),
   ],
@@ -709,7 +714,7 @@ SCENARIOS.heart_block = {
   timeline: [],
   track(p) { if (p.pacedT == null && p.crises.captured) p.pacedT = p.t; },
   score: () => [
-    C('hb_pads', 'Pads on within 2 min', 10, 'erc2025', p => { const e = p.log.find(x => x.type === 'defib.pads'); return { frac: e ? lerpScore(e.t, 120, 360) : 0, detail: e ? `${Math.round(e.t)} s` : 'no pads' }; }),
+    C('hb_pads', 'Pads on within 2 min', 10, 'erc2025', p => { const e = acts(p).find(x => x.type === 'defib.pads'); return { frac: e ? lerpScore(e.t, 120, 360) : 0, detail: e ? `${Math.round(e.t)} s` : 'no pads' }; }),
     C('hb_capture', 'Paced with capture within 8 min', 35, 'erc2025', p => ({ frac: p.pacedT == null ? 0 : lerpScore(p.pacedT, 480, 900), detail: p.pacedT == null ? 'no capture' : `capture at ${Math.round(p.pacedT)} s` })),
     C('hb_analgesia', 'Analgesia or sedation for pacing', 10, 'erc2025', p => ({ frac: ['morphine', 'fentanyl', 'midazolam', 'ketamine'].some(k => drugsGiven(p, k).length) ? 1 : 0, detail: '' })),
     criteria.survival(),
@@ -742,7 +747,7 @@ SCENARIOS.torsades = {
       return { frac: lerpScore(at - t0, 300, 900), detail: `2 g reached ${Math.round(at - t0)} s after the first run` };
     }),
     C('tdp_no_amio', 'No amiodarone (it lengthens the QT)', 10, 'drew2010', p => ({ frac: drugsGiven(p, 'amiodarone').length ? 0 : 1, detail: '' })),
-    C('tdp_rate', 'Heart rate raised (isoprenaline or overdrive pacing)', 15, 'drew2010', p => ({ frac: drugsGiven(p, 'isoprenaline').length || p.log.some(e => (e.type === 'drug.infusion' && e.drug === 'isoprenaline' && e.rate > 0) || (e.type === 'pacing.set' && e.on)) ? 1 : 0, detail: '' })),
+    C('tdp_rate', 'Heart rate raised (isoprenaline or overdrive pacing)', 15, 'drew2010', p => ({ frac: drugsGiven(p, 'isoprenaline').length || acts(p).some(e => (e.type === 'drug.infusion' && e.drug === 'isoprenaline' && e.rate > 0) || (e.type === 'pacing.set' && e.on)) ? 1 : 0, detail: '' })),
     C('tdp_quiet', 'No torsades in the last 5 min', 15, 'design', p => ({ frac: p.lastTdpT == null || p.t - p.lastTdpT >= 300 ? 1 : 0, detail: p.lastTdpT == null ? '' : `last run at ${Math.round(p.lastTdpT)} s` })),
     criteria.survival(),
   ],
@@ -750,7 +755,7 @@ SCENARIOS.torsades = {
 };
 
 // ----------------------------------------------------------------------------- diabetic ketoacidosis (metabolic.js)
-const firstEv = (p, pred) => p.log.find(pred) || null;
+const firstEv = (p, pred) => acts(p).find(pred) || null;
 SCENARIOS.dka = {
   id: 'dka', title: 'Diabetic ketoacidosis', difficulty: 'intermediate', durationS: 14400, kind: 'Emergency',
   summary: 'A 22-year-old woman (165 cm, 55 kg) with type 1 diabetes has been vomiting for two days and stopped her insulin because she was not eating. She is drowsy, breathing deeply and dry. Confirm the diagnosis and run the first four hours of treatment.',
@@ -776,8 +781,8 @@ SCENARIOS.dka = {
       return { frac: (p.minK >= 3.5 ? 0.7 : 0) + (given > 0 ? 0.3 : 0), detail: `lowest K ${p.minK.toFixed(1)}, ${given} mmol KCl` };
     }),
     C('dka_glucose10', 'Glucose 10 % added once glucose < 14', 10, 'jbds2023', p => {
-      if (p.lytes.glucose >= 14 && !p.log.some(e => e.type === 'drug.infusion' && e.drug === 'glucose')) return null;
-      return { frac: p.log.some(e => e.type === 'drug.infusion' && e.drug === 'glucose' && e.rate > 0) || p.lytes.glucose >= 14 ? 1 : 0, detail: `glucose ${p.lytes.glucose.toFixed(1)}` };
+      if (p.lytes.glucose >= 14 && !acts(p).some(e => e.type === 'drug.infusion' && e.drug === 'glucose')) return null;
+      return { frac: acts(p).some(e => e.type === 'drug.infusion' && e.drug === 'glucose' && e.rate > 0) || p.lytes.glucose >= 14 ? 1 : 0, detail: `glucose ${p.lytes.glucose.toFixed(1)}` };
     }),
     C('dka_ketones', 'Ketones falling >= 0.5 mmol/L/h', 15, 'jbds2023', p => { const h = p.t / 3600, fall = (p.ket0 - p.keto.ketones) / Math.max(h, 0.1); return { frac: lerpScore(0.5 - fall, 0, 0.4), detail: `${fall.toFixed(2)} mmol/L/h` }; }),
     criteria.survival(),
@@ -812,8 +817,8 @@ SCENARIOS.status_epilepticus = {
       const l = p.drugs.log.find(x => x.key === 'levetiracetam' && x.amount >= Math.min(4500, 40 * p.body.weightKg));
       return l ? { frac: lerpScore(l.t - tNeed, 600, 1800), detail: `levetiracetam ${l.amount} mg ${Math.round(Math.max(0, l.t - tNeed) / 60)} min after it was needed` } : { frac: 0, detail: 'no second-line drug' };
     }),
-    C('se_glucose', 'Glucose checked within 15 min', 10, 'glauser2016', p => { const e = p.log.find(x => x.type === 'lab.order' && ['cbg', 'abg', 'chem'].includes(x.kind)); return { frac: e ? lerpScore(e.t, 900, 1800) : 0, detail: e ? `${Math.round(e.t / 60)} min` : 'not checked' }; }),
-    C('se_oxygen', 'Oxygen within 5 min', 10, 'glauser2016', p => { const e = p.log.find(x => ['o2.mask', 'niv.set', 'vent.set'].includes(x.type)); return { frac: e ? lerpScore(e.t, 300, 900) : 0, detail: e ? `${Math.round(e.t)} s` : 'none' }; }),
+    C('se_glucose', 'Glucose checked within 15 min', 10, 'glauser2016', p => { const e = acts(p).find(x => x.type === 'lab.order' && ['cbg', 'abg', 'chem'].includes(x.kind)); return { frac: e ? lerpScore(e.t, 900, 1800) : 0, detail: e ? `${Math.round(e.t / 60)} min` : 'not checked' }; }),
+    C('se_oxygen', 'Oxygen within 5 min', 10, 'glauser2016', p => { const e = acts(p).find(x => ['o2.mask', 'niv.set', 'vent.set'].includes(x.type)); return { frac: e ? lerpScore(e.t, 300, 900) : 0, detail: e ? `${Math.round(e.t)} s` : 'none' }; }),
     C('se_stopped', 'Seizure stopped by 30 min', 15, 'glauser2016', p => {
       const log = p.seLog ?? [], stop = log.find(e => !e.on), again = log.filter(e => e.on).length - 1;
       if (p.crises.se.active || !stop) return { frac: 0, detail: 'still seizing' };
@@ -839,8 +844,8 @@ SCENARIOS.copd_exacerbation = {
     C('copd_no_high_o2', 'No high-concentration oxygen (SpO2 > 96 % on oxygen < 10 min)', 15, 'beasley2017_o2', p => ({ frac: lerpScore((p.highO2S ?? 0) / 60, 10, 30), detail: `${Math.round((p.highO2S ?? 0) / 60)} min above 96 %` })),
     C('copd_bronchodilator', 'Nebulised salbutamol within 10 min', 10, 'gold2024', p => { const d = drugsGiven(p, 'salbutamol')[0]; return { frac: d ? lerpScore(d.t, 600, 1800) : 0, detail: d ? `${Math.round(d.t / 60)} min` : 'none' }; }),
     C('copd_steroid', 'Systemic corticosteroid given', 5, 'gold2024', p => ({ frac: drugsGiven(p, 'hydrocortisone').length || drugsGiven(p, 'prednisolone').length ? 1 : 0, detail: '' })),
-    C('copd_gas', 'Blood gas within 15 min', 10, 'davidson2016_niv', p => { const e = p.log.find(x => x.type === 'lab.order' && x.kind === 'abg'); return { frac: e ? lerpScore(e.t, 900, 2400) : 0, detail: e ? `${Math.round(e.t / 60)} min` : 'none' }; }),
-    C('copd_niv', 'Bilevel NIV started within 60 min for a persistent respiratory acidosis', 20, 'davidson2016_niv', p => { const e = p.log.find(x => x.type === 'niv.set' && x.mode === 'bipap'); return { frac: e ? lerpScore(e.t, 3600, 5400) : 0, detail: e ? `BiPAP ${e.ipap}/${e.epap} at ${Math.round(e.t / 60)} min` : 'no NIV' }; }),
+    C('copd_gas', 'Blood gas within 15 min', 10, 'davidson2016_niv', p => { const e = acts(p).find(x => x.type === 'lab.order' && x.kind === 'abg'); return { frac: e ? lerpScore(e.t, 900, 2400) : 0, detail: e ? `${Math.round(e.t / 60)} min` : 'none' }; }),
+    C('copd_niv', 'Bilevel NIV started within 60 min for a persistent respiratory acidosis', 20, 'davidson2016_niv', p => { const e = acts(p).find(x => x.type === 'niv.set' && x.mode === 'bipap'); return { frac: e ? lerpScore(e.t, 3600, 5400) : 0, detail: e ? `BiPAP ${e.ipap}/${e.epap} at ${Math.round(e.t / 60)} min` : 'no NIV' }; }),
     C('copd_ph', 'pH >= 7.30 at the end', 15, 'davidson2016_niv', p => ({ frac: lerpScore(7.30 - p.resp.pH, 0, 0.08), detail: `pH ${p.resp.pH.toFixed(2)}` })),
     criteria.survival(),
   ],
@@ -848,7 +853,7 @@ SCENARIOS.copd_exacerbation = {
 };
 
 // ----------------------------------------------------------------------------- cases that use the existing engine
-const ecg12At = (p) => p.log.find(e => (e.type === 'order' && e.what === 'ecg12') || e.type === 'exam.ecg12') || null;
+const ecg12At = (p) => acts(p).find(e => (e.type === 'order' && e.what === 'ecg12') || e.type === 'exam.ecg12') || null;
 const ecg12Crit = (ref, within = 300) => C('ecg12', `12-lead ECG within ${within / 60} min`, 10, ref, p => { const e = ecg12At(p); return { frac: e ? lerpScore(e.t, within, within * 3) : 0, detail: e ? `${Math.round(e.t)} s` : 'no 12-lead' }; });
 
 SCENARIOS.svt = {
@@ -862,7 +867,7 @@ SCENARIOS.svt = {
   score: () => [
     ecg12Crit('erc2025'),
     C('svt_vagal', 'Vagal manoeuvre first (modified Valsalva)', 15, 'appelboam2015', p => {
-      const v = p.log.find(e => e.type === 'procedure.vagal'), a = drugsGiven(p, 'adenosine')[0];
+      const v = acts(p).find(e => e.type === 'procedure.vagal'), a = drugsGiven(p, 'adenosine')[0];
       if (!v) return { frac: 0, detail: 'no vagal manoeuvre' };
       return { frac: (a && a.t < v.t ? 0.3 : 1) * (v.technique === 'standard' ? 0.6 : 1), detail: `${v.technique || 'modified'} at ${Math.round(v.t)} s` };
     }),
@@ -873,7 +878,7 @@ SCENARIOS.svt = {
       return { frac: (first.amount === 6 ? 1 : 0.6) * (esc ? 1 : 0.6), detail: doses.map(d => d.amount + ' mg').join(', ') };
     }),
     C('svt_no_early_shock', 'No shock while she is stable and adenosine has not been tried', 15, 'erc2025', p => {
-      const s = p.log.find(e => e.type === 'defib.shock'); if (!s) return { frac: 1, detail: '' };
+      const s = acts(p).find(e => e.type === 'defib.shock'); if (!s) return { frac: 1, detail: '' };
       return { frac: drugsGiven(p, 'adenosine').filter(d => d.t < s.t).length >= 2 ? 1 : 0, detail: `shock at ${Math.round(s.t)} s` };
     }),
     C('svt_converted', 'Sinus rhythm within 10 min', 25, 'erc2025', p => ({ frac: p.svtEndT == null ? 0 : lerpScore(p.svtEndT, 600, 1200), detail: p.svtEndT == null ? 'still in SVT' : `sinus at ${Math.round(p.svtEndT)} s` })),
@@ -898,13 +903,13 @@ SCENARIOS.hyperkalaemia = {
       return d ? { frac: lerpScore(d.t, 600, 1200), detail: `${d.key} ${d.amount} mmol at ${Math.round(d.t / 60)} min` } : { frac: 0, detail: 'no calcium' };
     }),
     C('hk_insulin', 'Insulin 10 U with glucose 25 g within 20 min', 20, 'renal_hyperk2023', p => {
-      const proc = p.log.find(e => e.type === 'procedure.treat_hyperkalemia'); if (proc) return { frac: lerpScore(proc.t, 1200, 2400), detail: `insulin-glucose at ${Math.round(proc.t / 60)} min` };
+      const proc = acts(p).find(e => e.type === 'procedure.treat_hyperkalemia'); if (proc) return { frac: lerpScore(proc.t, 1200, 2400), detail: `insulin-glucose at ${Math.round(proc.t / 60)} min` };
       const ins = drugsGiven(p, 'insulin').find(d => d.amount >= 8); if (!ins) return { frac: 0, detail: 'no insulin' };
-      const glu = drugsGiven(p, 'glucose').some(d => d.amount >= 20 && Math.abs(d.t - ins.t) <= 600) || p.log.some(e => e.type === 'drug.infusion' && e.drug === 'glucose' && e.rate > 0);
+      const glu = drugsGiven(p, 'glucose').some(d => d.amount >= 20 && Math.abs(d.t - ins.t) <= 600) || acts(p).some(e => e.type === 'drug.infusion' && e.drug === 'glucose' && e.rate > 0);
       return { frac: lerpScore(ins.t, 1200, 2400) * (glu ? 1 : 0.3), detail: `insulin at ${Math.round(ins.t / 60)} min${glu ? '' : ', without glucose'}` };
     }),
     C('hk_salbutamol', 'Nebulised salbutamol 10-20 mg', 10, 'renal_hyperk2023', p => { const d = drugsGiven(p, 'salbutamol').reduce((s, x) => s + x.amount, 0); return { frac: Math.min(1, d / 10), detail: `${d} mg` }; }),
-    C('hk_recheck', 'Potassium rechecked', 10, 'renal_hyperk2023', p => { const n = p.log.filter(e => e.type === 'lab.order' && ['abg', 'chem'].includes(e.kind)).length; return { frac: n >= 1 ? 1 : 0, detail: `${n} samples` }; }),
+    C('hk_recheck', 'Potassium rechecked', 10, 'renal_hyperk2023', p => { const n = acts(p).filter(e => e.type === 'lab.order' && ['abg', 'chem'].includes(e.kind)).length; return { frac: n >= 1 ? 1 : 0, detail: `${n} samples` }; }),
     C('hk_no_hypo', 'No hypoglycaemia (glucose >= 4 throughout)', 10, 'renal_hyperk2023', p => ({ frac: (p.minGlu ?? 5) >= 4 ? 1 : (p.minGlu ?? 5) >= 3 ? 0.4 : 0, detail: `lowest glucose ${(p.minGlu ?? 5).toFixed(1)}` })),
     criteria.survival('No cardiac arrest; alive and stable at the end'),
   ],
@@ -921,17 +926,17 @@ SCENARIOS.hypoglycaemia = {
   timeline: [],
   track(p) { if (p.t > 300) p.minGluLate = Math.min(p.minGluLate ?? 99, p.lytes.glucose); },
   score: () => [
-    C('hy_cbg', 'Capillary glucose within 5 min', 15, 'jbds_hypo2022', p => { const e = p.log.find(x => x.type === 'lab.order' && ['cbg', 'abg', 'chem'].includes(x.kind)); return { frac: e ? lerpScore(e.t, 300, 900) : 0, detail: e ? `${Math.round(e.t)} s` : 'not checked' }; }),
+    C('hy_cbg', 'Capillary glucose within 5 min', 15, 'jbds_hypo2022', p => { const e = acts(p).find(x => x.type === 'lab.order' && ['cbg', 'abg', 'chem'].includes(x.kind)); return { frac: e ? lerpScore(e.t, 300, 900) : 0, detail: e ? `${Math.round(e.t)} s` : 'not checked' }; }),
     C('hy_treat', 'IV glucose 15-20 g or glucagon 1 mg within 10 min', 25, 'jbds_hypo2022', p => {
       const d = p.drugs.log.find(x => (x.key === 'glucose' && x.amount >= 10) || (x.key === 'glucagon' && x.amount >= 0.5));
       return d ? { frac: lerpScore(d.t, 600, 1200) * (d.key === 'glucose' && d.amount > 30 ? 0.7 : 1), detail: `${d.key} ${d.amount} at ${Math.round(d.t / 60)} min` } : { frac: 0, detail: 'not treated' };
     }),
     C('hy_recheck', 'Glucose rechecked within 15 min of treatment', 15, 'jbds_hypo2022', p => {
       const d = p.drugs.log.find(x => x.key === 'glucose' || x.key === 'glucagon'); if (!d) return null;
-      const e = p.log.find(x => x.type === 'lab.order' && ['cbg', 'abg', 'chem'].includes(x.kind) && x.t > d.t); return { frac: e ? lerpScore(e.t - d.t, 900, 1800) : 0, detail: e ? `${Math.round((e.t - d.t) / 60)} min after` : 'no recheck' };
+      const e = acts(p).find(x => x.type === 'lab.order' && ['cbg', 'abg', 'chem'].includes(x.kind) && x.t > d.t); return { frac: e ? lerpScore(e.t - d.t, 900, 1800) : 0, detail: e ? `${Math.round((e.t - d.t) / 60)} min after` : 'no recheck' };
     }),
     C('hy_sustain', 'Kept up (long-acting insulin): glucose infusion or repeat dose, no relapse below 4', 25, 'jbds_hypo2022', p => {
-      const inf = p.log.some(e => e.type === 'drug.infusion' && e.drug === 'glucose' && e.rate > 0), lo = p.minGluLate ?? 99;
+      const inf = acts(p).some(e => e.type === 'drug.infusion' && e.drug === 'glucose' && e.rate > 0), lo = p.minGluLate ?? 99;
       return { frac: (lo >= 4 ? 0.7 : lo >= 3 ? 0.3 : 0) + (inf ? 0.3 : 0), detail: `lowest after 5 min ${lo === 99 ? '-' : lo.toFixed(1)}${inf ? ', infusion started' : ''}` };
     }),
     criteria.survival(),
@@ -947,20 +952,20 @@ SCENARIOS.mobitz_brady = {
   startMonitored: true,
   init(p) { p.flags.ecgLeads = p.flags.spo2Probe = p.flags.nibp = true; p.nibp = { sbp: 84, dbp: 48, t: 0, valid: true }; },
   timeline: [],
-  track(p) { if (p.supportT == null && (p.crises.captured || p.log.some(e => e.type === 'drug.infusion' && ['isoprenaline', 'epinephrine'].includes(e.drug) && e.rate > 0))) p.supportT = p.t; },
+  track(p) { if (p.supportT == null && (p.crises.captured || acts(p).some(e => e.type === 'drug.infusion' && ['isoprenaline', 'epinephrine'].includes(e.drug) && e.rate > 0))) p.supportT = p.t; },
   score: () => [
     ecg12Crit('erc2025'),
     C('mb_atropine', 'Atropine 500 mcg IV for adverse features', 10, 'erc2025', p => { const d = drugsGiven(p, 'atropine')[0]; return { frac: d ? lerpScore(d.t, 300, 900) : 0, detail: d ? `${d.amount} mcg at ${Math.round(d.t)} s` : 'no atropine' }; }),
-    C('mb_pads', 'Pads on (risk of asystole)', 10, 'erc2025', p => { const e = p.log.find(x => x.type === 'defib.pads'); return { frac: e ? lerpScore(e.t, 300, 900) : 0, detail: e ? `${Math.round(e.t)} s` : 'no pads' }; }),
+    C('mb_pads', 'Pads on (risk of asystole)', 10, 'erc2025', p => { const e = acts(p).find(x => x.type === 'defib.pads'); return { frac: e ? lerpScore(e.t, 300, 900) : 0, detail: e ? `${Math.round(e.t)} s` : 'no pads' }; }),
     C('mb_support', 'Pacing with capture or an isoprenaline / adrenaline infusion within 10 min', 30, 'erc2025', p => ({ frac: p.supportT == null ? 0 : lerpScore(p.supportT, 600, 1200), detail: p.supportT == null ? 'no interim measure' : `at ${Math.round(p.supportT / 60)} min` })),
-    C('mb_analgesia', 'Analgesia or sedation if paced', 10, 'erc2025', p => { if (!p.crises.captured && !p.log.some(e => e.type === 'pacing.set' && e.on)) return null; return { frac: ['morphine', 'fentanyl', 'midazolam', 'ketamine'].some(k => drugsGiven(p, k).length) ? 1 : 0, detail: '' }; }),
+    C('mb_analgesia', 'Analgesia or sedation if paced', 10, 'erc2025', p => { if (!p.crises.captured && !acts(p).some(e => e.type === 'pacing.set' && e.on)) return null; return { frac: ['morphine', 'fentanyl', 'midazolam', 'ketamine'].some(k => drugsGiven(p, k).length) ? 1 : 0, detail: '' }; }),
     criteria.survival(),
   ],
   learning: ['Bradycardia with adverse features (shock, syncope, ischaemia, heart failure): atropine 500 mcg IV, repeat up to 3 mg.', 'Mobitz II, complete heart block, a recent pause > 3 s or asystole are a risk of asystole: start an interim measure even if atropine helps, pacing or isoprenaline 5 mcg/min or adrenaline 2-10 mcg/min, and call for transvenous pacing.', 'The block is below the AV node in Mobitz II, so atropine changes little.'],
 };
 
 // ----------------------------------------------------------------------------- sodium, pulmonary oedema, hypertensive emergency, variceal bleeding
-const labAt = (p, kinds, after = -1) => p.log.find(e => e.type === 'lab.order' && kinds.includes(e.kind) && e.t > after) || null;
+const labAt = (p, kinds, after = -1) => acts(p).find(e => e.type === 'lab.order' && kinds.includes(e.kind) && e.t > after) || null;
 
 SCENARIOS.hyponatraemia = {
   id: 'hyponatraemia', title: 'Severe symptomatic hyponatraemia', difficulty: 'advanced', durationS: 5400, kind: 'Emergency',
@@ -974,14 +979,14 @@ SCENARIOS.hyponatraemia = {
   score: () => [
     C('na_measure', 'Sodium measured within 10 min', 10, 'spasovski2014', p => { const e = labAt(p, ['abg', 'chem']); return { frac: e ? lerpScore(e.t, 600, 1800) : 0, detail: e ? `${Math.round(e.t / 60)} min` : 'not measured' }; }),
     C('na_hypertonic', '150 mL of 3 % saline over 20 min, started within 15 min', 25, 'spasovski2014', p => {
-      const e = p.log.find(x => x.type === 'fluid.bolus' && x.fluid === 'saline3'); if (!e) return { frac: 0, detail: 'no hypertonic saline' };
+      const e = acts(p).find(x => x.type === 'fluid.bolus' && x.fluid === 'saline3'); if (!e) return { frac: 0, detail: 'no hypertonic saline' };
       const dose = e.volumeL >= 0.1 && e.volumeL <= 0.25 ? 1 : 0.6;
       return { frac: dose * lerpScore(e.t, 900, 2400), detail: `${Math.round(e.volumeL * 1000)} mL at ${Math.round(e.t / 60)} min` };
     }),
-    C('na_recheck', 'Sodium rechecked after the bolus', 10, 'spasovski2014', p => { const b = p.log.find(x => x.type === 'fluid.bolus' && x.fluid === 'saline3'); if (!b) return null; const e = labAt(p, ['abg', 'chem'], b.t + 600); return { frac: e ? 1 : 0, detail: e ? `${Math.round((e.t - b.t) / 60)} min after` : 'no recheck' }; }),
+    C('na_recheck', 'Sodium rechecked after the bolus', 10, 'spasovski2014', p => { const b = acts(p).find(x => x.type === 'fluid.bolus' && x.fluid === 'saline3'); if (!b) return null; const e = labAt(p, ['abg', 'chem'], b.t + 600); return { frac: e ? 1 : 0, detail: e ? `${Math.round((e.t - b.t) / 60)} min after` : 'no recheck' }; }),
     C('na_rise', 'Sodium up by about 5 mmol/L in the first hours', 20, 'spasovski2014', p => { const r = p.lytes.na - p.na0; return { frac: lerpScore(4 - r, 0, 3), detail: `+${r.toFixed(1)} mmol/L` }; }),
     C('na_limit', 'No overcorrection (rise <= 10 mmol/L)', 15, 'spasovski2014', p => { const r = p.lytes.na - p.na0; return { frac: lerpScore(r, 10, 14), detail: `+${r.toFixed(1)} mmol/L` }; }),
-    C('na_no_hypotonic', 'No hypotonic fluid (glucose 5 %)', 10, 'spasovski2014', p => ({ frac: p.log.some(x => x.type === 'fluid.bolus' && x.fluid === 'glucose5') ? 0 : 1, detail: '' })),
+    C('na_no_hypotonic', 'No hypotonic fluid (glucose 5 %)', 10, 'spasovski2014', p => ({ frac: acts(p).some(x => x.type === 'fluid.bolus' && x.fluid === 'glucose5') ? 0 : 1, detail: '' })),
     criteria.survival(),
   ],
   learning: ['Hyponatraemia with severe symptoms (vomiting, deep drowsiness, seizures, coma) is an emergency whatever the cause: brain swelling kills.', 'Give 150 mL of 3 % saline over 20 minutes, check the sodium, and repeat up to twice until it has risen by 5 mmol/L.', 'Then stop: limit the rise to 10 mmol/L in the first 24 hours (8 after that). Faster correction risks osmotic demyelination.', 'Stop the thiazide. Never give hypotonic fluid.'],
@@ -999,9 +1004,9 @@ SCENARIOS.pulmonary_oedema = {
   score: () => [
     ecg12Crit('esc_hf2021', 600),
     C('po_upright', 'Sat upright', 5, 'esc_hf2021', p => ({ frac: p.headUp ? 1 : 0, detail: '' })),
-    C('po_cpap', 'CPAP or bilevel NIV within 10 min', 20, 'rochwerg2017_niv', p => { const e = p.log.find(x => x.type === 'niv.set' && ['cpap', 'bipap'].includes(x.mode)); return { frac: e ? lerpScore(e.t, 600, 1500) : 0, detail: e ? `${e.mode} at ${Math.round(e.t / 60)} min` : 'no NIV' }; }),
+    C('po_cpap', 'CPAP or bilevel NIV within 10 min', 20, 'rochwerg2017_niv', p => { const e = acts(p).find(x => x.type === 'niv.set' && ['cpap', 'bipap'].includes(x.mode)); return { frac: e ? lerpScore(e.t, 600, 1500) : 0, detail: e ? `${e.mode} at ${Math.round(e.t / 60)} min` : 'no NIV' }; }),
     C('po_nitrate', 'IV nitrate within 10 min (systolic > 110)', 20, 'esc_hf2021', p => {
-      const e = p.log.find(x => (x.type === 'drug.infusion' && x.drug === 'nitroglycerin' && x.rate > 0) || (x.type === 'drug.bolus' && x.drug === 'nitroglycerin'));
+      const e = acts(p).find(x => (x.type === 'drug.infusion' && x.drug === 'nitroglycerin' && x.rate > 0) || (x.type === 'drug.bolus' && x.drug === 'nitroglycerin'));
       return { frac: e ? lerpScore(e.t, 600, 1500) : 0, detail: e ? `${Math.round(e.t / 60)} min` : 'no nitrate' };
     }),
     C('po_diuretic', 'IV furosemide 40 mg or more within 15 min', 15, 'esc_hf2021', p => { const d = drugsGiven(p, 'furosemide')[0]; return { frac: d ? (d.amount >= 40 ? 1 : 0.6) * lerpScore(d.t, 900, 1800) : 0, detail: d ? `${d.amount} mg at ${Math.round(d.t / 60)} min` : 'none' }; }),
@@ -1024,7 +1029,7 @@ SCENARIOS.hypertensive_emergency = {
   score: () => [
     ecg12Crit('esc_htn2018', 600),
     C('ht_drug', 'Titratable IV drug within 15 min (labetalol, urapidil or nitrate)', 20, 'esc_htn2018', p => {
-      const d = p.drugs.log.find(x => ['labetalol', 'urapidil', 'nitroglycerin', 'esmolol'].includes(x.key)), inf = p.log.find(x => x.type === 'drug.infusion' && ['nitroglycerin', 'labetalol', 'urapidil'].includes(x.drug) && x.rate > 0);
+      const d = p.drugs.log.find(x => ['labetalol', 'urapidil', 'nitroglycerin', 'esmolol'].includes(x.key)), inf = acts(p).find(x => x.type === 'drug.infusion' && ['nitroglycerin', 'labetalol', 'urapidil'].includes(x.drug) && x.rate > 0);
       const t0 = Math.min(d ? d.t : 1e9, inf ? inf.t : 1e9); return { frac: t0 < 1e9 ? lerpScore(t0, 900, 2400) : 0, detail: t0 < 1e9 ? `${Math.round(t0 / 60)} min` : 'no IV drug' };
     }),
     C('ht_aline', 'Invasive arterial pressure', 10, 'esc_htn2018', p => ({ frac: p.flags.aline ? 1 : 0, detail: '' })),
@@ -1055,7 +1060,7 @@ SCENARIOS.variceal_bleed = {
       if (p.vol.totalBlood === 0) return { frac: p.vol.hb >= 7 ? 1 : 0.3, detail: `no transfusion, Hb ${p.vol.hb.toFixed(1)}` };
       return { frac: lerpScore(p.maxHbTx, 9.5, 11.5) * (p.vol.hb >= 6.5 ? 1 : 0.5), detail: `highest Hb after transfusion ${p.maxHbTx.toFixed(1)}, final ${p.vol.hb.toFixed(1)}` };
     }),
-    C('vb_endoscopy', 'Endoscopy with band ligation', 20, 'baveno7', p => { const e = p.log.find(x => x.type === 'procedure.endoscopy'); return { frac: e ? lerpScore(e.t, 1500, 2700) : 0, detail: e ? `${Math.round(e.t / 60)} min` : 'not done' }; }),
+    C('vb_endoscopy', 'Endoscopy with band ligation', 20, 'baveno7', p => { const e = acts(p).find(x => x.type === 'procedure.endoscopy'); return { frac: e ? lerpScore(e.t, 1500, 2700) : 0, detail: e ? `${Math.round(e.t / 60)} min` : 'not done' }; }),
     C('vb_no_txa', 'No tranexamic acid', 5, 'baveno7', p => ({ frac: drugsGiven(p, 'tranexamicAcid').length ? 0 : 1, detail: '' })),
     C('vb_controlled', 'Bleeding controlled', 15, 'baveno7', p => ({ frac: p.varix && p.varix.controlled ? 1 : 0, detail: p.varix && p.varix.controlled ? `at ${Math.round(p.bleedControlledAt / 60)} min` : 'still bleeding' })),
     criteria.survival(),
@@ -1084,7 +1089,7 @@ SCENARIOS.spinal_hypotension = {
       return { frac: lerpScore(d.t - p.lowMapT, 120, 420), detail: `${d.key} ${Math.round(d.t - p.lowMapT)} s after the fall` };
     }),
     C('sp_nadir', 'Lowest MAP within 20 % of baseline (none at 40 % below)', 25, 'griffiths2021', p => ({ frac: lerpScore(1 - (p.minMapRatio ?? 1), 0.2, 0.4), detail: `${Math.round(100 * (1 - (p.minMapRatio ?? 1)))} % below baseline` })),
-    C('sp_level', 'Block height checked within 10 min', 10, 'hocking2004', p => { const e = p.log.find(x => x.type === 'neuraxial.assess'); return { frac: e ? lerpScore(e.t - (p.spinalT0 ?? 0), 600, 1200) : 0, detail: e ? `at ${Math.round(e.t / 60)} min` : 'never checked' }; }),
+    C('sp_level', 'Block height checked within 10 min', 10, 'hocking2004', p => { const e = acts(p).find(x => x.type === 'neuraxial.assess'); return { frac: e ? lerpScore(e.t - (p.spinalT0 ?? 0), 600, 1200) : 0, detail: e ? `at ${Math.round(e.t / 60)} min` : 'never checked' }; }),
     C('sp_fluid', 'Fluid 250-1000 mL, not more (frail, elderly)', 10, 'griffiths2021', p => { const v = p.vol.totalCrystalloid; return { frac: v < 0.25 ? v / 0.25 : v <= 1.0 ? 1 : lerpScore(v, 1.0, 2.0), detail: `${Math.round(v * 1000)} mL` }; }),
     C('sp_nausea', 'No vomiting', 5, 'carpenter1992', p => ({ frac: p.ponv.vomits.length ? 0 : 1, detail: `${p.ponv.vomits.length} episode(s)` })),
   ],
@@ -1102,7 +1107,7 @@ SCENARIOS.high_spinal = {
   score: () => [
     C('hs_vent', 'Ventilation supported within 2 min of the block reaching the diaphragm (C3-C5)', 30, 'textbook', p => {
       if (p.breathT == null) return null;
-      const e = p.log.find(x => (x.type === 'vent.set' && x.settings?.mode === 'ctrl') || x.type === 'airway.intubate'); if (!e) return { frac: 0, detail: 'never ventilated' };
+      const e = acts(p).find(x => (x.type === 'vent.set' && x.settings?.mode === 'ctrl') || x.type === 'airway.intubate'); if (!e) return { frac: 0, detail: 'never ventilated' };
       return { frac: lerpScore(e.t - p.breathT, 120, 360), detail: `${Math.round(e.t - p.breathT)} s after onset` };
     }),
     C('hs_vaso', 'Vasopressor within 2 min of the MAP falling below 80 % of baseline', 20, 'carpenter1992', p => {
@@ -1117,7 +1122,7 @@ SCENARIOS.high_spinal = {
     }),
     C('hs_airway', 'Airway secured with a tracheal tube', 10, 'textbook', p => ({ frac: p.airway.intubated ? 1 : 0, detail: p.airway.intubated ? 'intubated' : 'not intubated' })),
     C('hs_sedation', 'Sedation once intubated (he may be awake under the block)', 10, 'textbook', p => {
-      const it = p.log.find(x => x.type === 'airway.intubate'); if (!it) return null;
+      const it = acts(p).find(x => x.type === 'airway.intubate'); if (!it) return null;
       const d = firstAfter(p, ['midazolam', 'propofol', 'ketamine', 'etomidate'], it.t - 120); return { frac: d ? 1 : 0, detail: d ? d.key : 'none' };
     }),
     criteria.survival(),
@@ -1143,10 +1148,10 @@ SCENARIOS.pacu_ponv = {
     }),
     C('pacu_settled', 'No vomiting in the last 10 min', 15, 'gan2020', p => { const late = p.ponv.vomits.filter(x => x > p.t - 600).length; return { frac: late ? 0 : 1, detail: `${p.ponv.vomits.length} episode(s) in all, ${late} in the last 10 min` }; }),
     C('pacu_warm', 'Shivering treated: forced-air warming or pethidine within 10 min', 20, 'kranke2002', p => {
-      const w = p.log.find(x => x.type === 'thermal.device' && x.target != null), d = firstAfter(p, ['pethidine'], 0), t = Math.min(w?.t ?? Infinity, d?.t ?? Infinity);
+      const w = acts(p).find(x => x.type === 'thermal.device' && x.target != null), d = firstAfter(p, ['pethidine'], 0), t = Math.min(w?.t ?? Infinity, d?.t ?? Infinity);
       return Number.isFinite(t) ? { frac: lerpScore(t, 600, 1200), detail: `${w ? 'warming' : 'pethidine'} at ${Math.round(t / 60)} min` } : { frac: 0, detail: 'not treated' };
     }),
-    C('pacu_o2', 'Oxygen while she is shivering', 10, 'sessler2016', p => ({ frac: p.log.some(x => x.type === 'o2.mask' || x.type === 'niv.set') ? 1 : 0, detail: '' })),
+    C('pacu_o2', 'Oxygen while she is shivering', 10, 'sessler2016', p => ({ frac: acts(p).some(x => x.type === 'o2.mask' || x.type === 'niv.set') ? 1 : 0, detail: '' })),
     C('pacu_temp', 'Core temperature at least 36.0 C before discharge from recovery', 15, 'nice_cg65', p => ({ frac: p.therm.tc >= 36.0 ? 1 : lerpScore(36.0 - p.therm.tc, 0, 0.3), detail: `${p.therm.tc.toFixed(1)} C` })),
   ],
   learning: ['Apfel score: female, non-smoker, previous PONV or motion sickness, postoperative opioids. Four factors: about 80 % risk. She should have had two or three antiemetics as prophylaxis.', 'Rescue with a class not already given (ondansetron 4 mg, or droperidol 0.625-1.25 mg). Dexamethasone takes 1-2 hours: prophylaxis, not rescue.', 'Shivering after surgery: warm actively (forced air), give oxygen (it raises the oxygen consumption), and pethidine 25 mg IV if it continues.', 'Discharge from recovery only when the core temperature is at least 36.0 C.'],

@@ -2,13 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { replay } from '../src/engine/patient.js';
 import { SCENARIOS } from '../src/engine/scenarios.js';
-import { mk, scen, runScript } from './helpers/bots.js';
+import { mk, scen, runScript, intubate } from './helpers/bots.js';
 
 /** an anaesthetised, paralysed, ventilated patient with a tube placed at the optimal depth */
 function ventilated(spec = {}) {
   const p = mk(spec);
   p.dispatch({ type: 'drug.bolus', drug: 'propofol', amount: 150 }); p.dispatch({ type: 'drug.bolus', drug: 'rocuronium', amount: 80 });
-  p.dispatch({ type: 'airway.set', device: 'ett' });
+  intubate(p);
   p.dispatch({ type: 'vent.set', settings: { mode: 'ctrl', rate: 14, vt: Math.round(6 * p.body.pbw), fio2: 0.4, peep: 5, seal: 0.97 } });
   p.dispatch({ type: 'drug.infusion', drug: 'propofol', rate: 6 });
   return p;

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { describeBody } from '../src/engine/anthropometrics.js';
 import { PKModel } from '../src/engine/pk.js';
 import { propofolEleveld, propofolMarsh, propofolSchnider, remifentanilMinto, remifentanilEleveld, DrugSystem, DRUGS, lbmJamesCapped, ffmAlSallami } from '../src/engine/drugs.js';
-import { mk } from './helpers/bots.js';
+import { mk, intubate } from './helpers/bots.js';
 
 const P1 = { sex: 'M', age: 40, weightKg: 70, heightCm: 170 }, P2 = { sex: 'F', age: 70, weightKg: 55, heightCm: 160 }, P3 = { sex: 'M', age: 35, weightKg: 140, heightCm: 175 };
 const B = s => describeBody(s);
@@ -105,7 +105,7 @@ test('remifentanil synergy: adding a remifentanil infusion deepens propofol hypn
 });
 test('propofol induction: haemodynamics fall 15-35% (SBP/MAP), HR stays within +/-20%, hypovolaemia worsens it (ventilation supported)', () => {
   const run = (spec, mg, bleedFrac = 0) => {
-    const p = mk(spec); p.dispatch({ type: 'airway.set', device: 'ett' }); p.dispatch({ type: 'vent.set', settings: { mode: 'ctrl', rate: 12, vt: 450, fio2: 0.5, peep: 5, seal: 1 } }); p.run(60);
+    const p = mk(spec); intubate(p); p.dispatch({ type: 'vent.set', settings: { mode: 'ctrl', rate: 12, vt: 450, fio2: 0.5, peep: 5, seal: 1 } }); p.run(60);
     if (bleedFrac) { p.dispatch({ type: 'bleed.set', mlPerMin: bleedFrac * p.vol.bloodVolume * 1000 }); p.run(60); p.dispatch({ type: 'bleed.set', mlPerMin: 0 }); p.run(180); }
     const base = { map: p.circ.mapArt, sbp: p.circ.sbp, hr: p.circ.hr }; p.dispatch({ type: 'drug.bolus', drug: 'propofol', amount: mg });
     const s = series(p, 480, q => ({ map: q.circ.mapArt, sbp: q.circ.sbp, hr: q.circ.hr }));
@@ -123,7 +123,7 @@ test('unprotected propofol bolus causes apnoea: minute ventilation falls > 70% a
   assert.ok(Math.min(...s.map(x => x.ve)) < 0.3 * ve0 && Math.min(...s.map(x => x.sao2)) < ((s[0].sao2 + 0.01)), 'VE collapses');
 });
 test('ketamine and etomidate preserve blood pressure better than propofol at equi-hypnotic doses', () => {
-  const dMap = (drug, mg) => { const p = mk(P1); p.dispatch({ type: 'airway.set', device: 'ett' }); p.dispatch({ type: 'vent.set', settings: { mode: 'ctrl', rate: 12, vt: 450, fio2: 0.5, peep: 5, seal: 1 } }); p.run(60); const b = p.circ.mapArt; p.dispatch({ type: 'drug.bolus', drug, amount: mg }); const s = series(p, 480, q => q.circ.mapArt); return Math.min(...s) / b - 1; };
+  const dMap = (drug, mg) => { const p = mk(P1); intubate(p); p.dispatch({ type: 'vent.set', settings: { mode: 'ctrl', rate: 12, vt: 450, fio2: 0.5, peep: 5, seal: 1 } }); p.run(60); const b = p.circ.mapArt; p.dispatch({ type: 'drug.bolus', drug, amount: mg }); const s = series(p, 480, q => q.circ.mapArt); return Math.min(...s) / b - 1; };
   const pr = dMap('propofol', 140), et = dMap('etomidate', 21), ke = dMap('ketamine', 140);
   assert.ok(et > pr + 0.05 && ke > pr + 0.08, `propofol ${(pr * 100).toFixed(0)}% etomidate ${(et * 100).toFixed(0)}% ketamine ${(ke * 100).toFixed(0)}%`);
 });

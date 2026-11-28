@@ -11,7 +11,7 @@
 3. Drug models other than propofol/remifentanil are simplified one-compartment or phenomenological models; adult patients only (age 18-100); no paediatrics, pregnancy, renal/hepatic failure or chronic disease modifiers beyond the scenario-specific ones.
 4. The 3D patient is procedural (no clothing, hair styles or anatomy detail); it conveys habitus, colour, breathing and compressions, not anatomical realism.
 5. Scores are derived from guideline recommendations current at the time of authoring (AHA 2025) and must be re-checked when guidelines change.
-6. Server verification detects tampering with the log or hash; it does not authenticate learners. Add SSO/reverse-proxy authentication for exams.
+6. Server verification checks that the replayed log reproduces the submitted hash and carries exactly the instructor changes the server delivered. The score always comes from the server's own replay. Verification does not authenticate learners or prove a log was played by hand (the engine is public, so an edited log can be given a matching hash). Add SSO/reverse-proxy authentication for exams.
 7. Replay hashes are quantised to 6 decimals to tolerate last-bit differences between JavaScript engines; a mismatch is reported as *unverified*, not rejected.
 
 ## Data protection

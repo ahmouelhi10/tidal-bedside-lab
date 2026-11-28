@@ -112,6 +112,9 @@ function validateEventShape(ev) {
     case 'blood.transfuse': return ['prbc', 'whole', 'ffp', 'platelets', 'cryo'].includes(ev.kind) ? null : 'invalid blood product';
     case 'position.set': return typeof ev.headUp === 'boolean' ? null : 'headUp must be boolean';
     case 'apox.set': return typeof ev.on === 'boolean' ? null : 'on must be boolean';
+    // bedside airway adjuncts only: a tracheal tube is placed by airway.intubate, which checks relaxation, draws success and
+    // counts attempts. A replayed log must not reach an intubated patient by naming the device.
+    case 'airway.set': return typeof ev.device === 'string' && Object.hasOwn(AIRWAYS, ev.device) && ev.device !== 'ett' ? null : 'invalid airway device (a tracheal tube is placed with airway.intubate)';
     case 'procedure.needle_decompression': {
       if (ev.side != null && !['L', 'R'].includes(ev.side)) return 'invalid side';
       if (ev.site != null && !(ev.site in SITES)) return 'invalid site';
@@ -255,7 +258,13 @@ export class Patient {
     const rec = { t: +this.t.toFixed(3), ...ev };
     if (ev.type === 'o2.mask') rec.spo2Before = +this.resp.spo2.toFixed(1);
     this.log.push(rec);
-    return this._apply(ev);
+    const r = this._apply(ev);
+    // How the engine took it, kept on the record but not enumerable, so the serialised replay log is unchanged:
+    // ok (it took effect) and refused (rejected with no effect at all). Scoring counts only actions that were not refused;
+    // a failed attempt that still happened (intubating a patient who is not relaxed) is not refused.
+    const ok = !(r && r.ok === false);
+    Object.defineProperty(rec, 'ok', { value: ok }); Object.defineProperty(rec, 'refused', { value: !ok && !r.attempted });
+    return r;
   }
   _apply(ev) {
     // Input contract: every numeric parameter of an event must be a finite number. Malformed events are rejected
@@ -306,7 +315,7 @@ export class Patient {
       }
       case 'order': { const rec = { t, what: ev.what, ...(ev.mg != null ? { mg: ev.mg } : {}) }; this.orders.push(rec); return { ok: true, result: this.scenario?.orderResult?.(ev.what, this) ?? null }; }
       case 'airway.set': {
-        const d = ev.device; if (!(d in AIRWAYS)) return { ok: false };
+        const d = ev.device;
         if (this.airway.device === 'fona') return { ok: false, error: 'surgical airway in place' };
         this.airway.device = d; this.airway.intubated = d === 'ett'; this.airway.patency = AIRWAYS[d]; if (d !== 'ett') this.tube.remove(); else if (!this.tube.placed) this.tube.place(); return { ok: true };
       }
@@ -506,7 +515,7 @@ export class Patient {
     if (this.airway.device === 'fona') return { ok: false, error: 'surgical airway in place' };
     const eff = this.drugs.effects({ inArrest: this.arrest.arrested });
     const t = this.t, relaxed = (eff.loc && eff.nmb > 0.9) || this.arrest.arrested;
-    if (!relaxed) { this.notes.push({ t, text: 'intubation attempted on a patient who is not paralysed/unconscious' }); this.failedAttempts = (this.failedAttempts || 0) + 1; return { ok: false, error: 'patient not relaxed: laryngospasm / bucking' }; }
+    if (!relaxed) { this.notes.push({ t, text: 'intubation attempted on a patient who is not paralysed/unconscious' }); this.failedAttempts = (this.failedAttempts || 0) + 1; return { ok: false, attempted: true, error: 'patient not relaxed: laryngospasm / bucking' }; }
     const obes = clamp((this.body.bmi - 30) / 20, 0, 1), pOk = Math.min(clamp(0.92 - 0.18 * obes - 0.05 * (this.headUp ? -1 : 0), 0.4, 0.97), this.hard?.ett ?? 1);
     const dur = 22 + 8 * this.rng.next() + 8 * obes;
     this.airway.intubating = true; this.attempts = (this.attempts || 0) + 1;

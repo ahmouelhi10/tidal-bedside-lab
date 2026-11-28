@@ -5,11 +5,11 @@ import assert from 'node:assert/strict';
 import { describeBody } from '../src/engine/anthropometrics.js';
 import { Rng } from '../src/engine/rng.js';
 import { CprMechanics, Defibrillator, baseTermination, ArrestState, CAUSES, CPR_LIMITS } from '../src/engine/cpr.js';
-import { mk, scen, aclsTeam } from './helpers/bots.js';
+import { mk, scen, aclsTeam, intubate } from './helpers/bots.js';
 
 function arrestRun(spec, { depth = 5.5, rate = 110, surface = 'hard', mode = 'auto', secs = 90, key = 'VF', ratio = 'continuous' } = {}) {
   const p = mk(spec); p.run(5); p.dispatch({ type: 'monitor.attach', items: { aline: true, ecgLeads: true, spo2Probe: true, capnography: true } });
-  p.arrest.arrest(key, p.t); p.dispatch({ type: 'airway.set', device: 'ett' });
+  p.arrest.arrest(key, p.t); intubate(p);
   p.dispatch({ type: 'vent.set', settings: { mode: 'ctrl', rate: 10, vt: 450, fio2: 1, peep: 5, seal: 1 } });
   p.dispatch({ type: 'cpr.start', mode, opts: { rate, depth, ratio }, surface }); p.run(secs); return p;
 }
@@ -96,7 +96,7 @@ test('hypoxic PEA: the immediate team gets ROSC less often than in witnessed VF 
 });
 test('epinephrine raises the ROSC rate in non-shockable arrest (REF aha2025_part9) and vasopressin does not', () => {
   const run = (drug) => { let rosc = 0; for (let s = 1; s <= 80; s++) { const p = mk({}, { seed: s }); p.run(5); p.arrest.arrest('PEA', p.t); p.dispatch({ type: 'cpr.start', mode: 'auto', opts: { rate: 110, depth: 5.5 }, surface: 'hard' });
-    p.dispatch({ type: 'airway.set', device: 'ett' }); p.dispatch({ type: 'vent.set', settings: { mode: 'ctrl', rate: 10, vt: 450, fio2: 1, peep: 5, seal: 1 } });
+    intubate(p); p.dispatch({ type: 'vent.set', settings: { mode: 'ctrl', rate: 10, vt: 450, fio2: 1, peep: 5, seal: 1 } });
     for (let m = 0; m < 6 && !p.arrest.roscCount; m++) { if (drug === 'epinephrine') p.dispatch({ type: 'drug.bolus', drug, amount: 1000 }); if (drug === 'vasopressin') p.dispatch({ type: 'drug.bolus', drug, amount: 40 }); p.run(120); } if (p.arrest.roscCount) rosc++; } return rosc / 80; };
   const none = run(null), epi = run('epinephrine'), vaso = run('vasopressin');
   assert.ok(epi >= none, `none ${none.toFixed(2)} epi ${epi.toFixed(2)} vaso ${vaso.toFixed(2)}`); assert.ok(vaso <= none + 0.1, `vasopressin should not help: ${vaso.toFixed(2)} vs ${none.toFixed(2)}`);

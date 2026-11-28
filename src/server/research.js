@@ -40,13 +40,16 @@ export function researchRows(records, salt) {
   const subs = records.filter(r => r.status === 'submitted' && r.result).sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
   const critIds = [...new Set(subs.flatMap(r => (r.result.score?.items || []).map(i => i.id)))].sort();
   const rows = subs.map(r => {
-    const ev = (r.log || []).map(e => ({ t: e.t, type: e.type, ok: true, ev: e }));
-    const k = keyActionTimes(ev), team = (r.log || []).filter(e => e.type === 'team.order').length, crit = Object.fromEntries((r.result.score?.items || []).map(i => [i.id, i.frac]));
+    // key times come from the server's replay (only actions the engine accepted); sessions stored before the replay
+    // recorded them fall back to the raw log, which also counts refused actions, and say so in key_times_source
+    const fromReplay = !!r.result.keyTimes;
+    const k = fromReplay ? r.result.keyTimes : keyActionTimes((r.log || []).map(e => ({ t: e.t, type: e.type, ok: true, ev: e }))), team = (r.log || []).filter(e => e.type === 'team.order').length, crit = Object.fromEntries((r.result.score?.items || []).map(i => [i.id, i.frac]));
     const row = { session: r.id.slice(0, 12), learner_pid: pid(salt, r.learner), scenario: r.scenario || 'free', created: r.createdAt, submitted: r.submittedAt || '',
       verified: r.result.verified ? 1 : 0, sim_time_s: Math.round(r.result.simTimeS ?? 0), score_pct: r.result.score?.pct ?? '', grade: r.result.score?.grade ?? '',
       instructor_changes: (r.log || []).filter(e => e.type === 'instructor.inject').length, team_orders: team, ...helpUsed(r.log || []), ...patientOf(r),
       self_pct: r.self?.pct ?? '', ...Object.fromEntries(ANTS_CATEGORIES.map(a => ['self_ants_' + a, r.self?.ants?.[a] ?? ''])) };
     for (const kk of KEY_TIMES) row['t_' + kk] = k[kk] == null ? '' : +k[kk].toFixed(1);
+    row.key_times_source = fromReplay ? 'replay' : 'raw_log';
     for (const id of critIds) row['crit_' + id] = crit[id] ?? '';
     return row;
   });

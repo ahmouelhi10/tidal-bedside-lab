@@ -8,10 +8,11 @@
 // Weights and time thresholds are design values (REF design) built on the cited guideline sequences:
 // RSI REF weingart2012, das2015; bronchoscopy REF design; defibrillation REF aha2025_part9; chest decompression and drain REF atls; front of neck REF das2015.
 
-const evs = (p, type, pred = () => true) => p.log.filter(e => e.type === type && pred(e));
+const acts = (p) => p.log.filter(e => !e.refused);          // refused events earn nothing (see scenarios.js acts)
+const evs = (p, type, pred = () => true) => acts(p).filter(e => e.type === type && pred(e));
 const firstT = (arr) => (arr.length ? arr[0].t : null);
 const before = (p, type, t, pred) => evs(p, type, e => e.t <= t && (!pred || pred(e))).length > 0;
-const declared = (p, proc, step, tMax = Infinity) => p.log.some(e => e.type === 'note' && e.t <= tMax && typeof e.text === 'string' && e.text.startsWith(`guide ${proc}: ${step}`) && !e.text.includes('(skipped)'));
+const declared = (p, proc, step, tMax = Infinity) => acts(p).some(e => e.type === 'note' && e.t <= tMax && typeof e.text === 'string' && e.text.startsWith(`guide ${proc}: ${step}`) && !e.text.includes('(skipped)'));
 const ramp = (x, full) => Math.max(0, Math.min(1, x / full));
 /** a monitoring item was on before t: set by the scenario before the case started, or attached by the learner */
 const monitoredBy = (p, item, t) => !!p.flags0?.[item] || before(p, 'monitor.attach', t, e => e.items?.[item]);
@@ -49,13 +50,13 @@ export const DEMARCHE = {
         let ok = 0;
         for (const s of shocks) {                                     // the charge that armed this shock, and was CPR running at that moment?
           const ch = evs(p, 'defib.charge', e => e.t <= s.t).pop(); if (!ch) continue;
-          const last = p.log.filter(e => (e.type === 'cpr.start' || e.type === 'cpr.stop') && e.t <= ch.t).pop();
+          const last = acts(p).filter(e => (e.type === 'cpr.start' || e.type === 'cpr.stop') && e.t <= ch.t).pop();
           if (last && last.type === 'cpr.start') ok++;
         }
         return ok / shocks.length;
       } },
       { id: 'clear', label: '"Stand clear, oxygen away" before each shock (declared)', w: 0.5, declared: true, frac: (p) => {
-        const shocks = evs(p, 'defib.shock'); return shocks.filter(s => p.log.some(e => e.type === 'note' && e.t <= s.t && e.t >= s.t - 30 && typeof e.text === 'string' && e.text.startsWith('guide defib: clear'))).length / shocks.length;
+        const shocks = evs(p, 'defib.shock'); return shocks.filter(s => acts(p).some(e => e.type === 'note' && e.t <= s.t && e.t >= s.t - 30 && typeof e.text === 'string' && e.text.startsWith('guide defib: clear'))).length / shocks.length;
       } },
       { id: 'resume', label: 'CPR resumed within 10 s of each shock (unless ROSC)', w: 2, frac: (p) => {
         const shocks = evs(p, 'defib.shock'); if (!shocks.length) return 0;
@@ -87,7 +88,7 @@ export const DEMARCHE = {
       { id: 'capno', label: 'Capnography on during bronchoscopy', w: 1, frac: (p, t) => (monitoredBy(p, 'capnography', t) ? 1 : 0) },
       { id: 'look_first', label: 'Tube moved only while looking (scope in)', w: 2, frac: (p) => {
         const adj = evs(p, 'airway.tube_adjust'); if (!adj.length) return 1;
-        const inAt = (t) => { const last = p.log.filter(e => (e.type === 'bronch.insert' || e.type === 'bronch.remove') && e.t <= t).pop(); return last && last.type === 'bronch.insert'; };
+        const inAt = (t) => { const last = acts(p).filter(e => (e.type === 'bronch.insert' || e.type === 'bronch.remove') && e.t <= t).pop(); return last && last.type === 'bronch.insert'; };
         return adj.filter(e => inAt(e.t)).length / adj.length;
       } },
       { id: 'short', label: 'Scope out within 3 min each time', w: 1, frac: (p) => {

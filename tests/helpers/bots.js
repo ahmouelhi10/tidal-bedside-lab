@@ -4,6 +4,9 @@ import { SCENARIOS } from '../../src/engine/scenarios.js';
 import { isShockable } from '../../src/engine/rhythm.js';
 
 export const mk = (spec = {}, opt = {}) => new Patient({ sex: 'M', age: 50, heightCm: 175, weightKg: 80, ...spec }, { seed: 1, ...opt });
+/** Test setup only: a tracheal tube in place, as a successful airway.intubate leaves it. Learner logs cannot do this
+ *  (airway.set refuses 'ett'); tests that need an intubated patient without the procedure's time and draw use this. */
+export function intubate(p) { p.airway.device = 'ett'; p.airway.intubated = true; p.airway.patency = 1; if (!p.tube.placed) p.tube.place(); return p; }
 export const scen = (id, seed = 1, specOverride = {}) => new Patient({ ...SCENARIOS[id].spec, ...specOverride }, { seed, scenario: SCENARIOS[id] });
 
 /** run a time-ordered script [[t, event], ...]; ticks the engine between entries */
