@@ -33,7 +33,14 @@ export function validateSelf(b) {
 }
 
 const pid = (salt, learner) => (learner ? crypto.createHash('sha256').update(salt + '\u0000' + learner).digest('hex').slice(0, 12) : '');
-const csvCell = (v) => { if (v == null) return ''; const s = String(v); return /[",\n;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+/** One CSV cell. Text that a spreadsheet would read as a formula (starting with = + - @, tab or carriage return; some
+ *  of it is learner-written, e.g. the help level note) gets a leading apostrophe, so it opens as plain text. */
+export const csvCell = (v) => {
+  if (v == null) return '';
+  let s = String(v);
+  if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return /[",\n\r;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+};
 
 /** Rows for every submitted session (sorted by date), and the CSV text. */
 export function researchRows(records, salt) {

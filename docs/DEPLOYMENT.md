@@ -14,7 +14,8 @@ PORT=8080 DATA_DIR=/var/lib/tbl API_TOKEN=<long random string> node src/server/s
 | `PORT`, `HOST` | 8080, 0.0.0.0 | Listen address |
 | `DATA_DIR` | `./data` | Session store (atomic JSON files). Mount a persistent volume |
 | `API_TOKEN` | unset | Enables instructor endpoints (`GET /api/sessions`, `?log=1`) with `Authorization: Bearer <token>`. Unset = those endpoints return 403 |
-| `TRUST_PROXY` | unset | Set to `1` behind a reverse proxy you control: the first `X-Forwarded-For` entry becomes the client address for rate limiting. Leave unset when the server is directly exposed (the header is client-controlled) |
+| `TRUST_PROXY` | unset | Set to `1` behind a reverse proxy you control: the first `X-Forwarded-For` entry becomes the client address for rate limiting (right for a proxy that replaces the header, as the nginx example below does). Leave unset when the server is directly exposed (the header is client-controlled). A value that is not an IP address is ignored |
+| `TRUST_PROXY_HOPS` | unset | With `TRUST_PROXY=1`, behind a proxy that *appends* to the header the client sent: the number of trusted proxies, so the entry that many places from the right is used (`1`: the last entry). Otherwise a client can choose its own rate-limit key by sending `X-Forwarded-For` itself. To find out which applies, log the raw header once on a test instance and send a request with `X-Forwarded-For: 192.0.2.77`: `192.0.2.77, <your address>` means the proxy appends |
 | `WEB_DIR` | `src/web` | Serve a different client directory |
 | `LOG_LEVEL` | info | `debug` logs each request |
 
@@ -56,6 +57,7 @@ Measured with `npm run load-test` (25 November 2026; 20-CPU workstation, Node 24
 - A queued submit holds its log in memory (at most 1 MB each, typically a few kB): 100 waiting is at most ~100 MB.
 - A smaller host is slower in proportion to its CPU (a fraction of a core on a small cloud instance: expect several times the waits above); throughput scales with `replayConcurrency` up to the number of cores.
 - Not measured: the live instructor channel (Server-Sent Events) under many viewers, and the production host itself (no load was sent to it).
+- Live channel limits (`LIVE_LIMITS` in `src/server/live.js`): at most 500 open cases, 8 instructors and 4 learner tabs per case; 20 wrong join codes a minute per client address; a stream whose reader stops reading is dropped after 256 KB of unsent data; a case's channel closes when it is submitted.
 
 ## Operations
 

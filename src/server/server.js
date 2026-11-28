@@ -4,6 +4,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import net from 'node:net';
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import { SCENARIOS, scenarioList } from '../engine/scenarios.js';
@@ -97,7 +98,7 @@ class ReplayPool {
 }
 
 // ----------------------------------------------------------------------------- server factory
-export function createServer({ port = 8080, host = '0.0.0.0', dataDir = path.join(ROOT, 'data'), webDir = path.join(ROOT, 'src', 'web'), engineDir = path.join(ROOT, 'src', 'engine'), apiToken = process.env.API_TOKEN || '', quiet = false, trustProxy = process.env.TRUST_PROXY === '1' } = {}) {
+export function createServer({ port = 8080, host = '0.0.0.0', dataDir = path.join(ROOT, 'data'), webDir = path.join(ROOT, 'src', 'web'), engineDir = path.join(ROOT, 'src', 'engine'), apiToken = process.env.API_TOKEN || '', quiet = false, trustProxy = process.env.TRUST_PROXY === '1', trustProxyHops = Number(process.env.TRUST_PROXY_HOPS) || 0 } = {}) {
   const store = new SessionStore(dataDir);
   const pool = new ReplayPool({ concurrency: LIMITS.replayConcurrency, maxQueue: LIMITS.replayQueue, timeoutMs: LIMITS.replayTimeoutMs });
   const inflight = new Set();                                      // session ids (and id:self) with a submit or self-assessment in progress
@@ -143,12 +144,12 @@ export function createServer({ port = 8080, host = '0.0.0.0', dataDir = path.joi
   const salt = apiToken || crypto.randomBytes(16).toString('hex');   // learner pseudonyms in the research export (stable while API_TOKEN is)
   const publicView = (r) => ({ id: r.id, scenario: r.scenario, learner: r.learner, spec: r.spec, seed: r.seed, createdAt: r.createdAt, status: r.status, result: r.result ?? null });
 
-  async function api(req, res, url) {
+  async function api(req, res, url, ip) {
     const parts = url.pathname.split('/').filter(Boolean);              // ['api', ...]
     const m = req.method;
     if (parts[1] === 'health' && parts.length === 2 && m === 'GET') return send(res, 200, { status: 'ok', version: VERSION, uptimeS: Math.round((Date.now() - started) / 1000), scenarios: Object.keys(SCENARIOS).length, node: process.version });
     if (parts[1] === 'scenarios' && parts.length === 2 && m === 'GET') return send(res, 200, scenarioList());
-    if (parts[1] === 'live' && parts.length >= 4) return live.handle(req, res, parts);   // live instructor channel (see live.js)
+    if (parts[1] === 'live' && parts.length >= 4) return live.handle(req, res, parts, ip);   // live instructor channel (see live.js)
     if (parts[1] === 'research' && parts[2] === 'export' && parts.length === 3 && m === 'GET') {   // de-identified rows for validity studies (research.js)
       if (!authorised(req)) return fail(res, apiToken ? 401 : 403, apiToken ? 'bearer token required' : 'research export is disabled (set API_TOKEN)');
       const { rows, csv } = researchRows(store.list(), salt);
@@ -199,7 +200,7 @@ export function createServer({ port = 8080, host = '0.0.0.0', dataDir = path.joi
           const result = { verified: clientHash === out.hash && instr.ok, serverHash: out.hash, clientHash, simTimeS: out.t, events: lv.log.length, score: out.score, keyTimes: out.keyTimes,
             ...(instr.ok ? {} : { instructorMismatch: instr.error }), arrests: out.arrests, roscCount: out.roscCount, final: { rhythm: out.snapshot.rhythm, map: out.snapshot.map, spo2: out.snapshot.spo2, hr: out.snapshot.hr } };
           const done = { ...cur, status: 'submitted', submittedAt: new Date().toISOString(), result, log: lv.log };
-          store.put(done); info('info', 'session submitted', { id, verified: result.verified, pct: out.score?.pct });
+          store.put(done); live.closeSession(id); info('info', 'session submitted', { id, verified: result.verified, pct: out.score?.pct });
           return send(res, 200, publicView(done));
         } finally { inflight.delete(id); }
       }
@@ -237,16 +238,32 @@ export function createServer({ port = 8080, host = '0.0.0.0', dataDir = path.joi
     if (req.headers['if-none-match'] === etag) { res.writeHead(304, headers); return res.end(); }
     res.writeHead(200, headers);
     if (req.method === 'HEAD') return res.end();
-    fs.createReadStream(file).pipe(res);
+    // a read that fails after the stat (file removed, descriptor limit, I/O error) ends this response only; without the
+    // listener the stream's 'error' event would be thrown outside the handler and stop the whole server
+    const stream = fs.createReadStream(file);
+    stream.on('error', (e) => { info('error', 'static read failed', { file: path.basename(file), err: e.code || String(e.message || e) }); res.destroy(); });
+    stream.pipe(res);
+  }
+
+  /** The client address for rate limiting. Behind a proxy (trustProxy) it comes from X-Forwarded-For: by default the first
+   *  entry (a proxy that replaces the header, as the nginx example does); with trustProxyHops = N, the N-th entry from the
+   *  right, the one the outermost trusted proxy added (a proxy that appends to what the client sent). A value that is not
+   *  an IP address is ignored, so a client cannot invent arbitrary keys. */
+  function clientIp(req) {
+    const sock = req.socket.remoteAddress || '?';
+    if (!trustProxy) return sock;
+    const xs = String(req.headers['x-forwarded-for'] || '').split(',').map(x => x.trim()).filter(Boolean);
+    const pick = trustProxyHops > 0 ? xs[xs.length - trustProxyHops] : xs[0];
+    return pick && net.isIP(pick) ? pick : sock;
   }
 
   const server = http.createServer(async (req, res) => {
-    const t0 = Date.now(); const ip = (trustProxy && String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || req.socket.remoteAddress || '?';
+    const t0 = Date.now(); const ip = clientIp(req);
     try {
       const url = new URL(req.url, 'http://localhost');
       if (url.pathname.startsWith('/api/')) {
         if (!url.pathname.startsWith('/api/live/') && rateLimited(ip)) return fail(res, 429, 'too many requests');   // the live channel has its own limits (live.js)
-        await api(req, res, url);
+        await api(req, res, url, ip);
       } else serveStatic(req, res, url);
     } catch (e) {
       const status = e.status || 500;

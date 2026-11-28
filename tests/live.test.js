@@ -87,7 +87,7 @@ test('a delivered instructor change is kept on the session: the honest log verif
       const p = new Patient(sess.spec, { seed: sess.seed }); p.run(20);
       if (keep) p.dispatch({ type: 'instructor.inject', ...cmd }); p.run(20);
       const r = await (await post(`${base}/api/sessions/${sess.id}/submit`, { log: p.log, until: +p.t.toFixed(3), hash: p.stateHash() })).json();
-      assert.equal((await post(`${base}/api/live/join/${open.code}/cmd`, { what: 'vf' })).status, 409, 'no changes once the case is submitted');
+      assert.equal((await post(`${base}/api/live/join/${open.code}/cmd`, { what: 'vf' })).status, 404, 'no changes once the case is submitted: its channel is closed');
       learner.close(); return r.result;
     };
     const honest = await run(true); assert.equal(honest.verified, true, JSON.stringify(honest));

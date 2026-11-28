@@ -7,7 +7,8 @@ import crypto from 'node:crypto';
 import { INJECTS } from '../engine/patient.js';
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';            // no 0/O, 1/I: read aloud or typed from a screen
-export const LIVE_LIMITS = Object.freeze({ codeLen: 6, stateBytes: 8_000, minStateMs: 400, idleMs: 2 * 3600_000, heartbeatMs: 15_000, maxChannels: 500, maxWatchers: 8 });
+export const LIVE_LIMITS = Object.freeze({ codeLen: 6, stateBytes: 8_000, minStateMs: 400, idleMs: 2 * 3600_000, heartbeatMs: 15_000, maxChannels: 500, maxWatchers: 8,
+  maxLearners: 4, joinMissesPerMin: 20, maxBufferedBytes: 256_000 });   // learner tabs per case; wrong join codes a minute per address; unsent bytes before a stream is dropped
 
 export function newCode() { let s = ''; for (let i = 0; i < LIVE_LIMITS.codeLen; i++) s += CODE_CHARS[crypto.randomInt(CODE_CHARS.length)]; return s; }
 export const validCode = (c) => typeof c === 'string' && c.length === LIVE_LIMITS.codeLen && [...c].every(ch => CODE_CHARS.includes(ch));
@@ -39,25 +40,39 @@ export function createLive({ store, send, fail, readJson, info }) {
     res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Content-Type-Options': 'nosniff', 'X-Accel-Buffering': 'no' });
     res.write('retry: 3000\n\n');
   };
-  const emit = (res, event, data) => { try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* closed */ } };
+  // a stream whose reader stopped reading is dropped once its unsent backlog passes maxBufferedBytes, so a client that
+  // never reads cannot grow server memory ('close' then removes it from its channel)
+  const write = (res, text) => { try { if (res.writableLength > LIVE_LIMITS.maxBufferedBytes) { res.destroy(); return; } res.write(text); } catch { /* closed */ } };
+  const emit = (res, event, data) => write(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   const touch = (ch) => { ch.seen = Date.now(); };
   const watchersMsg = (ch) => ({ watchers: ch.watchers.size });
 
   const hb = setInterval(() => {
     const now = Date.now();
     for (const ch of byId.values()) {
-      for (const r of [...ch.learners, ...ch.watchers]) { try { r.write(': hb\n\n'); } catch { /* closed */ } }
+      for (const r of [...ch.learners, ...ch.watchers]) write(r, ': hb\n\n');
       if (now - ch.seen > LIVE_LIMITS.idleMs && !ch.learners.size && !ch.watchers.size) { byId.delete(ch.id); byCode.delete(ch.code); }
     }
   }, LIVE_LIMITS.heartbeatMs); hb.unref();
 
-  /** Handles /api/live/... ; returns true when it answered. */
-  async function handle(req, res, parts) {
+  // wrong join codes per client address in the current minute: a 6-character code is only as strong as the guesses allowed
+  const misses = new Map();
+  const missWindow = setInterval(() => misses.clear(), 60_000); missWindow.unref();
+  /** Ends a case's live channel (called after its submit): the streams close and the join code stops working. */
+  function closeSession(id) {
+    const ch = byId.get(id); if (!ch) return;
+    byId.delete(id); byCode.delete(ch.code);
+    for (const r of [...ch.learners, ...ch.watchers]) { try { r.end(); } catch { /* closed */ } }
+  }
+
+  /** Handles /api/live/... ; returns true when it answered. ip: the client address (rate limiting of wrong join codes). */
+  async function handle(req, res, parts, ip = '?') {
     const m = req.method;
     // instructor side: /api/live/join/:code[/cmd]
     if (parts[2] === 'join') {
+      if ((misses.get(ip) || 0) >= LIVE_LIMITS.joinMissesPerMin) { fail(res, 429, 'too many wrong codes, wait a minute'); return true; }
       const code = String(parts[3] || '').toUpperCase(), ch = validCode(code) ? byCode.get(code) : null;
-      if (!ch) { fail(res, 404, 'no live case with this code'); return true; }
+      if (!ch) { misses.set(ip, (misses.get(ip) || 0) + 1); fail(res, 404, 'no live case with this code'); return true; }
       if (parts.length === 4 && m === 'GET') {
         if (ch.watchers.size >= LIVE_LIMITS.maxWatchers) { fail(res, 429, 'too many instructors on this case'); return true; }
         sse(res); ch.watchers.add(res); touch(ch);
@@ -99,6 +114,8 @@ export function createLive({ store, send, fail, readJson, info }) {
     }
     if (!ch) { fail(res, 404, 'live channel not open'); return true; }
     if (parts[3] === 'stream' && m === 'GET') {
+      if (rec.status !== 'open') { fail(res, 409, 'session already submitted'); return true; }
+      if (ch.learners.size >= LIVE_LIMITS.maxLearners) { fail(res, 429, 'too many open tabs on this case'); return true; }
       sse(res); ch.learners.add(res); touch(ch); emit(res, 'watchers', watchersMsg(ch));
       for (const w of ch.watchers) emit(w, 'learner', { online: true });
       req.on('close', () => { ch.learners.delete(res); for (const w of ch.watchers) emit(w, 'learner', { online: ch.learners.size > 0 }); });
@@ -117,5 +134,5 @@ export function createLive({ store, send, fail, readJson, info }) {
     }
     fail(res, 405, 'method not allowed'); return true;
   }
-  return { handle, close: () => { clearInterval(hb); for (const ch of byId.values()) for (const r of [...ch.learners, ...ch.watchers]) { try { r.end(); } catch { /* closed */ } } } };
+  return { handle, closeSession, close: () => { clearInterval(hb); clearInterval(missWindow); for (const ch of byId.values()) for (const r of [...ch.learners, ...ch.watchers]) { try { r.end(); } catch { /* closed */ } } } };
 }
