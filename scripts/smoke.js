@@ -116,7 +116,7 @@ const START_PROC = (id) => `(async () => {
   const { sim, ui, scene } = window.__tbl, wait = (ms) => new Promise(r => setTimeout(r, ms));
   const { PROCEDURES, SKILL_CASE } = await import('/procedures.js');
   const pr = PROCEDURES.find(p => p.id === ${JSON.stringify(id)});
-  for (let i = 0; i < 100 && !(scene.asset && scene.instruments); i++) await wait(100);   // the realistic patient and the instrument models
+  for (let i = 0; i < 300 && !(scene.asset && scene.instruments); i++) await wait(100);   // the realistic patient and the instrument models (up to 30 s)
   if (!(scene.asset && scene.instruments)) return { error: 'the patient or instrument models did not load' };
   sim.online = false; await ui.onStart({ scenarioId: SKILL_CASE[pr.id] || null, spec: {}, learner: '', tone: 2 }); await wait(150);
   [...document.querySelectorAll('button')].find(b => /ready|prêt/i.test(b.textContent))?.click(); await wait(150);
@@ -146,12 +146,12 @@ const GUIDE_STATE = `(async () => {
   // the step's tolerance; for a cut, the cut's start). Software rendering in headless Chrome is slow, so this can take seconds.
   const c0 = scene.canvas.getBoundingClientRect(), aim = cut ? P(-0.5) : tgt, tol = (h.radiusCm ?? 3) / 300;
   let cur = shot(), off = Infinity;
-  for (let k = 0; k < 150; k++) {
+  for (let k = 0; k < 400; k++) {                                       // up to 40 s: a hosted CI runner renders at a frame or two per second
     cur = shot(); const hit = cur.a && scene.pickBody(c0.left + cur.a.x, c0.top + cur.a.y);
     off = hit ? Math.hypot(hit.p[0] - aim[0], hit.p[1] - aim[1], hit.p[2] - aim[2]) : Infinity;
     if (off < tol && !scene.tw) break; await wait(100);
   }
-  if (!(off < tol)) return { i: g.i, id: s.id, error: 'the site is not under its own projection after 15 s (' + (off * 100).toFixed(1) + ' cm off, view ' + scene.view + ')' };
+  if (!(off < tol)) return { i: g.i, id: s.id, error: 'the site is not under its own projection after 40 s (' + (off * 100).toFixed(1) + ' cm off, view ' + scene.view + ')' };
   const tile = document.querySelector('.pw-table.live .pw-tool[data-tool="' + h.tool + '"]'); if (!tile) return { i: g.i, id: s.id, error: 'no live instrument tile for ' + h.tool };
   const r = tile.getBoundingClientRect(), c = scene.canvas.getBoundingClientRect();
   return { i: g.i, id: s.id, gesture: h.gesture, tool: h.tool, tile: { x: r.left + r.width / 2, y: r.top + r.height / 2 },
@@ -274,7 +274,12 @@ async function main() {
   } catch (e) {
     problems.push(`smoke harness: ${e.message}`);
   } finally { await cleanup(); }
-  if (problems.length) { console.log(`smoke: FAIL, ${problems.length} problem(s):`); for (const p of problems) console.log('  - ' + p); process.exit(1); }
+  if (problems.length) {
+    console.log(`smoke: FAIL, ${problems.length} problem(s):`); for (const p of problems) console.log('  - ' + p);
+    // on GitHub Actions each problem also becomes an annotation, readable on the run page and through the API without the log
+    if (process.env.GITHUB_ACTIONS === 'true') for (const p of problems.slice(0, 10)) console.log(`::error title=smoke ${process.env.SMOKE_ONLY || ''}::${p.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')}`);
+    process.exit(1);
+  }
   console.log('smoke: OK');
 }
 
