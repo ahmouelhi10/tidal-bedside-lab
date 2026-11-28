@@ -197,7 +197,7 @@ export function createServer({ port = 8080, host = '0.0.0.0', dataDir = path.joi
           const clientHash = typeof b.hash === 'string' ? b.hash.slice(0, 16) : null;
           // instructor changes must be exactly the ones the server relayed to this session (live.js), in order
           const instr = checkInjects(cur.instructor || [], lv.log);
-          const result = { verified: clientHash === out.hash && instr.ok, serverHash: out.hash, clientHash, simTimeS: out.t, events: lv.log.length, score: out.score, keyTimes: out.keyTimes,
+          const result = { verified: clientHash === out.hash && instr.ok, serverHash: out.hash, clientHash, simTimeS: out.t, playedOutS: out.playedOutS, events: lv.log.length, score: out.score, keyTimes: out.keyTimes,
             ...(instr.ok ? {} : { instructorMismatch: instr.error }), arrests: out.arrests, roscCount: out.roscCount, final: { rhythm: out.snapshot.rhythm, map: out.snapshot.map, spo2: out.snapshot.spo2, hr: out.snapshot.hr } };
           const done = { ...cur, status: 'submitted', submittedAt: new Date().toISOString(), result, log: lv.log };
           store.put(done); live.closeSession(id); info('info', 'session submitted', { id, verified: result.verified, pct: out.score?.pct });

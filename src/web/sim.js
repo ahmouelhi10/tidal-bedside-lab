@@ -35,7 +35,7 @@ export class Sim extends EventTarget {
     if (seed === undefined) { seed = (crypto.getRandomValues(new Uint32Array(1))[0] % 2147483646) + 1; bodySpec = { ...base, ...spec }; }
     this.scenarioId = scenarioId; this.session = { id: sessionId, seed, spec: bodySpec };
     this.patient = new Patient(bodySpec, { seed, scenario: scenarioId ? SCENARIOS[scenarioId] : null });
-    this.acc = 0; this.feed = []; this.trend = []; this._trendT = -1; this.finished = false; this.speed = 1; this.lastNoteIdx = 0; this._seenEvents = 0;
+    this.acc = 0; this.feed = []; this.trend = []; this._trendT = -1; this.finished = false; this.playedT = null; this.speed = 1; this.lastNoteIdx = 0; this._seenEvents = 0;
     this.emit('started', { scenarioId });
     return this.patient;
   }
@@ -83,15 +83,26 @@ export class Sim extends EventTarget {
   async finish() {
     const p = this.patient; if (!p) return null;
     this.finished = true;
-    const local = this.score(); const out = { local, server: null, online: Boolean(this.session.id) };
-    if (this.session.id) {
+    const out = { local: null, server: null, online: Boolean(this.session.id) };
+    // the log and hash are taken at the moment the learner ended; the submit runs while the rest of the case plays out here
+    this.playedT = p.t;
+    const body = JSON.stringify({ log: p.log, until: +p.t.toFixed(3), hash: p.stateHash() });
+    const submit = this.session.id ? (async () => {
       try {
-        const body = JSON.stringify({ log: p.log, until: +p.t.toFixed(3), hash: p.stateHash() });
         const r = await sendWithRetry(() => fetch(`/api/sessions/${this.session.id}/submit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body }));   // a busy server (a whole class finishing at once): try again
         if (r.ok) out.server = (await r.json()).result; else out.error = (await r.json().catch(() => ({}))).error || String(r.status);
       } catch (e) { out.error = String(e && e.message || e); out.online = false; }
-    }
+    })() : Promise.resolve();
+    out.playedOutS = await this._playOut(p);                  // ended early: the rest of the case runs without the learner, as on the server
+    out.local = this.score();
+    await submit;
     this.emit('finished', out);
     return out;
+  }
+  /** Runs the patient to the end of the case in slices, so the page stays responsive (a 4-hour case takes a few seconds). */
+  async _playOut(p) {
+    const end = p.scenario?.durationS ? Math.round(p.scenario.durationS / p.dt) : 0, start = p.n;
+    while (p.n < end) { p.tick(Math.min(3000, end - p.n)); await new Promise(r => setTimeout(r, 0)); }
+    return end > start ? +((end - start) * p.dt).toFixed(1) : 0;
   }
 }

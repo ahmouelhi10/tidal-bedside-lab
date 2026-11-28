@@ -101,3 +101,23 @@ test('research key times count only what the server replay accepted', async () =
     assert.equal(row.t_monitoring, 10); assert.equal(row.key_times_source, 'replay');
   });
 });
+
+test('a case ended before the crisis is played out with no action, so stopping early cannot skip what would be scored', async () => {
+  const { playOut } = await import('../src/engine/scenarios.js');
+  const sc = SCENARIOS.anaphylaxis;
+  const early = new Patient(sc.spec, { seed: 3, scenario: sc }); early.run(5);
+  const atStop = scoreSession(early).pct;
+  const walked = new Patient(sc.spec, { seed: 3, scenario: sc }); walked.run(5);
+  assert.equal(playOut(walked), +(sc.durationS - 5).toFixed(1)); assert.equal(walked.t, sc.durationS);
+  assert.equal(playOut(walked), 0, 'a case that already ran its length is not extended');
+  const full = scoreSession(walked).pct;
+  assert.ok(full < atStop || atStop === 0, `walking away scores no better than stopping early (${full} vs ${atStop})`);
+  await withServer({}, async (base) => {
+    const s = await (await post(base + '/api/sessions', { scenario: 'anaphylaxis' })).json();
+    const p = new Patient(s.spec, { seed: s.seed, scenario: sc }); p.run(5);
+    const r = (await (await post(`${base}/api/sessions/${s.id}/submit`, { log: p.log, until: +p.t.toFixed(3), hash: p.stateHash() })).json()).result;
+    assert.equal(r.verified, true, 'the hash is still checked at the moment the learner ended');
+    assert.equal(r.simTimeS, 5); assert.equal(r.playedOutS, sc.durationS - 5);
+    playOut(p); assert.deepEqual(r.score, scoreSession(p), 'server score = the case played out to its end');
+  });
+});

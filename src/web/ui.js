@@ -1526,6 +1526,7 @@ export class UI {
     const description = el('div', {}, x ? el('p', { class: 'summary', text: x.summary }) : null, el('h4', { text: t('rec_times') }), keyBox, reflect(notes, 'description', t('db_desc_q')));
     // 3. analysis: score, self-assessment calibration, moments to discuss, criteria, replay timeline
     const analysis = el('div', {});
+    if (out.playedOutS > 0) analysis.append(el('p', { class: 'muted', text: t('db_played_out', { at: mmss(this.sim.playedT ?? 0), rest: mmss(out.playedOutS) }) }));
     if (sc) {
       const pct = Math.max(0, Math.min(100, sc.pct)), C = 2 * Math.PI * 54, col = pct >= 80 ? 'var(--good)' : pct >= 60 ? 'var(--warn)' : 'var(--bad)';
       const ring = el('div', { class: 'ring', style: `--ring:${col}` });
@@ -1605,7 +1606,7 @@ export class UI {
   _recordData(rec) {
     const ss = this.sim.session, p = this.sim.patient, sc = rec.sc, k = rec.tl ? keyActionTimes(rec.tl.events) : null;
     return { app: 'Tidal Bedside Lab', learner: this._learner || '', case: rec.scen?.title || t('free_play'), scenarioId: this.sim.scenarioId, date: new Date().toISOString(),
-      patient: ss?.spec, durationS: p ? Math.round(p.t) : null, score: sc ? { pct: Math.round(sc.pct), grade: sc.grade, points: sc.total, max: sc.max } : null,
+      patient: ss?.spec, durationS: p ? Math.round(this.sim.playedT ?? p.t) : null, score: sc ? { pct: Math.round(sc.pct), grade: sc.grade, points: sc.total, max: sc.max } : null,
       verified: !!rec.out.server?.verified, sessionId: ss?.id || null,
       criteria: sc ? sc.items.map(i => ({ label: getLang() === 'fr' && CRITERION_FR[i.id] ? CRITERION_FR[i.id] : i.label, points: +i.points.toFixed(1), weight: i.weight, detail: i.detail })) : [],
       keyActionsS: k, selfAssessment: rec.self || null, reflection: rec.notes || {} };

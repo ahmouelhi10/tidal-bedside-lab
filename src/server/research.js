@@ -52,7 +52,7 @@ export function researchRows(records, salt) {
     const fromReplay = !!r.result.keyTimes;
     const k = fromReplay ? r.result.keyTimes : keyActionTimes((r.log || []).map(e => ({ t: e.t, type: e.type, ok: true, ev: e }))), team = (r.log || []).filter(e => e.type === 'team.order').length, crit = Object.fromEntries((r.result.score?.items || []).map(i => [i.id, i.frac]));
     const row = { session: r.id.slice(0, 12), learner_pid: pid(salt, r.learner), scenario: r.scenario || 'free', created: r.createdAt, submitted: r.submittedAt || '',
-      verified: r.result.verified ? 1 : 0, sim_time_s: Math.round(r.result.simTimeS ?? 0), score_pct: r.result.score?.pct ?? '', grade: r.result.score?.grade ?? '',
+      verified: r.result.verified ? 1 : 0, sim_time_s: Math.round(r.result.simTimeS ?? 0), played_out_s: r.result.playedOutS == null ? '' : Math.round(r.result.playedOutS), score_pct: r.result.score?.pct ?? '', grade: r.result.score?.grade ?? '',
       instructor_changes: (r.log || []).filter(e => e.type === 'instructor.inject').length, team_orders: team, ...helpUsed(r.log || []), ...patientOf(r),
       self_pct: r.self?.pct ?? '', ...Object.fromEntries(ANTS_CATEGORIES.map(a => ['self_ants_' + a, r.self?.ants?.[a] ?? ''])) };
     for (const kk of KEY_TIMES) row['t_' + kk] = k[kk] == null ? '' : +k[kk].toFixed(1);

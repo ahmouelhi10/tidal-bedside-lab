@@ -615,6 +615,15 @@ export const scenarioList = () => Object.values(SCENARIOS).map(({ id, title, dif
 
 // ----------------------------------------------------------------------------- scoring
 /** Score a (finished or in-progress) Patient against its scenario. Pure function of patient state + log. */
+/** A case ended before its full length is scored as if the learner had walked away from the patient: the rest of the case
+ *  runs with no further action (scripted events still happen), so stopping before the crisis cannot skip the criteria that
+ *  would score it. Ticks p to scenario.durationS; returns the seconds played out (0 if the case already ran its length). */
+export function playOut(p, scenario = p.scenario) {
+  if (!scenario?.durationS) return 0;
+  const steps = Math.round(scenario.durationS / p.dt) - p.n; if (steps <= 0) return 0;
+  p.tick(steps); return +(steps * p.dt).toFixed(1);
+}
+
 export function scoreSession(p, scenario = p.scenario) {
   if (!scenario?.score) return { items: [], total: 0, max: 0, pct: 0, grade: '-' };
   const items = [];

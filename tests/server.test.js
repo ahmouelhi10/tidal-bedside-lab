@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createServer, validateLog, validateBodySpec, LIMITS } from '../src/server/server.js';
 import { Patient } from '../src/engine/patient.js';
-import { SCENARIOS, scoreSession } from '../src/engine/scenarios.js';
+import { SCENARIOS, scoreSession, playOut } from '../src/engine/scenarios.js';
 import { aclsTeam } from './helpers/bots.js';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'tbl-'));
@@ -75,15 +75,16 @@ test('end-to-end: server-issued seed -> client plays locally -> server replays, 
     const created = (await j(await post(base + '/api/sessions', { scenario: 'witnessed_vf', learner: 'test-learner' }))).body;
     const p = new Patient(created.spec, { seed: created.seed, scenario: SCENARIOS.witnessed_vf });   // what the browser does
     aclsTeam(p, { endT: 300, reaction: 5 });
-    const hash = p.stateHash(), local = scoreSession(p);
-    const sub = await j(await post(`${base}/api/sessions/${created.id}/submit`, { log: p.log, until: p.t, hash }));
+    const hash = p.stateHash(), until = p.t;
+    playOut(p); const local = scoreSession(p);                         // the browser plays an early end out to the case length, as the server does
+    const sub = await j(await post(`${base}/api/sessions/${created.id}/submit`, { log: p.log, until, hash }));
     assert.equal(sub.status, 200, JSON.stringify(sub.body));
     assert.equal(sub.body.status, 'submitted');
     assert.equal(sub.body.result.verified, true);
     assert.equal(sub.body.result.serverHash, hash);
     assert.deepEqual(sub.body.result.score, local);
     assert.equal(sub.body.result.roscCount, p.arrest.roscCount ?? 0);   // the server reports the same outcome as the client's run (ROSC itself is probabilistic: the seed is the server's, so its presence is not asserted)
-    assert.equal((await j(await post(`${base}/api/sessions/${created.id}/submit`, { log: p.log, until: p.t, hash }))).status, 409);   // single submission
+    assert.equal((await j(await post(`${base}/api/sessions/${created.id}/submit`, { log: p.log, until, hash }))).status, 409);   // single submission
     const stored = JSON.parse(fs.readFileSync(path.join(dataDir, 'sessions', created.id + '.json'), 'utf8'));
     assert.equal(stored.result.verified, true);
     assert.equal((await j(await fetch(`${base}/api/sessions/${created.id}`))).body.result.score.pct, local.pct);
@@ -98,13 +99,13 @@ test('tampering: a doctored log or a forged hash is reported as unverified and t
     aclsTeam(pa, { endT: 200, reaction: 5 });
     const forged = await j(await post(`${base}/api/sessions/${a.id}/submit`, { log: pa.log, until: pa.t, hash: 'deadbeef' }));
     assert.equal(forged.body.result.verified, false);
-    assert.deepEqual(forged.body.result.score, scoreSession(pa), 'score comes from the server replay, not from the client');
+    playOut(pa); assert.deepEqual(forged.body.result.score, scoreSession(pa), 'score comes from the server replay, not from the client');
     const b = await mkSession(), pb = new Patient(b.spec, { seed: b.seed, scenario: SCENARIOS.witnessed_vf });
     aclsTeam(pb, { endT: 200, reaction: 5 });
     const lied = pb.log.filter(e => e.type !== 'defib.shock');                                       // claims it never needed to shock...
     const r = await j(await post(`${base}/api/sessions/${b.id}/submit`, { log: lied, until: pb.t, hash: pb.stateHash() }));
     assert.equal(r.body.result.verified, false);
-    assert.ok(r.body.result.score.pct < scoreSession(pb).pct, 'removing the shock cannot raise the score');
+    playOut(pb); assert.ok(r.body.result.score.pct < scoreSession(pb).pct, 'removing the shock cannot raise the score');
     const c = await mkSession();                                                                       // wrong seed on the client side
     const pc = new Patient(c.spec, { seed: c.seed + 1, scenario: SCENARIOS.witnessed_vf }); aclsTeam(pc, { endT: 200, reaction: 5 });
     assert.equal((await j(await post(`${base}/api/sessions/${c.id}/submit`, { log: pc.log, until: pc.t, hash: pc.stateHash() }))).body.result.verified, false);
